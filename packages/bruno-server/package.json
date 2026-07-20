@@ -1,0 +1,17 @@
+{
+  "name": "@usebruno/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bruno Bridge Server — enables Bruno to run in a web browser by proxying IPC calls over HTTP + WebSocket",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node src/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "ws": "^8.18.0",
+    "multer": "^1.4.5-lts.1"
+  }
+}

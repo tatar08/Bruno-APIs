@@ -1,0 +1,120 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { dialog, ipcMain } = require('electron');
+const { normalizeAndResolvePath } = require('../utils/filesystem');
+const { generateUidBasedOnHash } = require('../utils/common');
+const { parseApiSpecContent } = require('../utils/apiSpecs');
+const {
+  addApiSpecToWorkspace,
+  readWorkspaceConfig,
+  getWorkspaceUid
+} = require('../utils/workspace-config');
+
+const DEFAULT_WORKSPACE_NAME = 'My Workspace';
+
+const INVALID_EXTENSION_MESSAGE
+  = 'Invalid file format. Please select a valid OpenAPI spec in YAML or JSON format.';
+
+const VALID_API_SPEC_EXTENSIONS = ['.yaml', '.yml', '.json'];
+
+const validateApiSpec = (filePath) => {
+  const ext = path.extname(filePath).toLowerCase();
+  if (!VALID_API_SPEC_EXTENSIONS.includes(ext)) {
+    throw new Error(INVALID_EXTENSION_MESSAGE);
+  }
+};
+
+const prepareWorkspaceConfigForClient = (workspaceConfig, isDefault) => {
+  if (isDefault) {
+    return {
+      ...workspaceConfig,
+      name: DEFAULT_WORKSPACE_NAME,
+      type: 'default'
+    };
+  }
+  return workspaceConfig;
+};
+
+const openApiSpecDialog = async (win, watcher, options = {}) => {
+  const { filePaths } = await dialog.showOpenDialog(win, {
+    properties: ['openFile', 'createFile'],
+    filters: [{ name: 'OpenAPI Spec', extensions: ['yaml', 'yml', 'json'] }]
+  });
+
+  if (filePaths && filePaths[0]) {
+    const resolvedPath = normalizeAndResolvePath(filePaths[0]);
+    try {
+      await openApiSpec(win, watcher, resolvedPath, options);
+    } catch (err) {
+      console.error(`[ERROR] Cannot open API spec: "${resolvedPath}"`);
+    }
+  }
+};
+
+const openApiSpec = async (win, watcher, apiSpecPath, options = {}) => {
+  try {
+    validateApiSpec(apiSpecPath);
+
+    const uid = generateUidBasedOnHash(apiSpecPath);
+
+    if (options.workspacePath) {
+      const workspaceFilePath = path.join(options.workspacePath, 'workspace.yml');
+
+      if (fs.existsSync(workspaceFilePath)) {
+        const workspaceConfig = readWorkspaceConfig(options.workspacePath);
+        const specs = workspaceConfig.specs;
+
+        const specName = path.basename(apiSpecPath, path.extname(apiSpecPath));
+
+        const existingSpec = specs.find((a) => {
+          if (!a.path) return false;
+          const existingPath = path.isAbsolute(a.path)
+            ? a.path
+            : path.resolve(options.workspacePath, a.path);
+          return existingPath === apiSpecPath || a.name === specName;
+        });
+
+        if (!existingSpec) {
+          await addApiSpecToWorkspace(options.workspacePath, {
+            name: specName,
+            path: apiSpecPath
+          });
+
+          const updatedConfig = readWorkspaceConfig(options.workspacePath);
+          const workspaceUid = getWorkspaceUid(options.workspacePath);
+          const isDefault = workspaceUid === 'default';
+          const configForClient = prepareWorkspaceConfigForClient(updatedConfig, isDefault);
+          win.webContents.send('main:workspace-config-updated', options.workspacePath, workspaceUid, configForClient);
+        }
+      }
+    }
+
+    if (!watcher.hasWatcher(apiSpecPath)) {
+      ipcMain.emit('main:apispec-opened', win, apiSpecPath, uid, options.workspacePath);
+    } else {
+      const rawContent = fs.readFileSync(apiSpecPath, 'utf8');
+      const extension = path.extname(apiSpecPath);
+
+      win.webContents.send('main:apispec-tree-updated', 'addFile', {
+        pathname: apiSpecPath,
+        uid: uid,
+        raw: rawContent,
+        name: path.basename(apiSpecPath, path.extname(apiSpecPath)),
+        filename: path.basename(apiSpecPath),
+        json: parseApiSpecContent(rawContent, extension)
+      });
+    }
+  } catch (err) {
+    if (!options.dontSendDisplayErrors) {
+      win.webContents.send('main:display-error', {
+        message: err.message || 'An error occurred while opening the apiSpec'
+      });
+    }
+  }
+};
+
+module.exports = {
+  openApiSpec,
+  openApiSpecDialog,
+  INVALID_EXTENSION_MESSAGE
+};

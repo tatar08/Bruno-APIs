@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+out/
+packages/bruno-electron/web/
+
+# Test and coverage outputs
+coverage/
+playwright-report/
+test-results/
+
+# Runtime and temporary files
+*.log
+*.pid
+*.seed
+*.tmp
+.cache/
+.tmp/
+tmp/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Package-manager debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

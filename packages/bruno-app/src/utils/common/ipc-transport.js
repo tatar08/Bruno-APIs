@@ -1,0 +1,394 @@
+/**
+ * IPC Transport Abstraction Layer
+ *
+ * Provides a unified interface for IPC communication that works in both
+ * Electron and browser environments. Auto-detects the runtime and selects
+ * the appropriate transport.
+ *
+ * Usage:
+ *   import { transport } from 'utils/common/ipc-transport';
+ *   const result = await transport.invoke('channel-name', arg1, arg2);
+ *   const unsub = transport.on('event-name', handler);
+ */
+
+const BRIDGE_SERVER_URL = typeof window !== 'undefined'
+  ? `${window.location.protocol}//${window.location.hostname}:${window.__BRUNO_SERVER_PORT__ || 4000}`
+  : 'http://localhost:4000';
+
+const WS_URL = BRIDGE_SERVER_URL.replace(/^http/, 'ws');
+
+/**
+ * Electron Transport — delegates directly to window.ipcRenderer
+ * (the existing preload.js bridge)
+ */
+class ElectronTransport {
+  get isElectron() {
+    return true;
+  }
+
+  invoke(channel, ...args) {
+    return window.ipcRenderer.invoke(channel, ...args);
+  }
+
+  on(channel, handler) {
+    return window.ipcRenderer.on(channel, handler);
+  }
+
+  send(channel, ...args) {
+    return window.ipcRenderer.send(channel, ...args);
+  }
+
+  getFilePath(file) {
+    return window.ipcRenderer.getFilePath(file);
+  }
+
+  openExternal(url) {
+    return window.ipcRenderer.openExternal(url);
+  }
+}
+
+/**
+ * Browser Transport — uses HTTP fetch + WebSocket to communicate
+ * with the Bruno bridge server (bruno-server package)
+ */
+class BrowserTransport {
+  constructor() {
+    this._ws = null;
+    this._listeners = new Map(); // channel -> Set<handler>
+    this._wsReady = false;
+    this._wsQueue = []; // messages queued before WS is ready
+    this._reconnectAttempts = 0;
+    // Keep retrying like Electron's persistent main-process connection. The
+    // bridge may be restarted independently during local development.
+    this._maxReconnectAttempts = Number.POSITIVE_INFINITY;
+    this._reconnectDelay = 1000;
+    this._zoomPercentage = 100;
+    this._connectWebSocket();
+  }
+
+  get isElectron() {
+    return false;
+  }
+
+  _connectWebSocket() {
+    try {
+      this._ws = new WebSocket(`${WS_URL}/ws/events`);
+
+      this._ws.onopen = () => {
+        this._wsReady = true;
+        this._reconnectAttempts = 0;
+        console.log('[BrowserTransport] WebSocket connected');
+
+        // A reconnect creates a new server-side client, so restore every
+        // subscription registered by the renderer. Electron listeners remain
+        // active across a renderer/main-process transport interruption and the
+        // browser transport should provide the same behaviour.
+        for (const channel of this._listeners.keys()) {
+          this._ws.send(JSON.stringify({ type: 'subscribe', channel }));
+        }
+
+        // Flush queued messages
+        while (this._wsQueue.length > 0) {
+          const msg = this._wsQueue.shift();
+          this._ws.send(msg);
+        }
+      };
+
+      this._ws.onmessage = (event) => {
+        try {
+          const { channel, data } = JSON.parse(event.data);
+          const handlers = this._listeners.get(channel);
+          if (handlers) {
+            handlers.forEach((handler) => {
+              try {
+                if (Array.isArray(data)) {
+                  handler(...data);
+                } else {
+                  handler(data);
+                }
+              } catch (err) {
+                console.error(`[BrowserTransport] Error in handler for "${channel}":`, err);
+              }
+            });
+          }
+        } catch (err) {
+          console.error('[BrowserTransport] Failed to parse WebSocket message:', err);
+        }
+      };
+
+      this._ws.onclose = () => {
+        this._wsReady = false;
+        console.warn('[BrowserTransport] WebSocket disconnected');
+        this._attemptReconnect();
+      };
+
+      this._ws.onerror = (err) => {
+        console.error('[BrowserTransport] WebSocket error:', err);
+      };
+    } catch (err) {
+      console.error('[BrowserTransport] Failed to create WebSocket:', err);
+      this._attemptReconnect();
+    }
+  }
+
+  _attemptReconnect() {
+    if (this._reconnectAttempts >= this._maxReconnectAttempts) {
+      console.error('[BrowserTransport] Max reconnect attempts reached');
+      return;
+    }
+    this._reconnectAttempts++;
+    const delay = this._reconnectDelay * Math.min(this._reconnectAttempts, 5);
+    console.log(`[BrowserTransport] Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts})`);
+    setTimeout(() => this._connectWebSocket(), delay);
+  }
+
+  /**
+   * invoke(channel, ...args) — equivalent to ipcRenderer.invoke()
+   * Makes a POST request to the bridge server and returns the result.
+   */
+  async invoke(channel, ...args) {
+    const promptForPath = (message) => {
+      const value = window.prompt(message, "");
+      return typeof value === "string" ? value.trim() : "";
+    };
+
+    if (channel === "renderer:browse-directory") {
+      const selectedPath = promptForPath("Enter a directory path on the Bruno bridge server:");
+      if (!selectedPath) return false;
+      return (await this.invoke("renderer:is-directory", selectedPath)) ? selectedPath : false;
+    }
+
+    if (channel === "renderer:browse-files") {
+      const value = promptForPath("Enter file path(s) on the Bruno bridge server, separated by new lines:");
+      if (!value) return [];
+      const paths = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+      const valid = await Promise.all(paths.map(async (filePath) => (await this.invoke("renderer:exists-sync", filePath)) ? filePath : null));
+      return valid.filter(Boolean);
+    }
+
+    if (channel === "renderer:open-collection") {
+      const value = promptForPath("Enter collection folder path(s) on the Bruno bridge server, separated by new lines:");
+      if (!value) return;
+      const paths = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+      return this.invoke("renderer:open-multiple-collections", paths, args[0] || {});
+    }
+
+    if (channel === "renderer:open-workspace-dialog") {
+      const selectedPath = promptForPath("Enter a workspace folder path on the Bruno bridge server:");
+      return selectedPath ? this.invoke("renderer:open-workspace", selectedPath) : null;
+    }
+
+    if (channel === "renderer:open-api-spec") {
+      const selectedPath = promptForPath("Enter an OpenAPI file path on the Bruno bridge server:");
+      return selectedPath ? this.invoke("renderer:open-api-spec-file", selectedPath, args[0] || null) : null;
+    }
+
+    if (channel === "renderer:load-gql-schema-file" || channel === "renderer:browse-pac-file") {
+      const selectedPath = promptForPath("Enter a file path on the Bruno bridge server:");
+      if (!selectedPath) return null;
+      args = [selectedPath];
+    }
+
+    if (["renderer:export-collection-zip", "renderer:export-workspace"].includes(channel)) {
+      const suggestedName = String(args[1] || "export").replace(/[^a-zA-Z0-9._-]/g, "_") + ".zip";
+      const destinationPath = promptForPath("Enter the destination ZIP path on the Bruno bridge server (for example: /tmp/" + suggestedName + "):");
+      if (!destinationPath) return { success: false, canceled: true };
+      args.push(destinationPath);
+    }
+
+    if (channel === "renderer:save-response-to-file") {
+      const destinationPath = promptForPath("Enter the destination file path on the Bruno bridge server:");
+      if (!destinationPath) return { success: false, cancelled: true };
+      args.push(destinationPath);
+    }
+
+    if (channel === "renderer:open-docs") {
+      return this.openExternal("https://docs.usebruno.com");
+    }
+
+    if (channel === "renderer:open-about") {
+      window.alert("Bruno v2.0.0");
+      return { version: "2.0.0" };
+    }
+
+    if (channel === "renderer:window-is-fullscreen") {
+      return Boolean(document.fullscreenElement);
+    }
+
+    if (channel === "renderer:toggle-fullscreen") {
+      return document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+    }
+
+    if (channel === "renderer:reset-zoom") this._zoomPercentage = 100;
+    if (channel === "renderer:zoom-in") this._zoomPercentage = Math.min(200, this._zoomPercentage + 10);
+    if (channel === "renderer:zoom-out") this._zoomPercentage = Math.max(50, this._zoomPercentage - 10);
+    if (["renderer:reset-zoom", "renderer:zoom-in", "renderer:zoom-out"].includes(channel)) {
+      document.documentElement.style.zoom = String(this._zoomPercentage / 100);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${BRIDGE_SERVER_URL}/api/ipc/${encodeURIComponent(channel)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ args })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || result.error) {
+        const error = new Error(result.error || result.message || `IPC call "${channel}" failed`);
+        if (result.stack) {
+          error.stack = result.stack;
+        }
+        throw error;
+      }
+
+      return result.data;
+    } catch (err) {
+      if (err.message && !err.message.includes('IPC call')) {
+        console.error(`[BrowserTransport] invoke("${channel}") failed:`, err);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * on(channel, handler) — equivalent to ipcRenderer.on()
+   * Subscribes to WebSocket events from the bridge server.
+   * Returns an unsubscribe function.
+   */
+  on(channel, handler) {
+    if (!this._listeners.has(channel)) {
+      this._listeners.set(channel, new Set());
+    }
+    this._listeners.get(channel).add(handler);
+
+    // Tell the server we want events for this channel
+    const subscribeMsg = JSON.stringify({ type: 'subscribe', channel });
+    if (this._wsReady) {
+      this._ws.send(subscribeMsg);
+    } else {
+      this._wsQueue.push(subscribeMsg);
+    }
+
+    // Return unsubscribe function (matches Electron API)
+    return () => {
+      const handlers = this._listeners.get(channel);
+      if (handlers) {
+        handlers.delete(handler);
+        if (handlers.size === 0) {
+          this._listeners.delete(channel);
+          // Unsubscribe from server
+          const unsubMsg = JSON.stringify({ type: 'unsubscribe', channel });
+          if (this._wsReady && this._ws) {
+            this._ws.send(unsubMsg);
+          }
+        }
+      }
+    };
+  }
+
+  removeAllListeners(channel) {
+    if (!channel) {
+      this._listeners.clear();
+      return;
+    }
+
+    this._listeners.delete(channel);
+    const unsubMsg = JSON.stringify({ type: 'unsubscribe', channel });
+    if (this._wsReady && this._ws) {
+      this._ws.send(unsubMsg);
+    }
+  }
+
+  /**
+   * send(channel, ...args) — equivalent to ipcRenderer.send()
+   * Fire-and-forget message to the server.
+   */
+  send(channel, ...args) {
+    if (channel === 'renderer:window-maximize') {
+      this.invoke('renderer:toggle-fullscreen').catch(() => {});
+      return;
+    }
+    if (channel === 'renderer:window-close') {
+      window.close();
+      return;
+    }
+    if (channel === 'renderer:window-minimize') {
+      return;
+    }
+
+    fetch(`${BRIDGE_SERVER_URL}/api/ipc/${encodeURIComponent(channel)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args, fireAndForget: true })
+    }).catch((err) => {
+      console.error(`[BrowserTransport] send("${channel}") failed:`, err);
+    });
+  }
+
+  /**
+   * getFilePath(file) — browser fallback for Electron's webUtils.getPathForFile
+   * In the browser, we return the file name since we don't have real path access.
+   */
+  getFilePath(file) {
+    return file.name || file.path || '';
+  }
+
+  /**
+   * openExternal(url) — browser fallback for shell.openExternal
+   */
+  openExternal(url) {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return Promise.resolve();
+  }
+}
+
+// --- Singleton Transport Instance ---
+
+let _transport = null;
+
+/**
+ * Get the singleton transport instance.
+ * Auto-detects Electron (window.ipcRenderer exists) vs Browser mode.
+ */
+export const getTransport = () => {
+  if (_transport) return _transport;
+
+  if (typeof window !== 'undefined' && window.ipcRenderer) {
+    _transport = new ElectronTransport();
+    console.log('[IPC Transport] Using Electron mode');
+  } else {
+    _transport = new BrowserTransport();
+    // Some renderer paths still use the Electron preload API directly. Expose
+    // the compatible transport so those paths also work in Browser Mode.
+    window.ipcRenderer = _transport;
+    console.log('[IPC Transport] Using Browser mode (bridge server)');
+  }
+
+  return _transport;
+};
+
+/**
+ * The default transport instance — auto-initialized on first access.
+ */
+export const transport = new Proxy({}, {
+  get(target, prop) {
+    const t = getTransport();
+    const value = t[prop];
+    if (typeof value === 'function') {
+      return value.bind(t);
+    }
+    return value;
+  }
+});
+
+/**
+ * Check if we're running in Electron mode.
+ */
+export const isElectronMode = () => {
+  return getTransport().isElectron;
+};
+
+export { ElectronTransport, BrowserTransport };
