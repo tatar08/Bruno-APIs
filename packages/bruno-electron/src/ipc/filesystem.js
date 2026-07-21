@@ -1,6 +1,7 @@
 const { ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const fs = require('fs-extra');
 
 const {
   browseDirectory,
@@ -10,6 +11,9 @@ const {
   isDirectory
 } = require('../utils/filesystem');
 const { findUniqueFolderName } = require('../utils/collection-import');
+const { parseRunnerDataset } = require('../utils/runner-dataset');
+
+const MAX_RUNNER_DATASET_BYTES = 10 * 1024 * 1024;
 
 const registerFilesystemIpc = (mainWindow) => {
   ipcMain.handle('renderer:browse-directory', async (event, pathname, request) => {
@@ -39,6 +43,26 @@ const registerFilesystemIpc = (mainWindow) => {
     }
     if (!filePath || !isFile(filePath)) return null;
     return pathToFileURL(filePath).href;
+  });
+
+  ipcMain.handle('renderer:load-runner-dataset', async (_, selectedPath = null) => {
+    let filePath = selectedPath;
+    if (!filePath) {
+      const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+        properties: ['openFile'],
+        filters: [{ name: 'Runner Dataset', extensions: ['json', 'csv'] }]
+      });
+      filePath = filePaths?.[0];
+    }
+    if (!filePath) return null;
+
+    const normalizedPath = normalizeAndResolvePath(filePath);
+    if (!isFile(normalizedPath)) throw new Error('Dataset file does not exist');
+    const stats = await fs.stat(normalizedPath);
+    if (stats.size > MAX_RUNNER_DATASET_BYTES) throw new Error('Dataset file cannot be larger than 10 MB');
+
+    const parsed = parseRunnerDataset(await fs.readFile(normalizedPath, 'utf8'), normalizedPath);
+    return { ...parsed, fileName: path.basename(normalizedPath), filePath: normalizedPath };
   });
 
   ipcMain.handle('renderer:exists-sync', async (_, filePath) => {

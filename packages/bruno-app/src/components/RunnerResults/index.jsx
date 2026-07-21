@@ -10,6 +10,7 @@ import ResponsePane from './ResponsePane';
 import StyledWrapper from './StyledWrapper';
 import RunnerTags from './RunnerTags/index';
 import RunConfigurationPanel from './RunConfigurationPanel';
+import RunnerDatasetInput from './RunnerDatasetInput';
 import Button from 'ui/Button/index';
 
 const getDisplayName = (fullPath, pathname, name = '') => {
@@ -79,6 +80,7 @@ export default function RunnerResults({ collection }) {
   const dispatch = useDispatch();
   const [selectedItem, setSelectedItem] = useState(null);
   const [delay, setDelay] = useState(null);
+  const [dataset, setDataset] = useState(() => get(collection, 'runnerConfiguration.dataset', null));
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedRequestItems, setSelectedRequestItems] = useState([]);
   const isReRunningRef = useRef(false);
@@ -187,7 +189,7 @@ export default function RunnerResults({ collection }) {
   const runCollection = () => {
     const savedOrder = get(collection, 'runnerConfiguration.requestItemsOrder', selectedRequestItems);
     dispatch(updateRunnerConfiguration(collection.uid, selectedRequestItems, savedOrder, delay));
-    dispatch(runCollectionFolder(collection.uid, null, true, Number(delay), tags, selectedRequestItems));
+    dispatch(runCollectionFolder(collection.uid, null, true, Number(delay), tags, selectedRequestItems, dataset));
   };
 
   const runAgain = () => {
@@ -197,6 +199,7 @@ export default function RunnerResults({ collection }) {
     const savedConfiguration = get(collection, 'runnerConfiguration', null);
     const savedSelectedItems = savedConfiguration?.selectedRequestItems || [];
     const savedDelay = savedConfiguration?.delay !== undefined ? savedConfiguration.delay : delay;
+    const savedDataset = savedConfiguration?.dataset || dataset;
     dispatch(
       runCollectionFolder(
         collection.uid,
@@ -204,7 +207,8 @@ export default function RunnerResults({ collection }) {
         true,
         Number(savedDelay),
         tags,
-        savedSelectedItems
+        savedSelectedItems,
+        savedDataset
       )
     );
   };
@@ -217,6 +221,7 @@ export default function RunnerResults({ collection }) {
       })
     );
     setDelay(null);
+    setDataset(null);
   };
 
   const cancelExecution = () => {
@@ -269,6 +274,12 @@ export default function RunnerResults({ collection }) {
               />
             </div>
 
+            {/* Run with Parameters */}
+            <div className="runner-section-title mt-6">Run with Parameters</div>
+            <div className="runner-section mt-2">
+              <RunnerDatasetInput dataset={dataset} onChange={setDataset} disabled={isCollectionLoading} />
+            </div>
+
             {/* Filters */}
             <div className="runner-section-title mt-6">Filters</div>
             <div className="runner-section mt-2 mb-6">
@@ -283,7 +294,7 @@ export default function RunnerResults({ collection }) {
                 disabled={selectedRequestItems.length === 0 || isCollectionLoading}
                 onClick={runCollection}
               >
-                Run {selectedRequestItems.length} Request{selectedRequestItems.length !== 1 ? 's' : ''}
+                Run {selectedRequestItems.length} Request{selectedRequestItems.length !== 1 ? 's' : ''}{dataset ? <> × {dataset.rows.length} Iteration{dataset.rows.length !== 1 ? 's' : ''}</> : null}
               </Button>
 
               <Button type="button" variant="ghost" onClick={resetRunner}>
@@ -366,6 +377,11 @@ export default function RunnerResults({ collection }) {
         <div
           className="flex flex-col w-1/2"
         >
+          {runnerInfo.datasetFileName && (
+            <div className="pb-2 text-xs text-muted">
+              Dataset: <span className="font-medium">{runnerInfo.datasetFileName}</span> · {runnerInfo.iterationCount} iterations
+            </div>
+          )}
           {areTagsAdded && (
             <div className="pb-2 text-xs flex flex-row gap-1">
               Tags:
@@ -389,9 +405,9 @@ export default function RunnerResults({ collection }) {
 
           {/* Items list */}
           <div className="overflow-y-auto flex-1 " ref={runnerBodyRef}>
-            {filteredItems.map((item) => {
+            {filteredItems.map((item, itemIndex) => {
               return (
-                <div key={item.uid}>
+                <div key={item.uid + '-' + (item.iterationIndex || 0) + '-' + itemIndex}>
                   <div className="item-path mt-2" data-testid="runner-result-item">
                     <div className="flex items-center">
                       <span>
@@ -410,6 +426,9 @@ export default function RunnerResults({ collection }) {
                       >
                         {item.displayName}
                       </span>
+                      {item.iterationCount > 1 && (
+                        <span className="text-xs text-muted mr-2">Iteration {item.iterationIndex + 1}/{item.iterationCount}</span>
+                      )}
                       {item.status !== 'error' && item.status !== 'skipped' && item.status !== 'completed' ? (
                         <IconRefresh className="animate-spin ml-1" size={18} strokeWidth={1.5} />
                       ) : item.responseReceived?.status ? (

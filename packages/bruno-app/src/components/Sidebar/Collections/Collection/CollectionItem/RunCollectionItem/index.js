@@ -9,12 +9,14 @@ import { flattenItems } from 'utils/collections';
 import StyledWrapper from './StyledWrapper';
 import { areItemsLoading } from 'utils/collections';
 import RunnerTags from 'components/RunnerResults/RunnerTags/index';
+import RunnerDatasetInput from 'components/RunnerResults/RunnerDatasetInput';
 import { getRequestItemsForCollectionRun } from 'utils/collections/index';
 import Button from 'ui/Button';
 
 const RunCollectionItem = ({ collectionUid, item, onClose }) => {
   const dispatch = useDispatch();
   const [delay, setDelay] = useState('');
+  const [dataset, setDataset] = useState(null);
 
   const collection = useSelector((state) => state.collections.collections?.find((c) => c.uid === collectionUid));
   const isCollectionRunInProgress = collection?.runnerResult?.info?.status && (collection?.runnerResult?.info?.status !== 'ended');
@@ -31,7 +33,7 @@ const RunCollectionItem = ({ collectionUid, item, onClose }) => {
       })
     );
     if (!isCollectionRunInProgress) {
-      dispatch(runCollectionFolder(collection.uid, item ? item.uid : null, recursive, delay ? Number(delay) : null, tags));
+      dispatch(runCollectionFolder(collection.uid, item ? item.uid : null, recursive, delay ? Number(delay) : null, tags, undefined, dataset));
     }
     onClose();
   };
@@ -92,6 +94,11 @@ const RunCollectionItem = ({ collectionUid, item, onClose }) => {
               value={delay}
               onChange={(e) => setDelay(e.target.value)}
             />
+          </div>
+
+          <div className="mb-8">
+            <div className="font-medium mb-2">Run with Parameters</div>
+            <RunnerDatasetInput dataset={dataset} onChange={setDataset} disabled={isCollectionRunInProgress} />
           </div>
 
           {/* Tags for the collection run */}

@@ -3277,7 +3277,7 @@ export const collectionsSlice = createSlice({
       }
     },
     runFolderEvent: (state, action) => {
-      const { collectionUid, folderUid, itemUid, type, isRecursive, error, cancelTokenUid } = action.payload;
+      const { collectionUid, folderUid, itemUid, type, isRecursive, error, cancelTokenUid, iterationIndex, iterationCount, datasetFileName, datasetColumns } = action.payload;
       const collection = findCollectionByUid(state.collections, collectionUid);
 
       if (collection) {
@@ -3297,6 +3297,9 @@ export const collectionsSlice = createSlice({
           info.folderUid = folderUid;
           info.isRecursive = isRecursive;
           info.cancelTokenUid = cancelTokenUid;
+          info.iterationCount = iterationCount || 1;
+          info.datasetFileName = datasetFileName || null;
+          info.datasetColumns = datasetColumns || [];
           info.status = 'started';
         }
 
@@ -3320,7 +3323,9 @@ export const collectionsSlice = createSlice({
 
           collection.runnerResult.items.push({
             uid: request.uid,
-            status: 'queued'
+            status: 'queued',
+            iterationIndex: iterationIndex || 0,
+            iterationCount: iterationCount || 1
           });
         }
 
@@ -3443,14 +3448,15 @@ export const collectionsSlice = createSlice({
       }
     },
     updateRunnerConfiguration: (state, action) => {
-      const { collectionUid, selectedRequestItems, requestItemsOrder, delay } = action.payload;
+      const { collectionUid, selectedRequestItems, requestItemsOrder, delay, dataset } = action.payload;
       const collection = findCollectionByUid(state.collections, collectionUid);
       if (collection) {
         collection.runnerConfiguration = {
           ...collection.runnerConfiguration,
-          selectedRequestItems: selectedRequestItems || [],
-          requestItemsOrder: requestItemsOrder || [],
-          ...(delay !== undefined && { delay })
+          ...(selectedRequestItems !== undefined && { selectedRequestItems }),
+          ...(requestItemsOrder !== undefined && { requestItemsOrder }),
+          ...(delay !== undefined && { delay }),
+          ...(dataset !== undefined && { dataset })
         };
       }
     },

@@ -1400,7 +1400,7 @@ const registerNetworkIpc = (mainWindow) => {
   ipcMain.handle('fetch-gql-schema', fetchGqlSchemaHandler);
 
   ipcMain.handle(
-    'renderer:run-collection-folder', async (event, folder, collection, environment, runtimeVariables, recursive, delay, tags, selectedRequestUids) => {
+    'renderer:run-collection-folder', async (event, folder, collection, environment, runtimeVariables, recursive, delay, tags, selectedRequestUids, datasetRows, datasetInfo) => {
       const collectionUid = collection.uid;
       const collectionPath = collection.pathname;
       const folderUid = folder ? folder.uid : null;
@@ -1415,6 +1415,11 @@ const registerNetworkIpc = (mainWindow) => {
       // Tracks the outer runner item currently executing so a nested bru.runRequest
       // can route its oauth2 timeline entry back to this item.
       let currentRunnerEventData = null;
+      const baseRuntimeVariables = cloneDeep(runtimeVariables || {});
+      const iterations = Array.isArray(datasetRows) && datasetRows.length > 0 ? datasetRows : [null];
+      if (iterations.some((row) => row !== null && (!row || typeof row !== 'object' || Array.isArray(row)))) {
+        throw new Error('Runner dataset rows must be objects');
+      }
 
       const abortController = new AbortController();
       saveCancelToken(cancelTokenUid, abortController);
@@ -1534,7 +1539,10 @@ const registerNetworkIpc = (mainWindow) => {
         isRecursive: recursive,
         collectionUid,
         folderUid,
-        cancelTokenUid
+        cancelTokenUid,
+        iterationCount: iterations.length,
+        datasetFileName: datasetInfo?.fileName || null,
+        datasetColumns: datasetInfo?.columns || []
       });
 
       try {
@@ -1581,9 +1589,23 @@ const registerNetworkIpc = (mainWindow) => {
             });
         }
 
+        let terminateRunnerExecution = false;
+        let iterationIndex = 0;
         let currentRequestIndex = 0;
         let nJumps = 0; // count the number of jumps to avoid infinite loops
-        while (currentRequestIndex < folderRequests.length) {
+        runtimeVariables = iterations[iterationIndex]
+          ? { ...cloneDeep(baseRuntimeVariables), ...cloneDeep(iterations[iterationIndex]) }
+          : cloneDeep(baseRuntimeVariables);
+
+        while (iterationIndex < iterations.length) {
+          if (currentRequestIndex >= folderRequests.length) {
+            iterationIndex++;
+            if (iterationIndex >= iterations.length) break;
+            runtimeVariables = { ...cloneDeep(baseRuntimeVariables), ...cloneDeep(iterations[iterationIndex]) };
+            currentRequestIndex = 0;
+            nJumps = 0;
+            continue;
+          }
           // user requested to cancel runner
           if (abortController.signal.aborted) {
             let error = new Error('Runner execution cancelled');
@@ -1599,7 +1621,9 @@ const registerNetworkIpc = (mainWindow) => {
           const eventData = {
             collectionUid,
             folderUid,
-            itemUid
+            itemUid,
+            iterationIndex,
+            iterationCount: iterations.length
           };
           currentRunnerEventData = eventData;
 
@@ -2019,8 +2043,7 @@ const registerNetworkIpc = (mainWindow) => {
               mainWindow.webContents.send('main:run-folder-event', {
                 type: 'assertion-results',
                 assertionResults: results,
-                itemUid: item.uid,
-                collectionUid
+                ...eventData
               });
             }
 
@@ -2101,14 +2124,7 @@ const registerNetworkIpc = (mainWindow) => {
           }
 
           if (stopRunnerExecution) {
-            deleteCancelToken(cancelTokenUid);
-            mainWindow.webContents.send('main:run-folder-event', {
-              type: 'testrun-ended',
-              collectionUid,
-              folderUid,
-              statusText: 'collection run was terminated!',
-              runCompletionTime: new Date().toISOString()
-            });
+            terminateRunnerExecution = true;
             break;
           }
 
@@ -2118,7 +2134,8 @@ const registerNetworkIpc = (mainWindow) => {
               throw new Error('Too many jumps, possible infinite loop');
             }
             if (nextRequestName === null) {
-              break;
+              currentRequestIndex = folderRequests.length;
+              continue;
             }
             const nextRequestIdx = folderRequests.findIndex((request) => request.name === nextRequestName);
             if (nextRequestIdx >= 0) {
@@ -2137,7 +2154,8 @@ const registerNetworkIpc = (mainWindow) => {
           type: 'testrun-ended',
           collectionUid,
           folderUid,
-          runCompletionTime: new Date().toISOString()
+          runCompletionTime: new Date().toISOString(),
+          ...(terminateRunnerExecution ? { statusText: 'collection run was terminated!' } : {})
         });
       } catch (error) {
         console.log('error', error);
