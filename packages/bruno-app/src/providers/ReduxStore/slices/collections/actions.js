@@ -765,7 +765,7 @@ export const cancelRunnerExecution = (cancelTokenUid) => (dispatch) => {
 };
 
 export const runCollectionFolder
-  = (collectionUid, folderUid, recursive, delay, tags, selectedRequestUids, dataset) => (dispatch, getState) => {
+  = (collectionUid, folderUid, recursive, delay, tags, selectedRequestUids, dataset, iterationCount = 1, runInParallel = false) => (dispatch, getState) => {
     const state = getState();
     const { globalEnvironments, activeGlobalEnvironmentUid } = state.globalEnvironments;
     const collection = findCollectionByUid(state.collections.collections, collectionUid);
@@ -793,7 +793,7 @@ export const runCollectionFolder
       const environment = findEnvironmentInCollection(collectionCopy, collection.activeEnvironmentUid);
 
       dispatch(
-        _updateRunnerConfiguration({ collectionUid, dataset: dataset || null })
+        _updateRunnerConfiguration({ collectionUid, dataset: dataset || null, iterations: iterationCount, runInParallel })
       );
 
       dispatch(
@@ -814,8 +814,9 @@ export const runCollectionFolder
           delay,
           tags,
           selectedRequestUids,
-          dataset?.rows || null,
-          dataset ? { fileName: dataset.fileName, format: dataset.format, columns: dataset.columns } : null
+          dataset?.rows || Array.from({ length: Math.max(1, Math.min(10000, Number(iterationCount) || 1)) }, () => null),
+          dataset ? { fileName: dataset.fileName, format: dataset.format, columns: dataset.columns } : null,
+          { runInParallel: Boolean(runInParallel) }
         )
         .then(resolve)
         .catch((err) => {
@@ -3339,13 +3340,15 @@ export const showInFolder = (collectionPath) => () => {
 };
 
 export const updateRunnerConfiguration
-  = (collectionUid, selectedRequestItems, requestItemsOrder, delay) => (dispatch) => {
+  = (collectionUid, selectedRequestItems, requestItemsOrder, delay, iterations, runInParallel) => (dispatch) => {
     dispatch(
       _updateRunnerConfiguration({
         collectionUid,
         selectedRequestItems,
         requestItemsOrder,
-        delay
+        delay,
+        iterations,
+        runInParallel
       })
     );
   };

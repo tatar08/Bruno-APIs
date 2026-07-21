@@ -1400,11 +1400,11 @@ const registerNetworkIpc = (mainWindow) => {
   ipcMain.handle('fetch-gql-schema', fetchGqlSchemaHandler);
 
   ipcMain.handle(
-    'renderer:run-collection-folder', async (event, folder, collection, environment, runtimeVariables, recursive, delay, tags, selectedRequestUids, datasetRows, datasetInfo) => {
+    'renderer:run-collection-folder', async function runCollectionFolderHandler(event, folder, collection, environment, runtimeVariables, recursive, delay, tags, selectedRequestUids, datasetRows, datasetInfo, runnerOptions = {}) {
       const collectionUid = collection.uid;
       const collectionPath = collection.pathname;
       const folderUid = folder ? folder.uid : null;
-      const cancelTokenUid = uuid();
+      const cancelTokenUid = runnerOptions.cancelTokenUid || uuid();
       const brunoConfig = getBrunoConfig(collectionUid, collection);
       const scriptingConfig = get(brunoConfig, 'scripts', {});
       scriptingConfig.runtime = getJsSandboxRuntime(collection);
@@ -1417,18 +1417,21 @@ const registerNetworkIpc = (mainWindow) => {
       let currentRunnerEventData = null;
       const baseRuntimeVariables = cloneDeep(runtimeVariables || {});
       const iterations = Array.isArray(datasetRows) && datasetRows.length > 0 ? datasetRows : [null];
+      const activeAbortControllers = runnerOptions.activeAbortControllers || new Set();
       if (iterations.some((row) => row !== null && (!row || typeof row !== 'object' || Array.isArray(row)))) {
         throw new Error('Runner dataset rows must be objects');
       }
 
-      const abortController = new AbortController();
-      saveCancelToken(cancelTokenUid, abortController);
+      const abortController = runnerOptions.abortController || new AbortController();
+      if (!runnerOptions.parallelChild) {
+        saveCancelToken(cancelTokenUid, abortController);
+      }
 
-      abortController.signal.addEventListener('abort', () => {
-        if (currentAbortController) {
-          currentAbortController.abort();
-        }
-      });
+      if (!runnerOptions.parallelChild) {
+        abortController.signal.addEventListener('abort', () => {
+          activeAbortControllers.forEach((controller) => controller.abort());
+        });
+      }
 
       const runRequestByItemPathname = async (relativeItemPathname, callerBru) => {
         return new Promise(async (resolve, reject) => {
@@ -1534,16 +1537,62 @@ const registerNetworkIpc = (mainWindow) => {
         folder = collection;
       }
 
-      mainWindow.webContents.send('main:run-folder-event', {
-        type: 'testrun-started',
-        isRecursive: recursive,
-        collectionUid,
-        folderUid,
-        cancelTokenUid,
-        iterationCount: iterations.length,
-        datasetFileName: datasetInfo?.fileName || null,
-        datasetColumns: datasetInfo?.columns || []
-      });
+      if (!runnerOptions.parallelChild) {
+        mainWindow.webContents.send('main:run-folder-event', {
+          type: 'testrun-started',
+          isRecursive: recursive,
+          collectionUid,
+          folderUid,
+          cancelTokenUid,
+          iterationCount: iterations.length,
+          datasetFileName: datasetInfo?.fileName || null,
+          datasetColumns: datasetInfo?.columns || []
+        });
+      }
+
+      if (runnerOptions.runInParallel && iterations.length > 1 && !runnerOptions.parallelChild) {
+        try {
+          await Promise.all(iterations.map((iterationData, iterationIndex) => runCollectionFolderHandler(
+            event,
+            folderUid ? cloneDeep(folder) : null,
+            cloneDeep(collection),
+            cloneDeep(environment),
+            cloneDeep(baseRuntimeVariables),
+            recursive,
+            delay,
+            cloneDeep(tags),
+            selectedRequestUids,
+            [iterationData],
+            datasetInfo,
+            {
+              parallelChild: true,
+              abortController,
+              activeAbortControllers,
+              cancelTokenUid,
+              iterationIndex,
+              iterationCount: iterations.length
+            }
+          )));
+          deleteCancelToken(cancelTokenUid);
+          mainWindow.webContents.send('main:run-folder-event', {
+            type: 'testrun-ended',
+            collectionUid,
+            folderUid,
+            runCompletionTime: new Date().toISOString()
+          });
+        } catch (error) {
+          abortController.abort();
+          deleteCancelToken(cancelTokenUid);
+          mainWindow.webContents.send('main:run-folder-event', {
+            type: 'testrun-ended',
+            collectionUid,
+            folderUid,
+            runCompletionTime: new Date().toISOString(),
+            error: error && !error.isCancel ? error : null
+          });
+        }
+        return;
+      }
 
       try {
         let folderRequests = [];
@@ -1622,8 +1671,8 @@ const registerNetworkIpc = (mainWindow) => {
             collectionUid,
             folderUid,
             itemUid,
-            iterationIndex,
-            iterationCount: iterations.length
+            iterationIndex: runnerOptions.iterationIndex ?? iterationIndex,
+            iterationCount: runnerOptions.iterationCount || iterations.length
           };
           currentRunnerEventData = eventData;
 
@@ -1646,6 +1695,7 @@ const registerNetworkIpc = (mainWindow) => {
           let timeEnd;
 
           const requestUid = uuid();
+          eventData.requestUid = requestUid;
 
           mainWindow.webContents.send('main:run-folder-event', {
             type: 'request-queued',
@@ -1817,6 +1867,8 @@ const registerNetworkIpc = (mainWindow) => {
             });
 
             currentAbortController = new AbortController();
+            activeAbortControllers.add(currentAbortController);
+            if (abortController.signal.aborted) currentAbortController.abort();
             request.signal = currentAbortController.signal;
             request.responseType = 'stream';
             const axiosInstance = await configureRequest(
@@ -1872,14 +1924,19 @@ const registerNetworkIpc = (mainWindow) => {
             try {
               if (delay && !Number.isNaN(delay) && delay > 0) {
                 const delayPromise = new Promise((resolve) => setTimeout(resolve, delay));
-
+                let cancelDelay;
                 const cancellationPromise = new Promise((_, reject) => {
-                  abortController.signal.addEventListener('abort', () => {
+                  cancelDelay = () => {
                     reject(new Error('Cancelled'));
-                  });
+                  };
+                  abortController.signal.addEventListener('abort', cancelDelay, { once: true });
                 });
 
-                await Promise.race([delayPromise, cancellationPromise]);
+                try {
+                  await Promise.race([delayPromise, cancellationPromise]);
+                } finally {
+                  abortController.signal.removeEventListener('abort', cancelDelay);
+                }
               }
 
               /** @type {import('axios').AxiosResponse} */
@@ -1964,6 +2021,9 @@ const registerNetworkIpc = (mainWindow) => {
                 // if it's not a network error, don't continue
                 throw error;
               }
+            } finally {
+              activeAbortControllers.delete(currentAbortController);
+              currentAbortController = null;
             }
 
             let postResponseScriptResult;
@@ -2149,15 +2209,18 @@ const registerNetworkIpc = (mainWindow) => {
           }
         }
 
-        deleteCancelToken(cancelTokenUid);
-        mainWindow.webContents.send('main:run-folder-event', {
-          type: 'testrun-ended',
-          collectionUid,
-          folderUid,
-          runCompletionTime: new Date().toISOString(),
-          ...(terminateRunnerExecution ? { statusText: 'collection run was terminated!' } : {})
-        });
+        if (!runnerOptions.parallelChild) {
+          deleteCancelToken(cancelTokenUid);
+          mainWindow.webContents.send('main:run-folder-event', {
+            type: 'testrun-ended',
+            collectionUid,
+            folderUid,
+            runCompletionTime: new Date().toISOString(),
+            ...(terminateRunnerExecution ? { statusText: 'collection run was terminated!' } : {})
+          });
+        }
       } catch (error) {
+        if (runnerOptions.parallelChild) throw error;
         console.log('error', error);
         deleteCancelToken(cancelTokenUid);
         mainWindow.webContents.send('main:run-folder-event', {

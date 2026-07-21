@@ -3277,7 +3277,7 @@ export const collectionsSlice = createSlice({
       }
     },
     runFolderEvent: (state, action) => {
-      const { collectionUid, folderUid, itemUid, type, isRecursive, error, cancelTokenUid, iterationIndex, iterationCount, datasetFileName, datasetColumns } = action.payload;
+      const { collectionUid, folderUid, itemUid, requestUid, type, isRecursive, error, cancelTokenUid, iterationIndex, iterationCount, datasetFileName, datasetColumns } = action.payload;
       const collection = findCollectionByUid(state.collections, collectionUid);
 
       if (collection) {
@@ -3285,6 +3285,9 @@ export const collectionsSlice = createSlice({
         const request = findItemInCollection(collection, itemUid);
 
         collection.runnerResult = collection.runnerResult || { info: {}, items: [] };
+        const findRunnerItem = () => collection.runnerResult.items.findLast((item) => requestUid
+          ? item.requestUid === requestUid
+          : item.uid === request.uid && item.iterationIndex === (iterationIndex || 0));
 
         // todo
         // get startedAt and endedAt from the runner and display it in the UI
@@ -3323,6 +3326,7 @@ export const collectionsSlice = createSlice({
 
           collection.runnerResult.items.push({
             uid: request.uid,
+            requestUid,
             status: 'queued',
             iterationIndex: iterationIndex || 0,
             iterationCount: iterationCount || 1
@@ -3330,46 +3334,46 @@ export const collectionsSlice = createSlice({
         }
 
         if (type === 'request-sent') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.status = 'running';
           item.requestSent = action.payload.requestSent;
         }
 
         if (type === 'response-received') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.status = 'completed';
           item.responseReceived = action.payload.responseReceived;
         }
 
         if (type === 'test-results') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.testResults = action.payload.testResults;
         }
 
         if (type === 'test-results-pre-request') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.preRequestTestResults = action.payload.preRequestTestResults;
         }
 
         if (type === 'test-results-post-response') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.postResponseTestResults = action.payload.postResponseTestResults;
         }
 
         if (type === 'assertion-results') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.assertionResults = action.payload.assertionResults;
         }
 
         if (type === 'error') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.error = action.payload.error;
           item.responseReceived = action.payload.responseReceived;
           item.status = 'error';
         }
 
         if (type === 'runner-request-skipped') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           if (item) {
             item.status = 'skipped';
             item.responseReceived = action.payload.responseReceived;
@@ -3377,26 +3381,26 @@ export const collectionsSlice = createSlice({
         }
 
         if (type === 'post-response-script-execution') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.postResponseScriptErrorMessage = action.payload.errorMessage;
           item.postResponseScriptErrorContext = action.payload.errorContext || null;
         }
 
         if (type === 'test-script-execution') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.testScriptErrorMessage = action.payload.errorMessage;
           item.testScriptErrorContext = action.payload.errorContext || null;
         }
 
         if (type === 'pre-request-script-execution') {
-          const item = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const item = findRunnerItem();
           item.preRequestScriptErrorMessage = action.payload.errorMessage;
           item.preRequestScriptErrorContext = action.payload.errorContext || null;
         }
 
         if (type === 'scripted-request') {
           const { phase, source, scope, timestamp, data } = action.payload;
-          const runnerItem = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const runnerItem = findRunnerItem();
           if (runnerItem) {
             if (!runnerItem.scriptedRequestEntries) runnerItem.scriptedRequestEntries = [];
             runnerItem.scriptedRequestEntries.push({
@@ -3411,7 +3415,7 @@ export const collectionsSlice = createSlice({
 
         if (type === 'oauth2-debug') {
           const { url, credentialsId, debugInfo } = action.payload;
-          const runnerItem = collection.runnerResult.items.findLast((i) => i.uid === request.uid);
+          const runnerItem = findRunnerItem();
           if (runnerItem) {
             if (!runnerItem.oauth2DebugEntries) runnerItem.oauth2DebugEntries = [];
             runnerItem.oauth2DebugEntries.push({
@@ -3448,7 +3452,7 @@ export const collectionsSlice = createSlice({
       }
     },
     updateRunnerConfiguration: (state, action) => {
-      const { collectionUid, selectedRequestItems, requestItemsOrder, delay, dataset } = action.payload;
+      const { collectionUid, selectedRequestItems, requestItemsOrder, delay, dataset, iterations, runInParallel } = action.payload;
       const collection = findCollectionByUid(state.collections, collectionUid);
       if (collection) {
         collection.runnerConfiguration = {
@@ -3456,7 +3460,9 @@ export const collectionsSlice = createSlice({
           ...(selectedRequestItems !== undefined && { selectedRequestItems }),
           ...(requestItemsOrder !== undefined && { requestItemsOrder }),
           ...(delay !== undefined && { delay }),
-          ...(dataset !== undefined && { dataset })
+          ...(dataset !== undefined && { dataset }),
+          ...(iterations !== undefined && { iterations }),
+          ...(runInParallel !== undefined && { runInParallel })
         };
       }
     },

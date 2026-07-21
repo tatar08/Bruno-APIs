@@ -11,6 +11,7 @@ import StyledWrapper from './StyledWrapper';
 import RunnerTags from './RunnerTags/index';
 import RunConfigurationPanel from './RunConfigurationPanel';
 import RunnerDatasetInput from './RunnerDatasetInput';
+import ToggleSwitch from 'components/ToggleSwitch';
 import Button from 'ui/Button/index';
 
 const getDisplayName = (fullPath, pathname, name = '') => {
@@ -81,6 +82,8 @@ export default function RunnerResults({ collection }) {
   const [selectedItem, setSelectedItem] = useState(null);
   const [delay, setDelay] = useState(null);
   const [dataset, setDataset] = useState(() => get(collection, 'runnerConfiguration.dataset', null));
+  const [iterations, setIterations] = useState(() => get(collection, 'runnerConfiguration.iterations', 1));
+  const [runInParallel, setRunInParallel] = useState(() => get(collection, 'runnerConfiguration.runInParallel', false));
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedRequestItems, setSelectedRequestItems] = useState([]);
   const isReRunningRef = useRef(false);
@@ -165,6 +168,12 @@ export default function RunnerResults({ collection }) {
       if (savedConfiguration.delay !== undefined && delay === null) {
         setDelay(savedConfiguration.delay);
       }
+      if (savedConfiguration.iterations !== undefined) {
+        setIterations(savedConfiguration.iterations);
+      }
+      if (savedConfiguration.runInParallel !== undefined) {
+        setRunInParallel(savedConfiguration.runInParallel);
+      }
     }
   }, [collection.runnerConfiguration, delay]);
 
@@ -188,8 +197,8 @@ export default function RunnerResults({ collection }) {
 
   const runCollection = () => {
     const savedOrder = get(collection, 'runnerConfiguration.requestItemsOrder', selectedRequestItems);
-    dispatch(updateRunnerConfiguration(collection.uid, selectedRequestItems, savedOrder, delay));
-    dispatch(runCollectionFolder(collection.uid, null, true, Number(delay), tags, selectedRequestItems, dataset));
+    dispatch(updateRunnerConfiguration(collection.uid, selectedRequestItems, savedOrder, delay, iterations, runInParallel));
+    dispatch(runCollectionFolder(collection.uid, null, true, Number(delay), tags, selectedRequestItems, dataset, iterations, runInParallel));
   };
 
   const runAgain = () => {
@@ -200,6 +209,8 @@ export default function RunnerResults({ collection }) {
     const savedSelectedItems = savedConfiguration?.selectedRequestItems || [];
     const savedDelay = savedConfiguration?.delay !== undefined ? savedConfiguration.delay : delay;
     const savedDataset = savedConfiguration?.dataset || dataset;
+    const savedIterations = savedConfiguration?.iterations || iterations;
+    const savedRunInParallel = savedConfiguration?.runInParallel ?? runInParallel;
     dispatch(
       runCollectionFolder(
         collection.uid,
@@ -208,7 +219,9 @@ export default function RunnerResults({ collection }) {
         Number(savedDelay),
         tags,
         savedSelectedItems,
-        savedDataset
+        savedDataset,
+        savedIterations,
+        savedRunInParallel
       )
     );
   };
@@ -222,6 +235,8 @@ export default function RunnerResults({ collection }) {
     );
     setDelay(null);
     setDataset(null);
+    setIterations(1);
+    setRunInParallel(false);
   };
 
   const cancelExecution = () => {
@@ -229,6 +244,7 @@ export default function RunnerResults({ collection }) {
   };
 
   const totalRequestsInCollection = getTotalRequestCountInCollection(collectionCopy);
+  const iterationCount = dataset ? dataset.rows.length : iterations;
   const filterCounts = {
     all: items.length,
     passed: items.filter(allTestsPassed).length,
@@ -274,17 +290,37 @@ export default function RunnerResults({ collection }) {
               />
             </div>
 
-            {/* Run with Parameters */}
-            <div className="runner-section-title mt-6">Run with Parameters</div>
-            <div className="runner-section mt-2">
-              <RunnerDatasetInput dataset={dataset} onChange={setDataset} disabled={isCollectionLoading} />
-            </div>
-
             {/* Filters */}
             <div className="runner-section-title mt-6">Filters</div>
-            <div className="runner-section mt-2 mb-6">
+            <div className="runner-section mt-2">
               {/* Tags for the collection run */}
               <RunnerTags collectionUid={collection.uid} />
+            </div>
+
+            {/* Run with Parameters */}
+            <div className="runner-section-title mt-6">Run with Parameters</div>
+            <div className="runner-section mt-2 mb-6">
+              <RunnerDatasetInput dataset={dataset} onChange={setDataset} disabled={isCollectionLoading} />
+              <label className="block mt-4">Iterations</label>
+              <input
+                type="number"
+                min="1"
+                max="10000"
+                className="block textbox w-full mt-2"
+                value={iterationCount}
+                disabled={Boolean(dataset) || isCollectionLoading}
+                onChange={(event) => setIterations(Math.max(1, Math.min(10000, Number(event.target.value) || 1)))}
+                data-testid="runner-iterations-input"
+              />
+              <div className="flex items-center gap-2 mt-3">
+                <ToggleSwitch
+                  isOn={runInParallel}
+                  handleToggle={(event) => setRunInParallel(event.target.checked)}
+                  size="2xs"
+                  data-testid="runner-parallel-toggle"
+                />
+                <span>Run in parallel</span>
+              </div>
             </div>
 
             <div className="flex flex-row gap-2">
@@ -294,7 +330,7 @@ export default function RunnerResults({ collection }) {
                 disabled={selectedRequestItems.length === 0 || isCollectionLoading}
                 onClick={runCollection}
               >
-                Run {selectedRequestItems.length} Request{selectedRequestItems.length !== 1 ? 's' : ''}{dataset ? <> × {dataset.rows.length} Iteration{dataset.rows.length !== 1 ? 's' : ''}</> : null}
+                Run {selectedRequestItems.length} Request{selectedRequestItems.length !== 1 ? 's' : ''}{iterationCount > 1 ? <> × {iterationCount} Iterations</> : null}
               </Button>
 
               <Button type="button" variant="ghost" onClick={resetRunner}>

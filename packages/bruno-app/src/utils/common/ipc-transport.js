@@ -183,10 +183,8 @@ class BrowserTransport {
       return selectedPath ? this.invoke("renderer:open-api-spec-file", selectedPath, args[0] || null) : null;
     }
 
-    if (channel === "renderer:load-gql-schema-file" || channel === "renderer:browse-pac-file" || channel === "renderer:load-runner-dataset") {
-      const selectedPath = promptForPath(channel === "renderer:load-runner-dataset"
-        ? "Enter a JSON or CSV dataset path on the Bruno bridge server:"
-        : "Enter a file path on the Bruno bridge server:");
+    if (channel === 'renderer:load-gql-schema-file' || channel === 'renderer:browse-pac-file') {
+      const selectedPath = promptForPath('Enter a file path on the Bruno bridge server:');
       if (!selectedPath) return null;
       args = [selectedPath];
     }

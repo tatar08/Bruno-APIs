@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { IconFileSpreadsheet, IconX } from '@tabler/icons';
 import { transport } from 'utils/common/ipc-transport';
@@ -6,11 +6,17 @@ import Button from 'ui/Button';
 
 const RunnerDatasetInput = ({ dataset, onChange, disabled = false, className = '' }) => {
   const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef(null);
 
-  const selectDataset = async () => {
+  const loadDataset = async (selectedFile) => {
     setLoading(true);
     try {
-      const result = await transport.invoke('renderer:load-runner-dataset');
+      const result = selectedFile
+        ? await transport.invoke('renderer:load-runner-dataset', {
+            fileName: selectedFile.name,
+            content: await selectedFile.text()
+          })
+        : await transport.invoke('renderer:load-runner-dataset');
       if (result) onChange(result);
     } catch (error) {
       toast.error(error?.message || 'Unable to load the dataset file');
@@ -19,8 +25,36 @@ const RunnerDatasetInput = ({ dataset, onChange, disabled = false, className = '
     }
   };
 
+  const selectDataset = async () => {
+    if (!transport.isElectron) {
+      fileInputRef.current?.click();
+      return;
+    }
+
+    await loadDataset();
+  };
+
+  const onBrowserFileSelected = async (event) => {
+    const selectedFile = event.target.files?.[0];
+    // Allow selecting the same file again after it has been changed on disk.
+    event.target.value = '';
+    if (selectedFile) await loadDataset(selectedFile);
+  };
+
   return (
     <div className={className} data-testid="runner-dataset-input">
+      {!transport.isElectron && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,.csv,application/json,text/csv"
+          className="hidden"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={onBrowserFileSelected}
+          data-testid="runner-dataset-file-input"
+        />
+      )}
       <div className="flex items-center gap-2">
         <Button type="button" size="sm" variant="outline" disabled={disabled} loading={loading} onClick={selectDataset}>
           {dataset ? 'Replace Dataset' : 'Select Dataset File'}

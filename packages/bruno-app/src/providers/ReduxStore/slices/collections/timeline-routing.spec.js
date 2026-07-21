@@ -226,6 +226,33 @@ describe('runFolderEvent — runner flow', () => {
     expect(items[0].scriptedRequestEntries[0].data.request.url).toBe('A');
     expect(items[1].scriptedRequestEntries[0].data.request.url).toBe('B');
   });
+
+  test('parallel iterations route interleaved events by requestUid', () => {
+    let state = seedRunner(makeInitialState());
+    state = reducer(state, runFolderEvent({
+      type: 'request-queued', collectionUid: COLLECTION_UID, folderUid: null,
+      itemUid: ITEM_UID, requestUid: 'parallel-1', iterationIndex: 0, iterationCount: 2
+    }));
+    state = reducer(state, runFolderEvent({
+      type: 'request-queued', collectionUid: COLLECTION_UID, folderUid: null,
+      itemUid: ITEM_UID, requestUid: 'parallel-2', iterationIndex: 1, iterationCount: 2
+    }));
+
+    // Iteration 1 finishes after iteration 2 has already queued.
+    state = reducer(state, runFolderEvent({
+      type: 'response-received', collectionUid: COLLECTION_UID, folderUid: null,
+      itemUid: ITEM_UID, requestUid: 'parallel-1', iterationIndex: 0,
+      responseReceived: { status: 200 }
+    }));
+    state = reducer(state, runFolderEvent({
+      type: 'response-received', collectionUid: COLLECTION_UID, folderUid: null,
+      itemUid: ITEM_UID, requestUid: 'parallel-2', iterationIndex: 1,
+      responseReceived: { status: 201 }
+    }));
+
+    const items = state.collections[0].runnerResult.items.filter((item) => item.requestUid?.startsWith('parallel-'));
+    expect(items.map((item) => item.responseReceived.status)).toEqual([200, 201]);
+  });
 });
 
 describe('collectionAddOauth2CredentialsByUrl — executionMode gating', () => {

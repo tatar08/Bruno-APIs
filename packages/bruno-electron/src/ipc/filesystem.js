@@ -46,6 +46,18 @@ const registerFilesystemIpc = (mainWindow) => {
   });
 
   ipcMain.handle('renderer:load-runner-dataset', async (_, selectedPath = null) => {
+    if (selectedPath && typeof selectedPath === 'object') {
+      const fileName = path.basename(String(selectedPath.fileName || ''));
+      const content = typeof selectedPath.content === 'string' ? selectedPath.content : null;
+      if (!fileName || content === null) throw new Error('Invalid dataset upload');
+      if (Buffer.byteLength(content, 'utf8') > MAX_RUNNER_DATASET_BYTES) {
+        throw new Error('Dataset file cannot be larger than 10 MB');
+      }
+
+      const parsed = parseRunnerDataset(content, fileName);
+      return { ...parsed, fileName, filePath: fileName };
+    }
+
     let filePath = selectedPath;
     if (!filePath) {
       const { filePaths } = await dialog.showOpenDialog(mainWindow, {
