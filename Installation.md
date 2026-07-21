@@ -16,13 +16,13 @@ This guide explains how to install and run Bruno from source in two distinct mod
 
 ## 1. เลือกรูปแบบการใช้งาน
 
-| หัวข้อ | Browser | Desktop |
-|---|---|---|
-| หน้าจอ | Chrome, Edge, Firefox หรือ Safari | Electron application |
-| Process ที่ต้องรัน | Web UI และ Bridge Server | Electron และ Web dev server ในโหมดพัฒนา |
-| การเข้าถึงไฟล์ | ใช้ path บนเครื่องที่รัน Bridge Server | ใช้ native file dialog ของระบบปฏิบัติการ |
-| Port เริ่มต้น | Web UI มักเป็น `3000` หรือ port ว่างถัดไป; Bridge เป็น `4000` | Web dev server จะเลือก port และส่งให้ Electron อัตโนมัติ |
-| เหมาะสำหรับ | ใช้งานผ่าน browser, remote development, ทดสอบ Browser UI | การใช้งานแบบ desktop เต็มรูปแบบและสร้าง installer |
+| หัวข้อ             | Browser                                                       | Desktop                                                  |
+| ------------------ | ------------------------------------------------------------- | -------------------------------------------------------- |
+| หน้าจอ             | Chrome, Edge, Firefox หรือ Safari                             | Electron application                                     |
+| Process ที่ต้องรัน | Web UI และ Bridge Server                                      | Electron และ Web dev server ในโหมดพัฒนา                  |
+| การเข้าถึงไฟล์     | ใช้ path บนเครื่องที่รัน Bridge Server                        | ใช้ native file dialog ของระบบปฏิบัติการ                 |
+| Port เริ่มต้น      | Web UI มักเป็น `3000` หรือ port ว่างถัดไป; Bridge เป็น `4000` | Web dev server จะเลือก port และส่งให้ Electron อัตโนมัติ |
+| เหมาะสำหรับ        | ใช้งานผ่าน browser, remote development, ทดสอบ Browser UI      | การใช้งานแบบ desktop เต็มรูปแบบและสร้าง installer        |
 
 > [!IMPORTANT]
 > Browser Bridge มีสิทธิ์อ่าน/เขียน filesystem และเรียก network จากเครื่องที่รัน server อย่าเปิด port `4000` สู่ Internet สาธารณะ และควรใช้งานเฉพาะเครื่องหรือเครือข่ายที่เชื่อถือได้
@@ -356,7 +356,6 @@ $installer.FullName
 Start-Process $installer.FullName
 ```
 
-
 #### macOS
 
 ```bash
@@ -475,13 +474,13 @@ npm run setup
 
 ## 1. Choose a Runtime Mode
 
-| Area | Browser | Desktop |
-|---|---|---|
-| UI host | Chrome, Edge, Firefox, or Safari | Electron application |
-| Required processes | Web UI and Bridge Server | Electron plus the web dev server during development |
-| File access | Paths on the machine running Bridge Server | Native operating-system file dialogs |
-| Default ports | Web UI usually uses `3000` or the next free port; Bridge uses `4000` | The dev server selects a port and passes it to Electron |
-| Best suited for | Browser access, remote development, and Browser UI testing | Full desktop integration and distributable installers |
+| Area               | Browser                                                              | Desktop                                                 |
+| ------------------ | -------------------------------------------------------------------- | ------------------------------------------------------- |
+| UI host            | Chrome, Edge, Firefox, or Safari                                     | Electron application                                    |
+| Required processes | Web UI and Bridge Server                                             | Electron plus the web dev server during development     |
+| File access        | Paths on the machine running Bridge Server                           | Native operating-system file dialogs                    |
+| Default ports      | Web UI usually uses `3000` or the next free port; Bridge uses `4000` | The dev server selects a port and passes it to Electron |
+| Best suited for    | Browser access, remote development, and Browser UI testing           | Full desktop integration and distributable installers   |
 
 > [!IMPORTANT]
 > Browser Bridge can read/write files and make network requests from the machine on which it runs. Do not expose port `4000` to the public Internet. Run it only on a trusted machine or trusted network.
@@ -815,7 +814,6 @@ $installer.FullName
 Start-Process $installer.FullName
 ```
 
-
 #### macOS
 
 ```bash
@@ -932,20 +930,22 @@ This reinstalls dependencies across the workspace. On Windows, errors mentioning
 
 ## Command Summary / สรุปคำสั่ง
 
-| งาน / Task | Command |
-|---|---|
-| ติดตั้งทั้งหมด / Full setup | `npm run setup` |
-| Browser development | `npm run dev:browser` |
-| Browser Bridge only | `npm run dev:server` |
-| Web UI only | `npm run dev:web` |
-| Browser production build | `npm run build:web` |
-| Desktop development | `npm run dev` |
-| Electron only | `npm run dev:electron` |
-| Desktop build for current OS | `npm run build:electron` |
-| macOS installer | `npm run build:electron:mac` |
-| Windows installer | `npm run build:electron` on Windows |
-| Linux AppImage | `npm run build:electron:linux` |
-| Linux DEB | `npm run build:electron:deb` |
-| Linux RPM | `npm run build:electron:rpm` |
-| Linux Snap | `npm run build:electron:snap` |
+| งาน / Task                   | Command                             |
+| ---------------------------- | ----------------------------------- |
+| ติดตั้งทั้งหมด / Full setup  | `npm run setup`                     |
+| Browser development          | `npm run dev:browser`               |
+| Browser Bridge only          | `npm run dev:server`                |
+| Web UI only                  | `npm run dev:web`                   |
+| Browser production build     | `npm run build:web`                 |
+| Desktop development          | `npm run dev`                       |
+| Electron only                | `npm run dev:electron`              |
+| Desktop build for current OS | `npm run build:electron`            |
+| macOS installer              | `npm run build:electron:mac`        |
+| Windows installer            | `npm run build:electron` on Windows |
+| Linux AppImage               | `npm run build:electron:linux`      |
+| Linux DEB                    | `npm run build:electron:deb`        |
+| Linux RPM                    | `npm run build:electron:rpm`        |
+| Linux Snap                   | `npm run build:electron:snap`       |
 
+Run Web UI & Bridge Server: npm run dev:browser
+Run Electron Desktop Mode: npm run dev:electron

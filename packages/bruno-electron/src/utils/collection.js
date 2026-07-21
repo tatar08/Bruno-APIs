@@ -778,23 +778,23 @@ const getAllRequestsInFolderRecursively = (folder = {}) => {
 };
 
 const getEnvVars = (environment = {}) => {
-  const variables = environment.variables;
+  const variables = environment?.variables;
   if (!variables || !variables.length) {
     return {
-      __name__: environment.name
+      __name__: environment?.name
     };
   }
 
   const envVars = {};
   each(variables, (variable) => {
-    if (variable.enabled) {
+    if (variable && variable.enabled) {
       envVars[variable.name] = resolveTypedValue(variable);
     }
   });
 
   return {
     ...envVars,
-    __name__: environment.name
+    __name__: environment?.name
   };
 };
 
