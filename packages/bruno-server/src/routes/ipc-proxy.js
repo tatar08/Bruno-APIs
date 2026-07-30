@@ -19,6 +19,7 @@ const {
 const { getCapability } = require('../security/channel-capabilities');
 const { getMaxPayloadBytes, validateArgs } = require('../security/channel-policy');
 const { runWithSession } = require('../session-context');
+const { ERROR_CODES } = require('@usebruno/rpc-contract');
 
 const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   const router = express.Router();
@@ -35,6 +36,7 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
 
     if (isPrivilegedChannel(channel) && !PRIVILEGED_CHANNELS_ENABLED) {
       return res.status(403).json({
+        code: ERROR_CODES.PRIVILEGED_CHANNEL_DISABLED,
         error: `Channel "${channel}" is disabled by default in Browser Bridge mode (terminal execution / git clone-connect). Set BRUNO_SERVER_ENABLE_PRIVILEGED_CHANNELS=true to enable it.`
       });
     }
@@ -44,18 +46,20 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
     const contentLength = Number(req.headers['content-length']);
     if (maxPayloadBytes !== null && Number.isFinite(contentLength) && contentLength > maxPayloadBytes) {
       return res.status(413).json({
+        code: ERROR_CODES.PAYLOAD_TOO_LARGE,
         error: `Payload too large for channel "${channel}" (capability "${getCapability(channel, sourceFile)}"): ${contentLength} bytes exceeds the ${maxPayloadBytes} byte limit for this channel type.`
       });
     }
 
     const argsError = validateArgs(channel, args);
     if (argsError) {
-      return res.status(400).json({ error: argsError });
+      return res.status(400).json({ code: ERROR_CODES.INVALID_ARGS, error: argsError });
     }
 
     const disallowedPath = findDisallowedPath(channel, args);
     if (disallowedPath) {
       return res.status(403).json({
+        code: ERROR_CODES.PATH_OUTSIDE_ALLOWED_ROOT,
         error: `Path "${disallowedPath}" is outside the allowed roots configured for this Bridge (BRUNO_SERVER_ALLOWED_ROOTS).`
       });
     }
@@ -66,11 +70,11 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
     const clientKey = req.brunoSessionId || req.ip;
 
     if (!checkRateLimit(clientKey)) {
-      return res.status(429).json({ error: 'Too many IPC requests, slow down.' });
+      return res.status(429).json({ code: ERROR_CODES.RATE_LIMITED, error: 'Too many IPC requests, slow down.' });
     }
 
     if (!acquireConcurrencySlot(clientKey)) {
-      return res.status(429).json({ error: 'Too many concurrent IPC requests in flight.' });
+      return res.status(429).json({ code: ERROR_CODES.CONCURRENCY_LIMITED, error: 'Too many concurrent IPC requests in flight.' });
     }
 
     const isEvent = fireAndForget && handlerRegistry.hasEvent(channel);
@@ -80,6 +84,7 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
     if (!handlerRegistry.has(channel) && !isEvent) {
       releaseConcurrencySlot(clientKey);
       return res.status(404).json({
+        code: ERROR_CODES.HANDLER_NOT_FOUND,
         error: `No handler registered for channel: ${channel}`,
         availableChannels: handlerRegistry.getChannels().slice(0, 20) // Show first 20 for debugging
       });
@@ -105,12 +110,13 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
     } catch (err) {
       if (err instanceof IpcTimeoutError) {
         console.error(`[IPC Proxy] Timeout in handler "${channel}"`);
-        return res.status(504).json({ error: err.message });
+        return res.status(504).json({ code: ERROR_CODES.HANDLER_TIMEOUT, error: err.message });
       }
 
       console.error(`[IPC Proxy] Error in handler "${channel}":`, err.message);
 
       return res.status(500).json({
+        code: ERROR_CODES.HANDLER_ERROR,
         error: err.message || 'Internal server error',
         stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
       });

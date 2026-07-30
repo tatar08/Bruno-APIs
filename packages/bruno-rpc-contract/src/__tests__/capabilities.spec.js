@@ -1,16 +1,15 @@
-const { getCapability, ALL_CAPABILITIES, CHANNEL_CAPABILITY_OVERRIDES } = require('../channel-capabilities');
-const realChannelSources = require('@usebruno/rpc-contract/fixtures/real-channel-sources.json');
+const { getCapability, ALL_CAPABILITIES, CHANNEL_CAPABILITY_OVERRIDES } = require('../capabilities');
+const realChannelSources = require('../../fixtures/real-channel-sources.json');
 
 // real-channel-sources.json is a snapshot of HandlerRegistry's actual
 // channel -> source file mapping, captured by booting the real bruno-server
 // process and dumping handlerRegistry.getChannelSource() for every
-// registered channel (see handler-registry.js's _captureSourceFile). If a
-// future bruno-electron change adds a new ipc/*.js file, this test will
-// start failing for its channels until SOURCE_TO_CAPABILITY is updated —
-// that's the point: it catches capability-taxonomy drift instead of letting
-// new channels silently resolve to 'unknown'.
+// registered channel. audit-parity.js re-captures this live and diffs it
+// against the committed copy to catch drift; this test catches taxonomy
+// drift specifically — a new ipc/*.js file whose channels silently resolve
+// to 'unknown'.
 
-describe('channel-capabilities', () => {
+describe('capabilities', () => {
   it('resolves every real registered channel to a known capability, never "unknown"', () => {
     const unresolved = realChannelSources.filter(({ channel, sourceFile }) => {
       const capability = getCapability(channel, sourceFile);

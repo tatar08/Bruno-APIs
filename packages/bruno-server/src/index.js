@@ -11,6 +11,14 @@
  *   npm run dev:server
  */
 
+// When dumping the channel registry for audit-parity.js, keep stdout
+// reserved for the JSON payload alone — every registration step below logs
+// via console.log/warn, so route those to stderr instead for this run only.
+if (process.env.BRUNO_RPC_CONTRACT_DUMP === 'true') {
+  console.log = console.error;
+  console.warn = console.error;
+}
+
 const http = require('http');
 const path = require('path');
 const express = require('express');
@@ -404,6 +412,21 @@ try {
 } catch (err) {
   console.error('\n❌ Fatal error registering handlers:', err);
   process.exit(1);
+}
+
+// Dump the real, currently-live channel -> source-file map as JSON and exit,
+// without ever binding a port. Used by @usebruno/rpc-contract's
+// scripts/audit-parity.js to detect drift between the committed channel
+// fixture/constants and the handlers bruno-electron actually registers —
+// see Improvement.md P0.5. Never set this in normal operation.
+if (process.env.BRUNO_RPC_CONTRACT_DUMP === 'true') {
+  const describeChannel = (channel) => ({ channel, sourceFile: handlerRegistry.getChannelSource(channel) });
+  const dump = [
+    ...handlerRegistry.getChannels().map(describeChannel),
+    ...handlerRegistry.getEventChannels().map(describeChannel)
+  ];
+  process.stdout.write(JSON.stringify(dump));
+  process.exit(0);
 }
 
 server.listen(PORT, HOST, () => {

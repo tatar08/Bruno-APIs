@@ -1,0 +1,16 @@
+{
+  "name": "@usebruno/rpc-contract",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed channel constants, capability taxonomy and error envelope shared by the Electron IPC surface and the Browser Bridge (Improvement.md P0.5)",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "jest",
+    "audit:parity": "node scripts/audit-parity.js"
+  },
+  "jest": {
+    "modulePaths": [
+      "node_modules"
+    ]
+  }
+}
