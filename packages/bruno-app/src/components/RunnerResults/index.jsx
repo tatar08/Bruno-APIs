@@ -96,7 +96,7 @@ const FilterButton = ({ label, count, active, onClick }) => (
 export default function RunnerResults({ collection }) {
   const dispatch = useDispatch();
   const [selectedItem, setSelectedItem] = useState(null);
-  const [delay, setDelay] = useState(null);
+  const [delay, setDelay] = useState('');
   const [dataset, setDataset] = useState(() => get(collection, 'runnerConfiguration.dataset', null));
   const [iterations, setIterations] = useState(() => get(collection, 'runnerConfiguration.iterations', 1));
   const [runInParallel, setRunInParallel] = useState(() => get(collection, 'runnerConfiguration.runInParallel', false));
@@ -196,7 +196,7 @@ export default function RunnerResults({ collection }) {
   useEffect(() => {
     const savedConfiguration = get(collection, 'runnerConfiguration', null);
     if (savedConfiguration) {
-      if (savedConfiguration.delay !== undefined && delay === null) {
+      if (savedConfiguration.delay !== undefined && delay === '') {
         setDelay(savedConfiguration.delay);
       }
       if (savedConfiguration.iterations !== undefined) {
@@ -210,7 +210,7 @@ export default function RunnerResults({ collection }) {
 
   useEffect(() => {
     if (isReRunningRef.current
-      && (items?.length > 0 || runnerInfo?.status === 'ended' || runnerInfo?.status === 'cancelled')) {
+      && (items?.length > 0 || runnerInfo?.status === 'ended')) {
       isReRunningRef.current = false;
     }
   }, [items, runnerInfo?.status]);
@@ -242,11 +242,12 @@ export default function RunnerResults({ collection }) {
     const savedDataset = savedConfiguration?.dataset || dataset;
     const savedIterations = savedConfiguration?.iterations || iterations;
     const savedRunInParallel = savedConfiguration?.runInParallel ?? runInParallel;
+    const savedRecursive = runnerInfo.isRecursive !== undefined ? runnerInfo.isRecursive : true;
     dispatch(
       runCollectionFolder(
         collection.uid,
         runnerInfo.folderUid,
-        true,
+        savedRecursive,
         Number(savedDelay),
         tags,
         savedSelectedItems,
@@ -264,7 +265,7 @@ export default function RunnerResults({ collection }) {
         collectionUid: collection.uid
       })
     );
-    setDelay(null);
+    setDelay('');
     setDataset(null);
     setIterations(1);
     setRunInParallel(false);
@@ -276,6 +277,10 @@ export default function RunnerResults({ collection }) {
 
   const totalRequestsInCollection = getTotalRequestCountInCollection(collectionCopy);
   const iterationCount = dataset ? dataset.rows.length : iterations;
+  // Table view / data modal reflect the run that actually executed, not the
+  // (possibly stale or unrelated) local form state — see runnerInfo from testrun-started.
+  const resultIterationCount = runnerInfo.iterationCount || iterationCount;
+  const resultDatasetRows = runnerInfo.datasetRows || null;
   const filterCounts = {
     all: items.length,
     passed: items.filter(allTestsPassed).length,
@@ -511,18 +516,23 @@ export default function RunnerResults({ collection }) {
                     {Array.from(
                       new Set([
                         ...items.map((i) => i.iterationIndex || 0),
-                        ...Array.from({ length: iterationCount }, (_, idx) => idx)
+                        ...Array.from({ length: resultIterationCount }, (_, idx) => idx)
                       ])
                     )
                       .sort((a, b) => a - b)
                       .map((iterIdx) => {
                         const iterItems = items.filter((i) => (i.iterationIndex || 0) === iterIdx);
+                        const visibleIterItems = iterItems.filter(activeFilterConfig.predicate);
                         const isExpanded = expandedIterations.has(iterIdx);
                         const totalCount = iterItems.length;
                         const passedCount = iterItems.filter(allTestsPassed).length;
                         const failedCount = iterItems.filter(anyTestFailed).length;
                         const skippedCount = iterItems.filter((i) => i.status === 'skipped').length;
-                        const hasData = Boolean(dataset?.rows?.[iterIdx]);
+                        const hasData = Boolean(resultDatasetRows?.[iterIdx]);
+
+                        if (activeFilter !== 'all' && visibleIterItems.length === 0) {
+                          return null;
+                        }
 
                         return (
                           <React.Fragment key={iterIdx}>
@@ -574,7 +584,7 @@ export default function RunnerResults({ collection }) {
                               <tr className="bg-mantle/40">
                                 <td colSpan={4} className="p-0">
                                   <div className="px-4 py-2 border-t border-border0 space-y-1.5">
-                                    {iterItems.map((item, itemIdx) => (
+                                    {visibleIterItems.map((item, itemIdx) => (
                                       <div
                                         key={item.uid + '-' + itemIdx}
                                         className="flex items-center justify-between py-1 px-2.5 rounded bg-surface0/70 hover-bg-surface transition-colors"
@@ -803,7 +813,7 @@ export default function RunnerResults({ collection }) {
           hideFooter={true}
         >
           <div className="p-4">
-            {dataset?.rows?.[selectedDataIteration] ? (
+            {resultDatasetRows?.[selectedDataIteration] ? (
               <table className="w-full text-xs text-left border border-border0 rounded overflow-hidden">
                 <thead>
                   <tr className="bg-mantle border-b border-border0 text-subtext0 font-semibold">
@@ -812,7 +822,7 @@ export default function RunnerResults({ collection }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border0">
-                  {Object.entries(dataset.rows[selectedDataIteration]).map(([key, val]) => (
+                  {Object.entries(resultDatasetRows[selectedDataIteration]).map(([key, val]) => (
                     <tr key={key}>
                       <td className="p-2 font-mono text-purple-400">{key}</td>
                       <td className="p-2 font-mono text-emerald-400">{String(val)}</td>

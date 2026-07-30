@@ -3277,7 +3277,7 @@ export const collectionsSlice = createSlice({
       }
     },
     runFolderEvent: (state, action) => {
-      const { collectionUid, folderUid, itemUid, requestUid, type, isRecursive, error, cancelTokenUid, iterationIndex, iterationCount, datasetFileName, datasetColumns } = action.payload;
+      const { collectionUid, folderUid, itemUid, requestUid, type, isRecursive, error, cancelTokenUid, iterationIndex, iterationCount, datasetFileName, datasetColumns, datasetRows } = action.payload;
       const collection = findCollectionByUid(state.collections, collectionUid);
 
       if (collection) {
@@ -3303,6 +3303,7 @@ export const collectionsSlice = createSlice({
           info.iterationCount = iterationCount || 1;
           info.datasetFileName = datasetFileName || null;
           info.datasetColumns = datasetColumns || [];
+          info.datasetRows = datasetRows || null;
           info.status = 'started';
         }
 
@@ -3314,6 +3315,8 @@ export const collectionsSlice = createSlice({
           }
           if (action.payload.statusText) {
             info.statusText = action.payload.statusText;
+          } else if (action.payload.error) {
+            info.statusText = action.payload.error.message || 'Collection run failed';
           }
         }
 
