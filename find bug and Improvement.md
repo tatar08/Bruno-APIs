@@ -182,6 +182,18 @@ Runner ฝั่ง electron catch error ระดับ run แล้วส่�
 
 **ขอบเขตที่ตั้งใจไม่ครอบคลุม**: เป็น smoke test ระดับ boot + API surface + security default เท่านั้น ยังไม่ครอบคลุม UI-driven flow เต็มรูปแบบ (สร้าง/ส่ง request จริงผ่านฟอร์ม, runner, collection tree) ผ่าน Browser Bridge — ยังต้องพึ่ง Electron e2e suite เดิมสำหรับ UI flow เหล่านั้น เพราะ browser mode กับ Electron mode ใช้ UI component เดียวกัน ต่างกันแค่ transport layer ซึ่ง 4 ไฟล์นี้ครอบ transport layer นั้นโดยเฉพาะ
 
+### P0.2 Channel Policy — เฉพาะส่วน rate limit/concurrency/timeout (partial, เปิดเป็นค่าเริ่มต้น)
+
+P0.2 เต็มรูปแบบ (capability tier ต่อ channel + schema validation input/output ของ handler ทั้ง 203 ตัว + payload limit รายchannel) เป็นงานใหญ่เกินขอบเขต increment เดียว — ทำเฉพาะส่วน "เพิ่ม rate limit, concurrency limit และ execution timeout" จาก acceptance criteria ก่อน เพราะเป็นช่องโหว่ availability ที่ชัดเจนที่สุดที่ยังไม่มี guard เลย: `/api/ipc/:channel` ก่อนหน้านี้รับ request ได้ไม่จำกัดจำนวน/พร้อมกัน และไม่มี timeout ทำให้ handler ที่ค้าง (เช่น I/O แขวน) จะกัน HTTP response ไว้ตลอดไปและใช้ resource ฝั่ง server ไม่จำกัด
+
+- **`security/ipc-limits.js`** (ใหม่) — sliding-window rate limit (`BRUNO_SERVER_IPC_RATE_LIMIT`, default 200 req/`BRUNO_SERVER_IPC_RATE_WINDOW_MS` default 10s), concurrency slot ต่อ client (`BRUNO_SERVER_IPC_MAX_CONCURRENT`, default 40), execution timeout (`BRUNO_SERVER_IPC_TIMEOUT_MS`, default 30s) — คีย์ client ด้วย session ID เมื่อเปิด auth (P0.1) ไม่งั้น fallback เป็น IP เหมือน WS rate limiter เดิม
+- ผูกเข้า `routes/ipc-proxy.js`: เกิน rate limit หรือ concurrency slot เต็ม → `429`, handler ไม่ตอบทันเวลา → `504` (release concurrency slot ใน `finally` เสมอ ไม่ว่า success/error/timeout)
+- ค่าเริ่มต้นตั้งใจให้กว้าง (ไม่กระทบการใช้งานปกติ) ต่างจาก auth (P0.1) ที่เป็น breaking change — อันนี้เป็น availability safety net ล้วนๆ เลยเปิดเป็นค่าเริ่มต้นได้โดยไม่ต้องถามผู้ใช้ก่อนเหมือน P0.1
+- **Unit tests**: `security/__tests__/ipc-limits.spec.js` (8 เคส — rate limit ต่อ client, แยก client ตาม key, reset หลังหมด window ผ่าน mocked `Date.now`, concurrency cap + release, ไม่ติดลบเมื่อ release เกิน acquire, timeout ทั้ง resolve/reject/never-settle)
+- **Live verification ผ่าน curl**: ตั้ง `BRUNO_SERVER_IPC_RATE_LIMIT=3` แล้วยิง 5 requests ติดกัน — 3 แรกผ่าน (200), 2 หลังโดน `429` ตรงตามคาด, `/api/health` ไม่ได้รับผลกระทบ
+
+**ยังไม่ทำ (เหลือใน P0.2)**: capability tier ต่อ channel (`collections:read`, `filesystem:write`, ฯลฯ) พร้อม grant flow — ต้องตัดสินใจ UX ว่าจะ grant capability อย่างไร (คล้าย P0.1 bootstrap token) จึงเก็บไว้เป็นการตัดสินใจแยกต่างหาก, schema validation input/output ต่อ channel (ต้องสำรวจ signature ของ handler ทั้ง 203 ตัวก่อน ขนาดใหญ่กว่า 1 increment มาก), payload limit รายchannel แทน global `BRUNO_SERVER_JSON_LIMIT`
+
 ---
 
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
