@@ -152,7 +152,21 @@ Runner ฝั่ง electron catch error ระดับ run แล้วส่�
 
 **ข้อจำกัดที่ตั้งใจปล่อยไว้ (ต้องรู้ก่อนใช้งานจริง):** ตัวสแกนนี้เป็น generic เดาจาก "string ที่หน้าตาเหมือน absolute path" ไม่รู้ semantic รายช่อง — จาก audit พบว่ามี **~85+ handler** ใน `bruno-electron/src/ipc/` ที่รับ path จาก renderer โดยรูปแบบ argument ไม่เหมือนกันเลย (positional, nested ในอ็อบเจ็กต์, array, source/dest คู่) และมีแค่ 5 handler เท่านั้นที่เคย validate path เอง (`validatePathIsInsideCollection` ใน 4 จุด + inline check ใน `renderer:delete-transient-requests`) ตัว sandbox นี้จึงเป็น **safety net เสริม** ไม่ใช่ per-channel validation ที่สมบูรณ์ — มี extension point `CHANNEL_PATH_EXTRACTORS` ในไฟล์เดียวกันสำหรับเพิ่มความแม่นยำทีละ channel ในอนาคตโดยไม่ต้องแก้ chokepoint
 
-ยังไม่ทำ (เกินขอบเขต quick win): bootstrap token/session auth (P0.1 ส่วนที่เหลือ, ต้อง wire เข้า `ipc-transport.js` ฝั่ง frontend), threat model doc (#1), Playwright browser-bridge project (#7), static RPC manifest audit ของ handler ทั้ง 202+ ตัว (#8), UX prototype file explorer (#10)
+ยังไม่ทำ (เกินขอบเขต quick win): threat model doc (#1), Playwright browser-bridge project (#7), static RPC manifest audit ของ handler ทั้ง 202+ ตัว (#8), UX prototype file explorer (#10)
+
+### P0.1 Bootstrap token + session/CSRF auth — เสร็จแล้ว (opt-in, ปิดเป็นค่าเริ่มต้น)
+
+ทำเสร็จทั้ง server และ frontend:
+
+- **`security/auth.js`** — สร้าง bootstrap token แบบสุ่ม (32 bytes hex) ตอน server start เมื่อ `BRUNO_SERVER_REQUIRE_AUTH=true` เท่านั้น (ดีฟอลต์ปิด = ไม่มี behavior เปลี่ยนเลย), พิมพ์ token ลง console ครั้งเดียว ไม่มีที่อื่น log ซ้ำ; session เก็บใน in-memory Map (TTL 24 ชม.), เทียบ token/CSRF ด้วย `crypto.timingSafeEqual` กัน timing attack
+- **`routes/auth.js`** — `GET /api/auth/status` (public, บอกว่า server ต้อง auth ไหม + session ปัจจุบัน valid ไหม), `POST /api/auth/session` (แลก bootstrap token เป็น HttpOnly+SameSite=Strict session cookie + คืน CSRF token ใน body), `DELETE /api/auth/session` (revoke)
+- **`requireAuth` middleware** คุม `/api/ipc/*` ทั้งหมด: ไม่มี session → 401; method ที่เปลี่ยน state (ไม่ใช่ GET/HEAD/OPTIONS) ต้องมี header `X-CSRF-Token` ตรงกับ session ด้วย (double-submit pattern) ไม่งั้น 403 — กัน CSRF เพราะ cookie อย่างเดียวไม่ใช่หลักฐาน origin
+- **`event-bridge.js`** WebSocket handshake เช็ค session cookie เดียวกันใน `verifyClient` ก่อน origin check ผ่านแล้วค่อย upgrade
+- **`ipc-transport.js`** (frontend, `BrowserTransport`): เพิ่ม `ensureBridgeAuth()` เรียก `/api/auth/status` ครั้งแรกก่อน invoke ใดๆ — ถ้า server ไม่ต้อง auth ก็ผ่านทันทีไม่มีผลกระทบ; ถ้าต้อง auth จะ `window.prompt()` ขอ token แล้วแลก session, เก็บ CSRF token ไว้ใน `sessionStorage` (รอด reload หน้าโดยไม่ต้องถามใหม่ตราบใด cookie ยังไม่หมดอายุ), แนบ `X-CSRF-Token` + `credentials:'include'` ทุก request; ถ้าเจอ 401 กลางทาง (session หมดอายุ) จะ prompt ใหม่แล้ว retry คำขอนั้นอีกครั้งเดียว
+- **Unit tests**: `security/__tests__/auth.spec.js` (14 เคส — token verify, session TTL/expiry ผ่าน mocked `Date.now`, middleware ทั้ง GET/POST/CSRF ผิดถูก, WS cookie check, cookie parsing)
+- **Live verification ผ่าน curl**: บูต server ปิด auth → `/api/ipc/channels` ยัง 200 เหมือนเดิมทุกอย่าง, ไม่มี banner token ขึ้น; บูต server เปิด auth → `/api/ipc/*` ไม่มี cookie = 401, token ผิด = 401, token ถูกแลกได้ csrfToken + cookie, GET ด้วย cookie อย่างเดียวผ่าน, POST ไม่มี/ผิด CSRF = 403, POST ที่มี CSRF ถูกต้อง = 200, WS handshake ไม่มี cookie = 401 / มี cookie = 101 Switching Protocols
+
+**ทำไมถึงเลือก opt-in แทนบังคับเปิดเป็นค่าเริ่มต้น**: การเปิด auth เปลี่ยน UX ของฟีเจอร์ที่ shipped ไปแล้ว (ผู้ใช้ browser mode ทุกคนจะโดน 401 จนกว่าจะไปคัดลอก token จาก console มาใส่) — ต่างจาก control อื่นๆ ใน P0 quick wins ที่ปลอดภัยแบบ transparent อยู่แล้ว ผู้ใช้เลือกให้สร้างโครงสร้างไว้ครบสมบูรณ์แต่ปิดไว้ก่อน (`BRUNO_SERVER_REQUIRE_AUTH=true` เพื่อเปิด) แทนที่จะบังคับ breaking change ทันที
 
 ---
 

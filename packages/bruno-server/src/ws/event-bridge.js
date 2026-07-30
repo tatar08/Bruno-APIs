@@ -7,6 +7,7 @@
 
 const { WebSocketServer } = require('ws');
 const { isOriginAllowed } = require('../security/origin-policy');
+const { isSessionCookieValid } = require('../security/auth');
 
 // Client messages are only small subscribe/unsubscribe control frames, so a
 // generous-but-bounded payload cap blocks memory-pressure abuse without
@@ -33,9 +34,10 @@ class EventBridge {
       server,
       path: '/ws/events',
       maxPayload: MAX_PAYLOAD_BYTES,
-      verifyClient: ({ origin }, callback) => {
-        if (isOriginAllowed(origin)) return callback(true);
-        callback(false, 403, 'Origin not allowed');
+      verifyClient: ({ origin, req }, callback) => {
+        if (!isOriginAllowed(origin)) return callback(false, 403, 'Origin not allowed');
+        if (!isSessionCookieValid(req.headers.cookie)) return callback(false, 401, 'Authentication required');
+        callback(true);
       }
     });
 

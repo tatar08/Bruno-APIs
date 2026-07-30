@@ -20,7 +20,9 @@ const { EventBridge } = require('./ws/event-bridge');
 const { WindowShim, createFakeEvent } = require('./adapters/window-shim');
 const { HandlerRegistry } = require('./handler-registry');
 const { createIpcProxyRouter } = require('./routes/ipc-proxy');
+const { createAuthRouter } = require('./routes/auth');
 const { isOriginAllowed } = require('./security/origin-policy');
+const { isAuthRequired, requireAuth, bootstrapToken } = require('./security/auth');
 
 const PORT = process.env.BRUNO_SERVER_PORT || 4000;
 // Loopback by default so the Bridge isn't reachable from the LAN/internet
@@ -379,7 +381,8 @@ const registerHandlers = () => {
 
 // --- Routes ---
 
-app.use('/api/ipc', createIpcProxyRouter(handlerRegistry, windowShim, createFakeEvent));
+app.use('/api/auth', createAuthRouter());
+app.use('/api/ipc', requireAuth, createIpcProxyRouter(handlerRegistry, windowShim, createFakeEvent));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -408,6 +411,13 @@ server.listen(PORT, HOST, () => {
   console.log(`   WebSocket events on ws://${HOST}:${PORT}/ws/events`);
   console.log(`   Health check: http://${HOST}:${PORT}/api/health`);
   console.log(`   IPC channels: http://${HOST}:${PORT}/api/ipc/channels\n`);
+
+  if (isAuthRequired()) {
+    console.log('🔐 Authentication is REQUIRED (BRUNO_SERVER_REQUIRE_AUTH=true)');
+    console.log(`   Bootstrap token (enter this in the browser when prompted):\n`);
+    console.log(`   ${bootstrapToken}\n`);
+    console.log('   This token is only shown once. Restart the server to generate a new one.\n');
+  }
 });
 
 // Graceful shutdown

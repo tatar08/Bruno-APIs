@@ -18,6 +18,74 @@ const BRIDGE_SERVER_URL = typeof window !== 'undefined'
 const WS_URL = BRIDGE_SERVER_URL.replace(/^http/, 'ws');
 
 /**
+ * Bridge auth (Improvement.md P0.1) — a no-op when the server doesn't have
+ * BRUNO_SERVER_REQUIRE_AUTH=true (the default). When it does, GET /api/auth/status
+ * reports that, and every IPC call must carry a CSRF header obtained by
+ * exchanging a one-time bootstrap token (shown in the bridge server's
+ * console) for a session. The session itself lives in an HttpOnly cookie
+ * the browser attaches automatically; only the CSRF token needs to be kept
+ * in JS, and it's cached in sessionStorage so a page reload doesn't force
+ * re-entering the token while the underlying session cookie is still valid.
+ */
+const CSRF_STORAGE_KEY = 'bruno_bridge_csrf_token';
+let _csrfToken = typeof window !== 'undefined' ? window.sessionStorage?.getItem(CSRF_STORAGE_KEY) || null : null;
+let _authCheckPromise = null;
+
+async function promptForBootstrapToken() {
+  while (true) {
+    const token = window.prompt(
+      'This Bruno Bridge server requires authentication.\nEnter the bootstrap token printed in the bridge server console:',
+      ''
+    );
+    if (token === null) throw new Error('Bridge authentication cancelled');
+
+    const response = await fetch(`${BRIDGE_SERVER_URL}/api/auth/session`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: token.trim() })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      _csrfToken = data.csrfToken;
+      window.sessionStorage?.setItem(CSRF_STORAGE_KEY, _csrfToken);
+      return;
+    }
+
+    window.alert('Invalid bootstrap token, please try again.');
+  }
+}
+
+/**
+ * Resolves once we know whether the bridge requires auth, and if so, once
+ * we hold a usable CSRF token for the current session. Cached forever after
+ * the first successful check — a 401 from an actual IPC call (session
+ * expired server-side) triggers a fresh check via _reauthenticate().
+ */
+function ensureBridgeAuth() {
+  if (_authCheckPromise) return _authCheckPromise;
+
+  _authCheckPromise = (async () => {
+    const response = await fetch(`${BRIDGE_SERVER_URL}/api/auth/status`, { credentials: 'include' });
+    const status = await response.json();
+
+    if (!status.authRequired) return;
+    if (status.authenticated && _csrfToken) return;
+
+    await promptForBootstrapToken();
+  })();
+
+  return _authCheckPromise;
+}
+
+function forgetBridgeAuth() {
+  _csrfToken = null;
+  window.sessionStorage?.removeItem(CSRF_STORAGE_KEY);
+  _authCheckPromise = null;
+}
+
+/**
  * Electron Transport — delegates directly to window.ipcRenderer
  * (the existing preload.js bridge)
  */
@@ -228,11 +296,17 @@ class BrowserTransport {
     }
 
     try {
-      const response = await fetch(`${BRIDGE_SERVER_URL}/api/ipc/${encodeURIComponent(channel)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ args })
-      });
+      await ensureBridgeAuth();
+
+      let response = await this._fetchIpc(channel, args);
+
+      if (response.status === 401) {
+        // Session likely expired server-side (or auth was just turned on) —
+        // force a fresh bootstrap-token prompt and retry exactly once.
+        forgetBridgeAuth();
+        await ensureBridgeAuth();
+        response = await this._fetchIpc(channel, args);
+      }
 
       const result = await response.json();
 
@@ -251,6 +325,23 @@ class BrowserTransport {
       }
       throw err;
     }
+  }
+
+  /**
+   * Shared fetch call for invoke(): attaches the CSRF header (a no-op when
+   * the bridge doesn't require auth, since _csrfToken stays null) and
+   * credentials so the HttpOnly session cookie round-trips.
+   */
+  _fetchIpc(channel, args, extra = {}) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (_csrfToken) headers['X-CSRF-Token'] = _csrfToken;
+
+    return fetch(`${BRIDGE_SERVER_URL}/api/ipc/${encodeURIComponent(channel)}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify({ args, ...extra })
+    });
   }
 
   /**
@@ -319,13 +410,11 @@ class BrowserTransport {
       return;
     }
 
-    fetch(`${BRIDGE_SERVER_URL}/api/ipc/${encodeURIComponent(channel)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ args, fireAndForget: true })
-    }).catch((err) => {
-      console.error(`[BrowserTransport] send("${channel}") failed:`, err);
-    });
+    ensureBridgeAuth()
+      .then(() => this._fetchIpc(channel, args, { fireAndForget: true }))
+      .catch((err) => {
+        console.error(`[BrowserTransport] send("${channel}") failed:`, err);
+      });
   }
 
   /**
