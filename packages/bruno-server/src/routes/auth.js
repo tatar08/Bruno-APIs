@@ -17,6 +17,7 @@ const {
   SESSION_COOKIE_NAME
 } = require('../security/auth');
 const { getOwnedTerminals, release } = require('../security/terminal-ownership');
+const { getOwnedPaths, release: releaseWatcherOwner } = require('../security/watcher-ownership');
 const { checkAuthRateLimit } = require('../security/auth-rate-limit');
 const { CHANNELS, ERROR_CODES } = require('@usebruno/rpc-contract');
 
@@ -44,7 +45,32 @@ const cleanupSessionTerminals = async (sessionId, handlerRegistry, windowShim, c
   );
 };
 
-const createAuthRouter = (handlerRegistry, windowShim, createFakeEvent) => {
+/**
+ * Releases the departing session's interest in every collection watcher it
+ * still owns (see watcher-ownership.js) and tears down any watcher that no
+ * other session is relying on anymore. `getCollectionWatcher` is a getter
+ * rather than a direct reference because this router is constructed before
+ * registerHandlers() has required bruno-electron's collection-watcher
+ * singleton (index.js) — calling it here, at request time, always sees the
+ * populated value.
+ */
+const cleanupSessionWatchers = (sessionId, getCollectionWatcher) => {
+  const collectionWatcher = getCollectionWatcher ? getCollectionWatcher() : null;
+  if (!collectionWatcher) return;
+
+  const watchPaths = getOwnedPaths(sessionId);
+  watchPaths.forEach((watchPath) => {
+    const isNowUnowned = releaseWatcherOwner(watchPath, sessionId);
+    if (!isNowUnowned) return;
+    try {
+      collectionWatcher.removeWatcher(watchPath);
+    } catch (err) {
+      console.error(`[Auth] Failed to remove collection watcher for "${watchPath}" on logout:`, err.message);
+    }
+  });
+};
+
+const createAuthRouter = (handlerRegistry, windowShim, createFakeEvent, getCollectionWatcher) => {
   const router = express.Router();
 
   // Public: lets the frontend know whether it needs to authenticate at all,
@@ -87,6 +113,7 @@ const createAuthRouter = (handlerRegistry, windowShim, createFakeEvent) => {
 
   router.delete('/session', requireAuth, async (req, res) => {
     await cleanupSessionTerminals(req.brunoSessionId, handlerRegistry, windowShim, createFakeEvent);
+    cleanupSessionWatchers(req.brunoSessionId, getCollectionWatcher);
     revokeSession(req.brunoSessionId);
     res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
     res.json({ ok: true });

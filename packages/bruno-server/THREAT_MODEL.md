@@ -123,6 +123,8 @@ event หรือควบคุม resource (เช่น terminal process) �
 | event ของ session A (เช่น preference ที่โหลดเสร็จ, ผลการรัน request) หลุดไปโผล่ที่ browser tab ของ session B | event ที่เกิดจาก IPC call ที่ auth แล้วถูก scope ด้วย `AsyncLocalStorage` แล้วส่งผ่าน `sendToSession` แทน `broadcast` | `session-context.js`, `ws/event-bridge.js` |
 | session B รู้/เดา terminal sessionId ของ session A แล้วส่ง input/resize/kill เข้าไป | ownership map ผูก terminal sessionId กับ owner ตอน `terminal:create`, เช็คก่อน `input`/`resize`/`kill` ทุกครั้ง, filter `list-sessions` ให้เห็นเฉพาะของตัวเอง | `security/terminal-ownership.js` |
 | ผู้ใช้ auth เปิดไว้แต่ session หมดอายุ/logout แล้วยัง credential/cookie เดิมใช้ต่อได้ | session มี TTL 24 ชม., `DELETE /api/auth/session` เรียก `revokeSession` ลบออกจาก map ทันที | `security/auth.js`, `routes/auth.js` |
+| terminal process ที่ session เป็นเจ้าของยังรันค้างอยู่หลัง logout (leak, ไม่ใช่ cross-session access แต่เป็น resource ที่ควรตายไปพร้อม session) | `DELETE /api/auth/session` เดิน `getOwnedTerminals()` แล้ว kill ทุกตัวแบบ best-effort ก่อน `revokeSession` | `security/terminal-ownership.js`, `routes/auth.js` |
+| collection watcher (filesystem, chokidar) ที่ session เป็นเจ้าของยังทำงานค้างอยู่หลัง logout แม้ไม่มี session ไหนพึ่งพาแล้ว | ref-counted ownership (`Map<watchPath, Set<sessionId>>`) — `removeWatcher()` จะถูกเรียกจริงก็ต่อเมื่อ session สุดท้ายที่ยังพึ่งพา path นั้นออกเท่านั้น ไม่ทำลาย watcher ที่ session อื่นยังใช้อยู่ | `security/watcher-ownership.js`, `routes/auth.js`, `routes/ipc-proxy.js` |
 
 ## 5. Accepted risk / gap ที่รู้อยู่แล้วและยังไม่ปิด
 
@@ -150,15 +152,11 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
 4. **rate/concurrency limit เป็นแบบ in-memory ต่อ process เดียว** — ถ้า deploy เป็นหลาย instance
    ข้างหลัง load balancer ตัวจำกัดนี้จะนับแยกกันต่อ instance ไม่ได้รวมกัน (ตอนนี้ยังไม่มี pattern
    deploy แบบ multi-instance ในเอกสารไหนเลย จึงยังไม่ใช่ปัญหาจริงในทางปฏิบัติ)
-5. **Terminal cleanup ไม่ผูกกับ logout** — `DELETE /api/auth/session` ยัง revoke แค่ session
-   record ไม่ได้ kill terminal process ที่ session นั้นเป็นเจ้าของ (ดู
-   `find bug and Improvement.md` ส่วน P0.4 — บันทึกไว้เป็น follow-up ของ increment terminal
-   isolation)
-6. **session-scoped isolation ยังไม่ครอบคลุมทุก resource type** — ตอนนี้มีแค่ event routing
-   (boundary 4 แถวแรก) กับ terminal (แถวสอง) ยังไม่มีสำหรับ active workspace/collection state,
-   secret/credential ต่อ session, filesystem watcher, หรือ per-user resource limit — ทั้งหมดนี้
-   ต้องมี "session ownership" concept แบบเดียวกับ terminal ผูกกับ resource type อื่นเพิ่ม ซึ่งเป็นงาน
-   ที่ใหญ่กว่า 1 increment ต่อ resource
+5. **session-scoped isolation ยังไม่ครอบคลุมทุก resource type** — ตอนนี้มีแค่ event routing,
+   terminal, และ filesystem watcher (boundary 4 สามแถวแรก) ยังไม่มีสำหรับ active
+   workspace/collection state, secret/credential ต่อ session, หรือ per-user resource limit —
+   ทั้งหมดนี้ต้องมี "session ownership" concept แบบเดียวกับ terminal/watcher ผูกกับ resource type
+   อื่นเพิ่ม ซึ่งเป็นงานที่ใหญ่กว่า 1 increment ต่อ resource
 
 ## 6. คำแนะนำการ deploy (ไม่ใช่ default behavior — เป็น operator responsibility)
 

@@ -20,6 +20,10 @@ const { getCapability } = require('../security/channel-capabilities');
 const { getMaxPayloadBytes, validateArgs } = require('../security/channel-policy');
 const { runWithSession } = require('../session-context');
 const { recordOwner, isOwnedBy, release } = require('../security/terminal-ownership');
+const {
+  recordOwner: recordWatcherOwner,
+  release: releaseWatcherOwner
+} = require('../security/watcher-ownership');
 const { CHANNELS, ERROR_CODES } = require('@usebruno/rpc-contract');
 
 // terminal:input/resize/kill all take the target terminal sessionId as their
@@ -124,6 +128,19 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
         recordOwner(req.brunoSessionId, result);
       } else if (channel === CHANNELS.TERMINAL_KILL) {
         release(args[0]);
+      }
+
+      // Track/release collection-watcher ownership (see watcher-ownership.js)
+      // so a departing session's logout cleanup knows which watchers it's
+      // still relying on. No-op when there's no auth session to scope by.
+      if (req.brunoSessionId) {
+        if (channel === CHANNELS.RENDERER_OPEN_MULTIPLE_COLLECTIONS && Array.isArray(result?.opened)) {
+          result.opened.forEach((watchPath) => recordWatcherOwner(watchPath, req.brunoSessionId));
+        } else if (channel === CHANNELS.RENDERER_ADD_COLLECTION_WATCHER && result?.success) {
+          recordWatcherOwner(args[0]?.collectionPath, req.brunoSessionId);
+        } else if (channel === CHANNELS.RENDERER_REMOVE_COLLECTION) {
+          releaseWatcherOwner(args[0], req.brunoSessionId);
+        }
       }
 
       if (fireAndForget) {

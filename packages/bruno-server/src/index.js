@@ -53,6 +53,12 @@ const windowShim = new WindowShim(eventBridge);
 // Handler registry that captures IPC handlers
 const handlerRegistry = new HandlerRegistry();
 
+// Populated by registerHandlers() once bruno-electron's collection-watcher
+// singleton is required below; read lazily via getCollectionWatcher() since
+// route registration (createAuthRouter, below) happens before that.
+let collectionWatcher = null;
+const getCollectionWatcher = () => collectionWatcher;
+
 // --- Middleware ---
 
 app.use(cors({
@@ -234,7 +240,7 @@ const registerHandlers = () => {
     const registerCollectionsIpc = require(path.join(electronSrcPath, 'ipc/collection'));
     // Use Bruno's real watcher so opened collections hydrate and stay in sync
     // exactly as they do in the desktop application.
-    const collectionWatcher = require(path.join(electronSrcPath, 'app/collection-watcher'));
+    collectionWatcher = require(path.join(electronSrcPath, 'app/collection-watcher'));
     registerCollectionsIpc(windowShim, collectionWatcher);
     console.log('  ✅ Collection handlers registered');
   } catch (err) {
@@ -389,7 +395,7 @@ const registerHandlers = () => {
 
 // --- Routes ---
 
-app.use('/api/auth', createAuthRouter(handlerRegistry, windowShim, createFakeEvent));
+app.use('/api/auth', createAuthRouter(handlerRegistry, windowShim, createFakeEvent, getCollectionWatcher));
 app.use('/api/ipc', requireAuth, createIpcProxyRouter(handlerRegistry, windowShim, createFakeEvent));
 
 // Health check
