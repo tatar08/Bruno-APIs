@@ -8,33 +8,22 @@ const StyledWrapper = styled.div.attrs((props) => ({
 }))`
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  position: absolute;
-  width: 44px;
+  justify-content: center;
+  position: relative;
   height: 100%;
-  right: 0;
-  top: 0;
-  padding-right: 4px;
-  
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--gradient-color) 40%
-  );
+  padding-left: 4px;
+  flex-shrink: 0;
   
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
 
   li.active & {
-    background-image: linear-gradient(
-      90deg,
-      transparent 0%,
-      var(--gradient-color-active) 40%
-    );
+    background-image: none;
   }
 
   li:hover &:not(.no-close),
+  li.active &:not(.no-close),
   &.has-changes {
     opacity: 1;
     pointer-events: auto;

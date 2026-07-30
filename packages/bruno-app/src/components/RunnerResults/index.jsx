@@ -5,7 +5,23 @@ import { get, cloneDeep } from 'lodash';
 import { runCollectionFolder, cancelRunnerExecution, mountCollection, updateRunnerConfiguration } from 'providers/ReduxStore/slices/collections/actions';
 import { resetCollectionRunner } from 'providers/ReduxStore/slices/collections';
 import { findItemInCollection, getTotalRequestCountInCollection, areItemsLoading } from 'utils/collections';
-import { IconRefresh, IconCircleCheck, IconCircleX, IconCircleOff, IconCheck, IconX, IconRun, IconExternalLink } from '@tabler/icons';
+import {
+  IconRefresh,
+  IconCircleCheck,
+  IconCircleX,
+  IconCircleOff,
+  IconCheck,
+  IconX,
+  IconRun,
+  IconExternalLink,
+  IconFile,
+  IconLayoutList,
+  IconTable,
+  IconEye,
+  IconChevronRight,
+  IconChevronDown
+} from '@tabler/icons';
+import Modal from 'components/Modal';
 import ResponsePane from './ResponsePane';
 import StyledWrapper from './StyledWrapper';
 import RunnerTags from './RunnerTags/index';
@@ -86,7 +102,22 @@ export default function RunnerResults({ collection }) {
   const [runInParallel, setRunInParallel] = useState(() => get(collection, 'runnerConfiguration.runInParallel', false));
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedRequestItems, setSelectedRequestItems] = useState([]);
+  const [viewMode, setViewMode] = useState('table');
+  const [expandedIterations, setExpandedIterations] = useState(new Set([0]));
+  const [selectedDataIteration, setSelectedDataIteration] = useState(null);
   const isReRunningRef = useRef(false);
+
+  const toggleIteration = (iterIndex) => {
+    setExpandedIterations((prev) => {
+      const next = new Set(prev);
+      if (next.has(iterIndex)) {
+        next.delete(iterIndex);
+      } else {
+        next.add(iterIndex);
+      }
+      return next;
+    });
+  };
   // ref for the runner output body
   const runnerBodyRef = useRef();
 
@@ -257,7 +288,7 @@ export default function RunnerResults({ collection }) {
     return (
       <StyledWrapper className="pl-4 overflow-hidden h-full">
         <div className="flex overflow-hidden max-h-full h-full">
-          <div className="w-1/2 pr-4">
+          <div className="w-1/2 pr-4 overflow-y-auto pb-6">
             <div className="font-medium mt-6 title flex items-center">
               <IconRun size={20} strokeWidth={1.5} className="mr-2" />
               Runner
@@ -356,20 +387,48 @@ export default function RunnerResults({ collection }) {
     <StyledWrapper className="px-4 pb-4 flex flex-grow flex-col relative overflow-auto">
       {/* Filter Bar and Actions */}
       <div className="flex items-center justify-between mb-4 pt-[14px] gap-4">
-        <div className="filter-bar">
-          <div className="filter-label">
-            <span>Filter by:</span>
+        <div className="flex items-center gap-4">
+          <div className="filter-bar">
+            <div className="filter-label">
+              <span>Filter by:</span>
+            </div>
+            <div className="filter-buttons">
+              {Object.entries(FILTERS).map(([key, { label }]) => (
+                <FilterButton
+                  key={key}
+                  label={label}
+                  count={filterCounts[key]}
+                  active={activeFilter === key}
+                  onClick={() => setActiveFilter(key)}
+                />
+              ))}
+            </div>
           </div>
-          <div className="filter-buttons">
-            {Object.entries(FILTERS).map(([key, { label }]) => (
-              <FilterButton
-                key={key}
-                label={label}
-                count={filterCounts[key]}
-                active={activeFilter === key}
-                onClick={() => setActiveFilter(key)}
-              />
-            ))}
+
+          {/* View Mode Selector */}
+          <div className="flex items-center bg-mantle border border-border0 rounded overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${
+                viewMode === 'table' ? 'bg-surface1 text-text' : 'text-subtext0 hover:text-text'
+              }`}
+              title="Table View"
+            >
+              <IconTable size={15} />
+              <span>Table</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${
+                viewMode === 'list' ? 'bg-surface1 text-text' : 'text-subtext0 hover:text-text'
+              }`}
+              title="List View"
+            >
+              <IconLayoutList size={15} />
+              <span>List</span>
+            </button>
           </div>
         </div>
 
@@ -410,9 +469,7 @@ export default function RunnerResults({ collection }) {
       </div>
 
       <div className="flex gap-4 h-[calc(100vh_-_10rem)] overflow-hidden">
-        <div
-          className="flex flex-col w-1/2"
-        >
+        <div className="flex flex-col w-1/2">
           {runnerInfo.datasetFileName && (
             <div className="pb-2 text-xs text-muted">
               Dataset: <span className="font-medium">{runnerInfo.datasetFileName}</span> · {runnerInfo.iterationCount} iterations
@@ -431,145 +488,265 @@ export default function RunnerResults({ collection }) {
               </div>
             </div>
           )}
-          {runnerInfo?.statusText
-            ? (
-                <div className="pb-2 font-medium danger">
-                  {runnerInfo?.statusText}
-                </div>
-              )
-            : null}
+          {runnerInfo?.statusText ? (
+            <div className="pb-2 font-medium danger">
+              {runnerInfo?.statusText}
+            </div>
+          ) : null}
 
-          {/* Items list */}
-          <div className="overflow-y-auto flex-1 " ref={runnerBodyRef}>
-            {filteredItems.map((item, itemIndex) => {
-              return (
-                <div key={item.uid + '-' + (item.iterationIndex || 0) + '-' + itemIndex}>
-                  <div className="item-path mt-2" data-testid="runner-result-item">
-                    <div className="flex items-center">
-                      <span>
-                        {allTestsPassed(item)
-                          ? <IconCircleCheck className="test-success" size={20} strokeWidth={1.5} />
-                          : null}
-                        {item.status === 'skipped'
-                          ? <IconCircleOff className="skipped-request" size={20} strokeWidth={1.5} />
-                          : null}
-                        {anyTestFailed(item)
-                          ? <IconCircleX className="test-failure" size={20} strokeWidth={1.5} />
-                          : null}
-                      </span>
-                      <span
-                        className={`mr-1 ml-2 ${item.status == 'skipped' ? 'skipped-request' : anyTestFailed(item) ? 'danger' : ''}`}
-                      >
-                        {item.displayName}
-                      </span>
-                      {item.iterationCount > 1 && (
-                        <span className="text-xs text-muted mr-2">Iteration {item.iterationIndex + 1}/{item.iterationCount}</span>
-                      )}
-                      {item.status !== 'error' && item.status !== 'skipped' && item.status !== 'completed' ? (
-                        <IconRefresh className="animate-spin ml-1" size={18} strokeWidth={1.5} />
-                      ) : item.responseReceived?.status ? (
-                        <span className="text-xs link cursor-pointer" onClick={() => setSelectedItem(item)}>
-                          <span className="mr-1">{item.responseReceived?.status}</span>
-                          -&nbsp;
-                          <span>{item.responseReceived?.statusText}</span>
+          {/* Items Container */}
+          <div className="overflow-y-auto flex-1" ref={runnerBodyRef}>
+            {viewMode === 'table' ? (
+              <div className="runner-table-container">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-mantle text-subtext0 uppercase font-semibold">
+                      <th className="py-2.5 px-3 w-24">Iteration</th>
+                      <th className="py-2.5 px-3 w-16 text-center">Data</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from(
+                      new Set([
+                        ...items.map((i) => i.iterationIndex || 0),
+                        ...Array.from({ length: iterationCount }, (_, idx) => idx)
+                      ])
+                    )
+                      .sort((a, b) => a - b)
+                      .map((iterIdx) => {
+                        const iterItems = items.filter((i) => (i.iterationIndex || 0) === iterIdx);
+                        const isExpanded = expandedIterations.has(iterIdx);
+                        const totalCount = iterItems.length;
+                        const passedCount = iterItems.filter(allTestsPassed).length;
+                        const failedCount = iterItems.filter(anyTestFailed).length;
+                        const skippedCount = iterItems.filter((i) => i.status === 'skipped').length;
+                        const hasData = Boolean(dataset?.rows?.[iterIdx]);
+
+                        return (
+                          <React.Fragment key={iterIdx}>
+                            <tr
+                              className="hover-bg-surface cursor-pointer transition-colors"
+                              onClick={() => toggleIteration(iterIdx)}
+                            >
+                              <td className="py-2.5 px-3 font-semibold text-text">
+                                {iterIdx + 1}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedDataIteration(iterIdx);
+                                  }}
+                                  className={`p-1 rounded transition-colors ${
+                                    hasData ? 'hover-bg-surface text-text' : 'opacity-40 cursor-not-allowed text-subtext0'
+                                  }`}
+                                  title={hasData ? 'View iteration variables' : 'No dataset data'}
+                                >
+                                  <IconEye size={16} />
+                                </button>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                    Total: {totalCount}
+                                  </span>
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                    Passed: {passedCount}
+                                  </span>
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                    Failed: {failedCount}
+                                  </span>
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                    Skipped: {skippedCount}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-right text-subtext0">
+                                {isExpanded ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
+                              </td>
+                            </tr>
+
+                            {/* Expanded Items */}
+                            {isExpanded && (
+                              <tr className="bg-mantle/40">
+                                <td colSpan={4} className="p-0">
+                                  <div className="px-4 py-2 border-t border-border0 space-y-1.5">
+                                    {iterItems.map((item, itemIdx) => (
+                                      <div
+                                        key={item.uid + '-' + itemIdx}
+                                        className="flex items-center justify-between py-1 px-2.5 rounded bg-surface0/70 hover-bg-surface transition-colors"
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          {allTestsPassed(item) ? (
+                                            <IconCircleCheck className="test-success" size={16} strokeWidth={1.5} />
+                                          ) : anyTestFailed(item) ? (
+                                            <IconCircleX className="test-failure" size={16} strokeWidth={1.5} />
+                                          ) : (
+                                            <IconCircleOff className="skipped-request" size={16} strokeWidth={1.5} />
+                                          )}
+                                          <span className="font-medium text-text">{item.displayName}</span>
+                                        </div>
+
+                                        <div>
+                                          {item.status !== 'error' && item.status !== 'skipped' && item.status !== 'completed' ? (
+                                            <IconRefresh className="animate-spin" size={16} strokeWidth={1.5} />
+                                          ) : item.responseReceived?.status ? (
+                                            <span className="link cursor-pointer font-mono" onClick={() => setSelectedItem(item)}>
+                                              {item.responseReceived?.status} - {item.responseReceived?.statusText}
+                                            </span>
+                                          ) : (
+                                            <span className="danger cursor-pointer" onClick={() => setSelectedItem(item)}>
+                                              (request failed)
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              /* Classic List View */
+              filteredItems.map((item, itemIndex) => {
+                return (
+                  <div key={item.uid + '-' + (item.iterationIndex || 0) + '-' + itemIndex}>
+                    <div className="item-path mt-2" data-testid="runner-result-item">
+                      <div className="flex items-center">
+                        <span>
+                          {allTestsPassed(item)
+                            ? <IconCircleCheck className="test-success" size={20} strokeWidth={1.5} />
+                            : null}
+                          {item.status === 'skipped'
+                            ? <IconCircleOff className="skipped-request" size={20} strokeWidth={1.5} />
+                            : null}
+                          {anyTestFailed(item)
+                            ? <IconCircleX className="test-failure" size={20} strokeWidth={1.5} />
+                            : null}
                         </span>
-                      ) : (
-                        <span className="danger text-xs cursor-pointer" onClick={() => setSelectedItem(item)}>
-                          (request failed)
+                        <span
+                          className={`mr-1 ml-2 ${item.status == 'skipped' ? 'skipped-request' : anyTestFailed(item) ? 'danger' : ''}`}
+                        >
+                          {item.displayName}
                         </span>
-                      )}
-                    </div>
-                    {areTagsAdded && item?.tags?.length > 0 && (
-                      <div className="pl-7 text-xs text-muted">
-                        Tags: {item.tags.filter((t) => tags.include.includes(t)).join(', ')}
+                        {item.iterationCount > 1 && (
+                          <span className="text-xs text-muted mr-2">Iteration {item.iterationIndex + 1}/{item.iterationCount}</span>
+                        )}
+                        {item.status !== 'error' && item.status !== 'skipped' && item.status !== 'completed' ? (
+                          <IconRefresh className="animate-spin ml-1" size={18} strokeWidth={1.5} />
+                        ) : item.responseReceived?.status ? (
+                          <span className="text-xs link cursor-pointer" onClick={() => setSelectedItem(item)}>
+                            <span className="mr-1">{item.responseReceived?.status}</span>
+                            -&nbsp;
+                            <span>{item.responseReceived?.statusText}</span>
+                          </span>
+                        ) : (
+                          <span className="danger text-xs cursor-pointer" onClick={() => setSelectedItem(item)}>
+                            (request failed)
+                          </span>
+                        )}
                       </div>
-                    )}
-                    {item.status == 'error' ? <div className="error-message pl-8 pt-2 text-xs">{item.error}</div> : null}
+                      {areTagsAdded && item?.tags?.length > 0 && (
+                        <div className="pl-7 text-xs text-muted">
+                          Tags: {item.tags.filter((t) => tags.include.includes(t)).join(', ')}
+                        </div>
+                      )}
+                      {item.status == 'error' ? <div className="error-message pl-8 pt-2 text-xs">{item.error}</div> : null}
 
-                    <ul className="pl-8">
-                      {item.preRequestTestResults
-                        ? filterTestResults(item.preRequestTestResults).map((result) => (
-                            <li key={result.uid}>
-                              {result.status === 'pass' ? (
-                                <span className="test-success flex items-center">
-                                  <IconCheck size={18} strokeWidth={2} className="mr-2" />
-                                  {result.description}
-                                </span>
-                              ) : (
-                                <>
-                                  <span className="test-failure flex items-center">
-                                    <IconX size={18} strokeWidth={2} className="mr-2" />
+                      <ul className="pl-8">
+                        {item.preRequestTestResults
+                          ? filterTestResults(item.preRequestTestResults).map((result) => (
+                              <li key={result.uid}>
+                                {result.status === 'pass' ? (
+                                  <span className="test-success flex items-center">
+                                    <IconCheck size={18} strokeWidth={2} className="mr-2" />
                                     {result.description}
                                   </span>
-                                  <span className="error-message pl-8 text-xs">{result.error}</span>
-                                </>
-                              )}
-                            </li>
-                          ))
-                        : null}
-                      {item.postResponseTestResults
-                        ? filterTestResults(item.postResponseTestResults).map((result) => (
-                            <li key={result.uid}>
-                              {result.status === 'pass' ? (
-                                <span className="test-success flex items-center">
-                                  <IconCheck size={18} strokeWidth={2} className="mr-2" />
-                                  {result.description}
-                                </span>
-                              ) : (
-                                <>
-                                  <span className="test-failure flex items-center">
-                                    <IconX size={18} strokeWidth={2} className="mr-2" />
+                                ) : (
+                                  <>
+                                    <span className="test-failure flex items-center">
+                                      <IconX size={18} strokeWidth={2} className="mr-2" />
+                                      {result.description}
+                                    </span>
+                                    <span className="error-message pl-8 text-xs">{result.error}</span>
+                                  </>
+                                )}
+                              </li>
+                            ))
+                          : null}
+                        {item.postResponseTestResults
+                          ? filterTestResults(item.postResponseTestResults).map((result) => (
+                              <li key={result.uid}>
+                                {result.status === 'pass' ? (
+                                  <span className="test-success flex items-center">
+                                    <IconCheck size={18} strokeWidth={2} className="mr-2" />
                                     {result.description}
                                   </span>
-                                  <span className="error-message pl-8 text-xs">{result.error}</span>
-                                </>
-                              )}
-                            </li>
-                          ))
-                        : null}
-                      {item.testResults
-                        ? filterTestResults(item.testResults).map((result) => (
-                            <li key={result.uid}>
-                              {result.status === 'pass' ? (
-                                <span className="test-success flex items-center">
-                                  <IconCheck size={18} strokeWidth={2} className="mr-2" />
-                                  {result.description}
-                                </span>
-                              ) : (
-                                <>
-                                  <span className="test-failure flex items-center">
-                                    <IconX size={18} strokeWidth={2} className="mr-2" />
+                                ) : (
+                                  <>
+                                    <span className="test-failure flex items-center">
+                                      <IconX size={18} strokeWidth={2} className="mr-2" />
+                                      {result.description}
+                                    </span>
+                                    <span className="error-message pl-8 text-xs">{result.error}</span>
+                                  </>
+                                )}
+                              </li>
+                            ))
+                          : null}
+                        {item.testResults
+                          ? filterTestResults(item.testResults).map((result) => (
+                              <li key={result.uid}>
+                                {result.status === 'pass' ? (
+                                  <span className="test-success flex items-center">
+                                    <IconCheck size={18} strokeWidth={2} className="mr-2" />
                                     {result.description}
                                   </span>
-                                  <span className="error-message pl-8 text-xs">{result.error}</span>
-                                </>
-                              )}
-                            </li>
-                          ))
-                        : null}
-                      {filterTestResults(item.assertionResults).map((result) => (
-                        <li key={result.uid}>
-                          {result.status === 'pass' ? (
-                            <span className="test-success flex items-center">
-                              <IconCheck size={18} strokeWidth={2} className="mr-2" />
-                              {result.lhsExpr}: {result.rhsExpr}
-                            </span>
-                          ) : (
-                            <>
-                              <span className="test-failure flex items-center">
-                                <IconX size={18} strokeWidth={2} className="mr-2" />
+                                ) : (
+                                  <>
+                                    <span className="test-failure flex items-center">
+                                      <IconX size={18} strokeWidth={2} className="mr-2" />
+                                      {result.description}
+                                    </span>
+                                    <span className="error-message pl-8 text-xs">{result.error}</span>
+                                  </>
+                                )}
+                              </li>
+                            ))
+                          : null}
+                        {filterTestResults(item.assertionResults).map((result) => (
+                          <li key={result.uid}>
+                            {result.status === 'pass' ? (
+                              <span className="test-success flex items-center">
+                                <IconCheck size={18} strokeWidth={2} className="mr-2" />
                                 {result.lhsExpr}: {result.rhsExpr}
                               </span>
-                              <span className="error-message pl-8 text-xs">{result.error}</span>
-                            </>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+                            ) : (
+                              <>
+                                <span className="test-failure flex items-center">
+                                  <IconX size={18} strokeWidth={2} className="mr-2" />
+                                  {result.lhsExpr}: {result.rhsExpr}
+                                </span>
+                                <span className="error-message pl-8 text-xs">{result.error}</span>
+                              </>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -616,6 +793,39 @@ export default function RunnerResults({ collection }) {
           </div>
         )}
       </div>
+
+      {/* Dataset Row Data Modal */}
+      {selectedDataIteration !== null && (
+        <Modal
+          size="md"
+          title={`Iteration ${selectedDataIteration + 1} Data`}
+          handleCancel={() => setSelectedDataIteration(null)}
+          hideFooter={true}
+        >
+          <div className="p-4">
+            {dataset?.rows?.[selectedDataIteration] ? (
+              <table className="w-full text-xs text-left border border-border0 rounded overflow-hidden">
+                <thead>
+                  <tr className="bg-mantle border-b border-border0 text-subtext0 font-semibold">
+                    <th className="p-2 font-medium">Variable</th>
+                    <th className="p-2 font-medium">Value</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border0">
+                  {Object.entries(dataset.rows[selectedDataIteration]).map(([key, val]) => (
+                    <tr key={key}>
+                      <td className="p-2 font-mono text-purple-400">{key}</td>
+                      <td className="p-2 font-mono text-emerald-400">{String(val)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="text-muted text-xs">No dataset row data recorded for this iteration.</div>
+            )}
+          </div>
+        </Modal>
+      )}
     </StyledWrapper>
   );
 }

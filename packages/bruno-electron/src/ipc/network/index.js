@@ -1667,6 +1667,10 @@ const registerNetworkIpc = (mainWindow) => {
           const item = cloneDeep(folderRequests[currentRequestIndex]);
           let nextRequestName;
           const itemUid = item.uid;
+          const currentRuntimeVars = runtimeVariables;
+          const currentEnvVars = currentRuntimeVars
+            ? { ...envVars, ...currentRuntimeVars }
+            : envVars;
           const eventData = {
             collectionUid,
             folderUid,
@@ -1724,7 +1728,7 @@ const registerNetworkIpc = (mainWindow) => {
           const request = await prepareRequest(item, collection, abortController);
           request.__bruno__executionMode = 'runner';
 
-          const promptVars = await extractPromptVariablesForRequest({ request, collection, envVars, runtimeVariables, processEnvVars });
+          const promptVars = await extractPromptVariablesForRequest({ request, collection, envVars: currentEnvVars, runtimeVariables: currentRuntimeVars, processEnvVars });
 
           if (promptVars.length > 0) {
             mainWindow.webContents.send('main:run-folder-event', {
@@ -1751,8 +1755,8 @@ const registerNetworkIpc = (mainWindow) => {
               collectionUid,
               collection,
               collectionPath,
-              envVars,
-              runtimeVariables,
+              envVars: currentEnvVars,
+              runtimeVariables: currentRuntimeVars,
               processEnvVars,
               request
             });
@@ -1766,11 +1770,11 @@ const registerNetworkIpc = (mainWindow) => {
               preRequestScriptResult = await runPreRequest(
                 request,
                 requestUid,
-                envVars,
+                currentEnvVars,
                 collectionPath,
                 collection,
                 collectionUid,
-                runtimeVariables,
+                currentRuntimeVars,
                 processEnvVars,
                 scriptingConfig,
                 runRequestByItemPathname
@@ -1875,8 +1879,8 @@ const registerNetworkIpc = (mainWindow) => {
               collectionUid,
               collection,
               request,
-              envVars,
-              runtimeVariables,
+              currentEnvVars,
+              currentRuntimeVars,
               processEnvVars,
               collectionPath,
               collection.globalEnvironmentVariables
@@ -2033,11 +2037,11 @@ const registerNetworkIpc = (mainWindow) => {
                 request,
                 response,
                 requestUid,
-                envVars,
+                currentEnvVars,
                 collectionPath,
                 collection,
                 collectionUid,
-                runtimeVariables,
+                currentRuntimeVars,
                 processEnvVars,
                 scriptingConfig,
                 runRequestByItemPathname
@@ -2095,8 +2099,8 @@ const registerNetworkIpc = (mainWindow) => {
                 assertions,
                 request,
                 response,
-                envVars,
-                runtimeVariables,
+                currentEnvVars,
+                currentRuntimeVars,
                 processEnvVars
               );
 
@@ -2119,8 +2123,8 @@ const registerNetworkIpc = (mainWindow) => {
                   decomment(testFile, { space: true }),
                   request,
                   response,
-                  envVars,
-                  runtimeVariables,
+                  currentEnvVars,
+                  currentRuntimeVars,
                   collectionPath,
                   onConsoleLog,
                   processEnvVars,

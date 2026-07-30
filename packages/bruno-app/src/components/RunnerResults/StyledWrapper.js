@@ -233,6 +233,30 @@ const Wrapper = styled.div`
       }
     }
   }
+
+  .runner-table-container {
+    border: 1px solid ${(props) => props.theme.background.surface1};
+    border-radius: ${(props) => props.theme.border.radius.sm};
+    overflow: hidden;
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+
+      thead tr {
+        border-bottom: 1px solid ${(props) => props.theme.background.surface1};
+        background-color: ${(props) => props.theme.background.mantle};
+      }
+
+      tbody tr {
+        border-bottom: 1px solid ${(props) => props.theme.background.surface1};
+      }
+
+      tbody tr:last-child {
+        border-bottom: none;
+      }
+    }
+  }
 `;
 
 export default Wrapper;
