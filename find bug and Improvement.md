@@ -152,7 +152,11 @@ Runner ฝั่ง electron catch error ระดับ run แล้วส่�
 
 **ข้อจำกัดที่ตั้งใจปล่อยไว้ (ต้องรู้ก่อนใช้งานจริง):** ตัวสแกนนี้เป็น generic เดาจาก "string ที่หน้าตาเหมือน absolute path" ไม่รู้ semantic รายช่อง — จาก audit พบว่ามี **~85+ handler** ใน `bruno-electron/src/ipc/` ที่รับ path จาก renderer โดยรูปแบบ argument ไม่เหมือนกันเลย (positional, nested ในอ็อบเจ็กต์, array, source/dest คู่) และมีแค่ 5 handler เท่านั้นที่เคย validate path เอง (`validatePathIsInsideCollection` ใน 4 จุด + inline check ใน `renderer:delete-transient-requests`) ตัว sandbox นี้จึงเป็น **safety net เสริม** ไม่ใช่ per-channel validation ที่สมบูรณ์ — มี extension point `CHANNEL_PATH_EXTRACTORS` ในไฟล์เดียวกันสำหรับเพิ่มความแม่นยำทีละ channel ในอนาคตโดยไม่ต้องแก้ chokepoint
 
-ยังไม่ทำ (เกินขอบเขต quick win): threat model doc (#1), static RPC manifest audit ของ handler ทั้ง 202+ ตัว (#8), UX prototype file explorer (#10)
+ยังไม่ทำ (เกินขอบเขต quick win): UX prototype file explorer (#10) — เป็นการตัดสินใจ product/UX design ที่ควรถามผู้ใช้ก่อน ไม่ใช่แค่งาน implementation
+
+**threat model doc (#1) — เสร็จแล้ว**: `packages/bruno-server/THREAT_MODEL.md` (ใหม่) — เอกสาร trust boundary 4 จุด (เครือข่าย, privileged IPC dispatch, filesystem path resolution, ระหว่าง session ด้วยกันเอง) พร้อม mermaid diagram, ตาราง "ภัยคุกคาม → mitigation → ไฟล์จริง" อ้างอิงโค้ดปัจจุบันทั้งหมด (ไม่ใช่แผนในอนาคต), และหัวข้อ accepted risk แยกต่างหาก (ไม่มี TLS ในตัว, bootstrap token ไม่ single-use, `BRUNO_SERVER_ALLOWED_ROOTS` fail-open ถ้าไม่ตั้ง, rate limit เป็น per-process ไม่รวมข้าม instance, terminal cleanup ไม่ผูกกับ logout, session isolation ยังไม่ครอบคลุมทุก resource type) — เขียนไว้ให้เป็น living doc ที่ต้องอัปเดตคู่กับทุก security control ใหม่ใน `src/security/`/`src/routes/`
+
+**static RPC manifest audit ของ handler ทั้ง 202+ ตัว (#8) — เสร็จแล้ว** (ทำไปแล้วโดยไม่รู้ตัวว่าตรงกับ action item นี้ตอนทำ P0.5): `@usebruno/rpc-contract`'s fixture (`real-channel-sources.json`, 229 entries, generated จากการรัน server จริงแล้ว dump) คือ static manifest ที่ #8 ขอ, และ `scripts/audit-parity.js` (บูต server จริงด้วย `BRUNO_RPC_CONTRACT_DUMP=true`, เทียบ live channel list กับ fixture, รายงาน added/removed/moved, มี `--write` สำหรับ heal) คือ audit script — แม้ยังไม่ได้ต่อเข้า CI จริง (repo นี้ไม่มี CI pipeline เลย) แต่ script รันเองได้และ live-verify แล้วว่า detect drift ถูกต้อง
 
 ### P0.1 Bootstrap token + session/CSRF auth — เสร็จแล้ว (opt-in, ปิดเป็นค่าเริ่มต้น)
 
