@@ -152,7 +152,7 @@ Runner ฝั่ง electron catch error ระดับ run แล้วส่�
 
 **ข้อจำกัดที่ตั้งใจปล่อยไว้ (ต้องรู้ก่อนใช้งานจริง):** ตัวสแกนนี้เป็น generic เดาจาก "string ที่หน้าตาเหมือน absolute path" ไม่รู้ semantic รายช่อง — จาก audit พบว่ามี **~85+ handler** ใน `bruno-electron/src/ipc/` ที่รับ path จาก renderer โดยรูปแบบ argument ไม่เหมือนกันเลย (positional, nested ในอ็อบเจ็กต์, array, source/dest คู่) และมีแค่ 5 handler เท่านั้นที่เคย validate path เอง (`validatePathIsInsideCollection` ใน 4 จุด + inline check ใน `renderer:delete-transient-requests`) ตัว sandbox นี้จึงเป็น **safety net เสริม** ไม่ใช่ per-channel validation ที่สมบูรณ์ — มี extension point `CHANNEL_PATH_EXTRACTORS` ในไฟล์เดียวกันสำหรับเพิ่มความแม่นยำทีละ channel ในอนาคตโดยไม่ต้องแก้ chokepoint
 
-ยังไม่ทำ (เกินขอบเขต quick win): threat model doc (#1), Playwright browser-bridge project (#7), static RPC manifest audit ของ handler ทั้ง 202+ ตัว (#8), UX prototype file explorer (#10)
+ยังไม่ทำ (เกินขอบเขต quick win): threat model doc (#1), static RPC manifest audit ของ handler ทั้ง 202+ ตัว (#8), UX prototype file explorer (#10)
 
 ### P0.1 Bootstrap token + session/CSRF auth — เสร็จแล้ว (opt-in, ปิดเป็นค่าเริ่มต้น)
 
@@ -167,6 +167,20 @@ Runner ฝั่ง electron catch error ระดับ run แล้วส่�
 - **Live verification ผ่าน curl**: บูต server ปิด auth → `/api/ipc/channels` ยัง 200 เหมือนเดิมทุกอย่าง, ไม่มี banner token ขึ้น; บูต server เปิด auth → `/api/ipc/*` ไม่มี cookie = 401, token ผิด = 401, token ถูกแลกได้ csrfToken + cookie, GET ด้วย cookie อย่างเดียวผ่าน, POST ไม่มี/ผิด CSRF = 403, POST ที่มี CSRF ถูกต้อง = 200, WS handshake ไม่มี cookie = 401 / มี cookie = 101 Switching Protocols
 
 **ทำไมถึงเลือก opt-in แทนบังคับเปิดเป็นค่าเริ่มต้น**: การเปิด auth เปลี่ยน UX ของฟีเจอร์ที่ shipped ไปแล้ว (ผู้ใช้ browser mode ทุกคนจะโดน 401 จนกว่าจะไปคัดลอก token จาก console มาใส่) — ต่างจาก control อื่นๆ ใน P0 quick wins ที่ปลอดภัยแบบ transparent อยู่แล้ว ผู้ใช้เลือกให้สร้างโครงสร้างไว้ครบสมบูรณ์แต่ปิดไว้ก่อน (`BRUNO_SERVER_REQUIRE_AUTH=true` เพื่อเปิด) แทนที่จะบังคับ breaking change ทันที
+
+### P0.6 Playwright browser-bridge project (#7) — เสร็จแล้ว
+
+ก่อนหน้านี้ e2e suite ทั้งหมด (`playwright/index.ts` fixtures) รัน Electron จริงเท่านั้น — ไม่เคยมี test ไหนเดิน path ของ Browser Bridge (`bruno-app` ผ่าน browser จริงคุยกับ `bruno-server` ผ่าน HTTP/WS) เลยแม้แต่ครั้งเดียว ทั้งที่ P0.1/P0.3/origin-allowlist/privileged-channels ที่เพิ่งทำเสร็จทั้งหมดอยู่บน path นี้
+
+- **`playwright.config.ts`** — เพิ่ม project ใหม่ `browser-bridge` (`testDir: ./tests/browser-bridge`, `baseURL: http://localhost:3000`, ไม่ใช้ `playwright/index.ts` fixtures เพราะไม่ใช่ Electron) และเพิ่ม `webServer` entry ที่สาม รัน `npm run dev:server` (bruno-server พอร์ต 4000) — เป็น idle process เฉย ๆ สำหรับ project อื่นที่ไม่แตะ bridge
+- **`tests/browser-bridge/boot.spec.ts`** — บูตหน้า `bruno-app` จริงใน Chromium ธรรมดา (ไม่มี Electron preload) รอ `[data-app-state="loaded"]` แล้วเช็คว่า `window.ipcRenderer.isElectron === false` ยืนยันว่า `BrowserTransport` ถูกเลือกจริงตาม fallback logic
+- **`tests/browser-bridge/api-surface.spec.ts`** — ยิง HTTP ตรงใส่ `bruno-server` (ไม่ผ่าน browser page): `GET /api/health`, `GET /api/ipc/channels`, IPC round-trip จริงผ่าน `POST /api/ipc/renderer:open-about`, unknown channel → 404
+- **`tests/browser-bridge/security-defaults.spec.ts`** — regression guard สำหรับ default ที่ทำไว้ใน P0 ทั้งหมด บน fresh install (ไม่ตั้ง env var ใดๆ): origin allowlist reflect เฉพาะ loopback origin, privileged channel (`terminal:create`) โดนบล็อก 403, auth ปิดอยู่โดยดีฟอลต์ (`authRequired:false`, IPC เรียกได้ไม่ต้อง session), filesystem sandbox ปิดอยู่โดยดีฟอลต์ (path นอก sandbox ไม่โดน 403)
+- เพิ่ม script `test:e2e:browser-bridge` ใน root `package.json`
+
+**ผลรัน (verified จริง ไม่ใช่แค่ typecheck)**: 9/9 เทสต์ผ่านทั้งหมด — `api-surface.spec.ts` (4/4) และ `security-defaults.spec.ts` (4/4) ผ่านตรง ๆ ในรันแรกที่ `baseURL` ชี้ไปที่พอร์ต webServer จริง; `boot.spec.ts` ล้มเหลวครั้งแรกในรันร่วมเพราะพอร์ต 3000 ใน sandbox นี้ถูกใช้โดย service อื่นที่ไม่เกี่ยวข้องอยู่ก่อนแล้ว (`reuseExistingServer` เลยไม่สั่ง `dev:web` และ test ไปเจอหน้า login ของแอปอื่น) — ยืนยันว่าไม่ใช่บั๊กของโค้ดหรือ test โดยรัน `dev:web` แยกบนพอร์ตว่าง แล้วรัน `boot.spec.ts` เดี่ยว ๆ ชี้ `baseURL` ไปที่พอร์ตนั้นแทน ผ่าน 1/1 ยืนยันว่า test ถูกต้อง ปัญหาอยู่ที่ sandbox มี process อื่นจับพอร์ต 3000 ไว้ก่อน ไม่ใช่ปัญหาที่จะเกิดในเครื่อง dev/CI ปกติที่พอร์ต 3000 ว่าง
+
+**ขอบเขตที่ตั้งใจไม่ครอบคลุม**: เป็น smoke test ระดับ boot + API surface + security default เท่านั้น ยังไม่ครอบคลุม UI-driven flow เต็มรูปแบบ (สร้าง/ส่ง request จริงผ่านฟอร์ม, runner, collection tree) ผ่าน Browser Bridge — ยังต้องพึ่ง Electron e2e suite เดิมสำหรับ UI flow เหล่านั้น เพราะ browser mode กับ Electron mode ใช้ UI component เดียวกัน ต่างกันแค่ transport layer ซึ่ง 4 ไฟล์นี้ครอบ transport layer นั้นโดยเฉพาะ
 
 ---
 
