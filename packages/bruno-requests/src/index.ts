@@ -2,6 +2,7 @@ export { addDigestInterceptor, getOAuth2Token, createOAuth1Authorizer, computeBo
 export { GrpcClient, generateGrpcSampleMessage } from './grpc';
 export { WsClient } from './ws/ws-client';
 export { default as cookies } from './cookies';
+export { runWithSessionKey, getCurrentSessionKey } from './session-context';
 
 export { getCACertificates } from './utils/ca-cert';
 export { transformProxyConfig } from './utils/proxy-util';

@@ -1,9 +1,25 @@
 /**
  * Session Context — tracks which authenticated session (Improvement.md P0.1)
- * is responsible for the IPC call currently in flight, so that events sent
- * via WindowShim's webContents.send() during that call can be routed back
- * to only that session's WebSocket connections (Improvement.md P0.4) instead
- * of broadcast to every connected browser tab/user.
+ * is responsible for the IPC call currently in flight, so that:
+ *
+ *  - events sent via WindowShim's webContents.send() during that call can be
+ *    routed back to only that session's WebSocket connections instead of
+ *    broadcast to every connected browser tab/user, and
+ *  - HTTP cookies read/written during that call (bruno-electron's network
+ *    layer, via @usebruno/requests' cookie jar) land in that session's own
+ *    jar instead of a single jar shared by every Browser Bridge user.
+ *
+ * (both Improvement.md P0.4)
+ *
+ * This module is a thin wrapper around @usebruno/requests' own
+ * AsyncLocalStorage-based session-key hook rather than a second, separate
+ * AsyncLocalStorage instance: the cookie jar selection in
+ * @usebruno/requests/src/cookies runs deep inside bruno-electron's request
+ * handling, several call frames below where this server sets the context, so
+ * both sides need to read the exact same storage instance for it to see the
+ * session id — re-exporting keeps that guarantee without bruno-requests (a
+ * lower-level package used standalone by the CLI too) needing to know
+ * anything about "Browser Bridge sessions".
  *
  * Built on AsyncLocalStorage rather than threading a sessionId parameter
  * through every bruno-electron handler signature: handlers are registered
@@ -15,9 +31,7 @@
  * handler signatures.
  */
 
-const { AsyncLocalStorage } = require('async_hooks');
-
-const storage = new AsyncLocalStorage();
+const { runWithSessionKey, getCurrentSessionKey } = require('@usebruno/requests');
 
 /**
  * Runs `fn` with `sessionId` attached to the async context for the
@@ -25,7 +39,7 @@ const storage = new AsyncLocalStorage();
  * returns). Returns whatever `fn` returns.
  */
 function runWithSession(sessionId, fn) {
-  return storage.run(sessionId, fn);
+  return runWithSessionKey(sessionId, fn);
 }
 
 /**
@@ -34,7 +48,7 @@ function runWithSession(sessionId, fn) {
  * autonomously rather than in response to a specific client's request).
  */
 function getCurrentSessionId() {
-  return storage.getStore();
+  return getCurrentSessionKey();
 }
 
 module.exports = { runWithSession, getCurrentSessionId };

@@ -1,5 +1,6 @@
 import cookiesModule from './index';
 import { Cookie } from 'tough-cookie';
+import { runWithSessionKey } from '../session-context';
 
 // Provide explicit type for the cookie-jar wrapper returned by cookiesModule.jar()
 type CookieJarWrapper = ReturnType<typeof cookiesModule.jar>;
@@ -305,6 +306,81 @@ describe('Bruno Cookie Jar Wrapper - API Examples', () => {
       const apiCookieNames = apiCookies.map((c: Cookie) => c.key);
       expect(apiCookieNames).toContain('global');
       expect(apiCookieNames).toContain('api');
+    });
+  });
+
+  describe('Per-session cookie jar isolation (Improvement.md P0.4)', () => {
+    const isolationUrl = 'https://isolation.example.com';
+
+    test('a cookie set under one session key is invisible under another', async () => {
+      await runWithSessionKey('session-a', async () => {
+        await cookiesModule.jar().setCookie(isolationUrl, 'auth', 'a-token');
+      });
+
+      await runWithSessionKey('session-b', async () => {
+        const cookie = await cookiesModule.jar().getCookie(isolationUrl, 'auth');
+        expect(cookie).toBeNull();
+      });
+
+      await runWithSessionKey('session-a', async () => {
+        const cookie = (await cookiesModule.jar().getCookie(isolationUrl, 'auth'))!;
+        expect(cookie.value).toBe('a-token');
+      });
+    });
+
+    test('cookies set with no session key active (desktop/CLI) land in the shared default jar', async () => {
+      await cookiesModule.jar().setCookie(isolationUrl, 'desktopCookie', 'd-value');
+
+      const cookie = (await cookiesModule.jar().getCookie(isolationUrl, 'desktopCookie'))!;
+      expect(cookie.value).toBe('d-value');
+
+      // Also visible via the raw exported default jar (what CookiesStore persists).
+      const viaDefaultJar = await cookiesModule.cookieJar.getCookies(isolationUrl);
+      expect((viaDefaultJar as Cookie[]).some((c) => c.key === 'desktopCookie')).toBe(true);
+    });
+
+    test('two different session keys never see the same cookie for a shared domain', async () => {
+      await runWithSessionKey('session-x', async () => {
+        await cookiesModule.jar().setCookie(isolationUrl, 'who', 'x');
+      });
+      await runWithSessionKey('session-y', async () => {
+        await cookiesModule.jar().setCookie(isolationUrl, 'who', 'y');
+      });
+
+      await runWithSessionKey('session-x', async () => {
+        const cookie = (await cookiesModule.jar().getCookie(isolationUrl, 'who'))!;
+        expect(cookie.value).toBe('x');
+      });
+      await runWithSessionKey('session-y', async () => {
+        const cookie = (await cookiesModule.jar().getCookie(isolationUrl, 'who'))!;
+        expect(cookie.value).toBe('y');
+      });
+    });
+
+    test('clearSessionJar drops a session jar; a later use of the same key starts fresh', async () => {
+      await runWithSessionKey('session-ephemeral', async () => {
+        await cookiesModule.jar().setCookie(isolationUrl, 'temp', 'value');
+      });
+
+      cookiesModule.clearSessionJar('session-ephemeral');
+
+      await runWithSessionKey('session-ephemeral', async () => {
+        const cookie = await cookiesModule.jar().getCookie(isolationUrl, 'temp');
+        expect(cookie).toBeNull();
+      });
+    });
+
+    test('addCookieToJar/getCookieStringForUrl (the network/index.js code path) also respect the active session key', () => {
+      runWithSessionKey('session-network', () => {
+        cookiesModule.addCookieToJar(`netCookie=abc; Domain=${new URL(isolationUrl).hostname}`, isolationUrl);
+      });
+
+      runWithSessionKey('session-network', () => {
+        expect(cookiesModule.getCookieStringForUrl(isolationUrl)).toContain('netCookie=abc');
+      });
+
+      // A different (or absent) session key must not see it.
+      expect(cookiesModule.getCookieStringForUrl(isolationUrl)).not.toContain('netCookie=abc');
     });
   });
 });

@@ -19,6 +19,7 @@ const {
 const { getOwnedTerminals, release } = require('../security/terminal-ownership');
 const { getOwnedPaths, release: releaseWatcherOwner } = require('../security/watcher-ownership');
 const { checkAuthRateLimit } = require('../security/auth-rate-limit');
+const { cookies: cookiesModule } = require('@usebruno/requests');
 const { CHANNELS, ERROR_CODES } = require('@usebruno/rpc-contract');
 
 /**
@@ -70,6 +71,17 @@ const cleanupSessionWatchers = (sessionId, getCollectionWatcher) => {
   });
 };
 
+/**
+ * Drops the departing session's in-memory cookie jar (see
+ * @usebruno/requests/src/cookies — resolveJar()). Unlike terminals/watchers
+ * there's nothing external to tear down here (no OS process, no filesystem
+ * watch); this purely bounds memory growth on a long-lived server process
+ * that accumulates one CookieJar per session that ever authenticated.
+ */
+const cleanupSessionCookies = (sessionId) => {
+  cookiesModule.clearSessionJar(sessionId);
+};
+
 const createAuthRouter = (handlerRegistry, windowShim, createFakeEvent, getCollectionWatcher) => {
   const router = express.Router();
 
@@ -114,6 +126,7 @@ const createAuthRouter = (handlerRegistry, windowShim, createFakeEvent, getColle
   router.delete('/session', requireAuth, async (req, res) => {
     await cleanupSessionTerminals(req.brunoSessionId, handlerRegistry, windowShim, createFakeEvent);
     cleanupSessionWatchers(req.brunoSessionId, getCollectionWatcher);
+    cleanupSessionCookies(req.brunoSessionId);
     revokeSession(req.brunoSessionId);
     res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
     res.json({ ok: true });

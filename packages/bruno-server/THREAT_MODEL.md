@@ -125,6 +125,7 @@ event หรือควบคุม resource (เช่น terminal process) �
 | ผู้ใช้ auth เปิดไว้แต่ session หมดอายุ/logout แล้วยัง credential/cookie เดิมใช้ต่อได้ | session มี TTL 24 ชม., `DELETE /api/auth/session` เรียก `revokeSession` ลบออกจาก map ทันที | `security/auth.js`, `routes/auth.js` |
 | terminal process ที่ session เป็นเจ้าของยังรันค้างอยู่หลัง logout (leak, ไม่ใช่ cross-session access แต่เป็น resource ที่ควรตายไปพร้อม session) | `DELETE /api/auth/session` เดิน `getOwnedTerminals()` แล้ว kill ทุกตัวแบบ best-effort ก่อน `revokeSession` | `security/terminal-ownership.js`, `routes/auth.js` |
 | collection watcher (filesystem, chokidar) ที่ session เป็นเจ้าของยังทำงานค้างอยู่หลัง logout แม้ไม่มี session ไหนพึ่งพาแล้ว | ref-counted ownership (`Map<watchPath, Set<sessionId>>`) — `removeWatcher()` จะถูกเรียกจริงก็ต่อเมื่อ session สุดท้ายที่ยังพึ่งพา path นั้นออกเท่านั้น ไม่ทำลาย watcher ที่ session อื่นยังใช้อยู่ | `security/watcher-ownership.js`, `routes/auth.js`, `routes/ipc-proxy.js` |
+| HTTP cookie (session token, auth cookie ของ API ที่ทดสอบ) ที่ session A ตั้งไว้หลุดไปติดกับ request ที่ session B ยิงถึง domain เดียวกัน (single process-wide `CookieJar`) | jar ต่อ session แยกกันจริง เลือกใช้ผ่าน `AsyncLocalStorage` key เดียวกับที่ event routing ใช้ (`resolveJar()`), จบอายุ (`clearSessionJar`) ตอน logout — jar กลางเดิม (desktop/CLI/no-auth) ไม่ถูกแตะ ยังทำงานเหมือนเดิมทุกกรณี | `@usebruno/requests`'s `session-context.ts`, `cookies/index.ts`, `session-context.js`, `routes/auth.js` |
 
 ## 5. Accepted risk / gap ที่รู้อยู่แล้วและยังไม่ปิด
 
@@ -153,10 +154,13 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
    ข้างหลัง load balancer ตัวจำกัดนี้จะนับแยกกันต่อ instance ไม่ได้รวมกัน (ตอนนี้ยังไม่มี pattern
    deploy แบบ multi-instance ในเอกสารไหนเลย จึงยังไม่ใช่ปัญหาจริงในทางปฏิบัติ)
 5. **session-scoped isolation ยังไม่ครอบคลุมทุก resource type** — ตอนนี้มีแค่ event routing,
-   terminal, และ filesystem watcher (boundary 4 สามแถวแรก) ยังไม่มีสำหรับ active
-   workspace/collection state, secret/credential ต่อ session, หรือ per-user resource limit —
-   ทั้งหมดนี้ต้องมี "session ownership" concept แบบเดียวกับ terminal/watcher ผูกกับ resource type
-   อื่นเพิ่ม ซึ่งเป็นงานที่ใหญ่กว่า 1 increment ต่อ resource
+   terminal, filesystem watcher, และ HTTP cookie jar (boundary 4 สี่แถวแรก) ยังไม่มีสำหรับ active
+   workspace/collection state หรือ per-user resource limit — ทั้งหมดนี้ต้องมี "session ownership"
+   concept แบบเดียวกับ terminal/watcher/cookie ผูกกับ resource type อื่นเพิ่ม ซึ่งเป็นงานที่ใหญ่กว่า 1
+   increment ต่อ resource (**secret/credential ต่อ session ตรวจสอบแล้วไม่ใช่ gap** —
+   `EnvironmentSecretsStore`/`Oauth2Store` scope ตาม collection โดยตั้งใจ ไม่ใช่ตาม session เพราะ
+   ต้องแชร์กันได้ระหว่างหลาย session ที่ collaborate บน collection เดียวกัน ดู `find bug and
+   Improvement.md` increment ที่หก)
 
 ## 6. คำแนะนำการ deploy (ไม่ใช่ default behavior — เป็น operator responsibility)
 

@@ -2,8 +2,40 @@ import { Cookie, CookieJar } from 'tough-cookie';
 import each from 'lodash/each';
 import moment from 'moment';
 import { isPotentiallyTrustworthyOrigin } from '../utils/url-validation';
+import { getCurrentSessionKey } from '../session-context';
 
+// Default jar used whenever there's no active session key (desktop app, CLI,
+// Browser Bridge with auth off) — kept as a stable, always-valid export so
+// existing consumers (e.g. bruno-electron's CookiesStore, which persists this
+// jar to disk) keep working unchanged. Per-session jars below are deliberately
+// in-memory only and never persisted: they're scoped to one Browser Bridge
+// session's lifetime, not something a user would expect to survive a restart.
 const cookieJar = new CookieJar();
+const sessionJars = new Map<string, CookieJar>();
+
+// Every read/write in this file goes through resolveJar() rather than the
+// `cookieJar` binding directly, so that requests made while a session key is
+// attached to the async context (see ../session-context) transparently land
+// in that session's own jar instead of the shared default one — this is what
+// keeps one Browser Bridge session's cookies from leaking into another's.
+const resolveJar = (): CookieJar => {
+  const sessionKey = getCurrentSessionKey();
+  if (!sessionKey) return cookieJar;
+
+  let jar = sessionJars.get(sessionKey);
+  if (!jar) {
+    jar = new CookieJar();
+    sessionJars.set(sessionKey, jar);
+  }
+  return jar;
+};
+
+// Drops a session's in-memory jar entirely. Called by @usebruno/server on
+// logout so a long-lived server process doesn't accumulate one abandoned
+// CookieJar per session that ever authenticated.
+const clearSessionJar = (sessionKey: string): void => {
+  sessionJars.delete(sessionKey);
+};
 
 // __Host- prefixed cookies must have hostOnly=true per the cookie spec.
 // tough-cookie only sets hostOnly=true when domain is derived from the URL,
@@ -13,13 +45,13 @@ const hasHostPrefix = (cookieName: string): boolean => cookieName.startsWith('__
 const addCookieToJar = (setCookieHeader: string, requestUrl: string): void => {
   const cookie = Cookie.parse(setCookieHeader, { loose: true });
   if (!cookie) return;
-  cookieJar.setCookieSync(cookie, requestUrl, {
+  resolveJar().setCookieSync(cookie, requestUrl, {
     ignoreError: true
   });
 };
 
 const getCookiesForUrl = (url: string) => {
-  return cookieJar.getCookiesSync(url, {
+  return resolveJar().getCookiesSync(url, {
     secure: isPotentiallyTrustworthyOrigin(url)
   } as any);
 };
@@ -36,7 +68,7 @@ const getDomainsWithCookies = (): Promise<Array<{ domain: string; cookies: Cooki
   return new Promise((resolve, reject) => {
     const domainCookieMap: Record<string, Cookie[]> = {};
 
-    (cookieJar as any).store.getAllCookies((err: Error, cookies: Cookie[]) => {
+    (resolveJar() as any).store.getAllCookies((err: Error, cookies: Cookie[]) => {
       if (err) return reject(err);
 
       cookies.forEach((cookie) => {
@@ -73,7 +105,7 @@ const getDomainsWithCookies = (): Promise<Array<{ domain: string; cookies: Cooki
 
 const deleteCookie = (domain: string, path: string, cookieKey: string): Promise<void> => {
   return new Promise((resolve, reject) => {
-    (cookieJar as any).store.removeCookie(domain, path, cookieKey, (err: Error) => {
+    (resolveJar() as any).store.removeCookie(domain, path, cookieKey, (err: Error) => {
       if (err) return reject(err);
       resolve();
     });
@@ -82,7 +114,7 @@ const deleteCookie = (domain: string, path: string, cookieKey: string): Promise<
 
 const deleteCookiesForDomain = (domain: string): Promise<void> => {
   return new Promise((resolve, reject) => {
-    (cookieJar as any).store.removeCookies(domain, null, (err: Error) => {
+    (resolveJar() as any).store.removeCookies(domain, null, (err: Error) => {
       if (err) return reject(err);
       resolve();
     });
@@ -121,7 +153,7 @@ const addCookieForDomain = (domain: string, cookieObj: any): Promise<void> => {
   return new Promise((resolve, reject) => {
     try {
       const cookie = new Cookie(createCookieObj(cookieObj));
-      (cookieJar as any).store.putCookie(cookie, (err: Error) => {
+      (resolveJar() as any).store.putCookie(cookie, (err: Error) => {
         if (err) return reject(err);
         resolve();
       });
@@ -136,7 +168,7 @@ const modifyCookieForDomain = (domain: string, oldCookieObj: any, cookieObj: any
     try {
       const oldCookie = new Cookie(createCookieObj(oldCookieObj));
       const newCookie = new Cookie(updateCookieObj(cookieObj, oldCookie));
-      (cookieJar as any).store.updateCookie(oldCookie, newCookie, (removeErr: Error) => {
+      (resolveJar() as any).store.updateCookie(oldCookie, newCookie, (removeErr: Error) => {
         if (removeErr) return reject(removeErr);
         resolve();
       });
@@ -204,7 +236,7 @@ const cookieJarWrapper = () => {
         // Callback mode – do NOT return the value from cookieJar.getCookies() because
         // tough-cookie returns a never-resolving Promise when a callback is provided.
         // Returning void ensures `await` on a callback-style call resolves immediately.
-        cookieJar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
+        resolveJar().getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
           if (err) return callback(err);
           const cookieList = cookies || [];
           const cookie = cookieList.find((c) => c.key === cookieName);
@@ -215,7 +247,7 @@ const cookieJarWrapper = () => {
 
       // Promise mode
       return new Promise<Cookie | null>((resolve, reject) => {
-        cookieJar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
+        resolveJar().getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
           if (err) return reject(err);
           const cookieList = cookies || [];
           const cookie = cookieList.find((c) => c.key === cookieName);
@@ -239,7 +271,7 @@ const cookieJarWrapper = () => {
       }
 
       if (callback) {
-        cookieJar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
+        resolveJar().getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
           if (err) return callback(err);
           const cookieList = cookies || [];
           callback(null, cookieList.some((c) => c.key === cookieName));
@@ -248,7 +280,7 @@ const cookieJarWrapper = () => {
       }
 
       return new Promise<boolean>((resolve, reject) => {
-        cookieJar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
+        resolveJar().getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
           if (err) return reject(err);
           const cookieList = cookies || [];
           resolve(cookieList.some((c) => c.key === cookieName));
@@ -268,13 +300,13 @@ const cookieJarWrapper = () => {
 
       if (callback) {
         // Callback mode
-        cookieJar.getCookies(url, callback as any);
+        resolveJar().getCookies(url, callback as any);
         return;
       }
 
       // Promise mode
       return new Promise<Cookie[]>((resolve, reject) => {
-        cookieJar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
+        resolveJar().getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
           if (err) return reject(err);
           resolve(cookies || []);
         });
@@ -311,7 +343,7 @@ const cookieJarWrapper = () => {
               : { key: cookieName, value: cookieValue, domain: new URL(url).hostname }
           );
 
-          cookieJar.setCookieSync(cookie, url, { ignoreError: true });
+          resolveJar().setCookieSync(cookie, url, { ignoreError: true });
           return;
         }
 
@@ -327,7 +359,7 @@ const cookieJarWrapper = () => {
 
           const processedCookie = createCookieObj(base);
           const cookie = new Cookie(processedCookie);
-          cookieJar.setCookieSync(cookie, url, { ignoreError: true });
+          resolveJar().setCookieSync(cookie, url, { ignoreError: true });
           return;
         }
 
@@ -379,7 +411,7 @@ const cookieJarWrapper = () => {
 
           const processedCookie = createCookieObj(base);
           const cookie = new Cookie(processedCookie);
-          cookieJar.setCookieSync(cookie, url, { ignoreError: true });
+          resolveJar().setCookieSync(cookie, url, { ignoreError: true });
         }
       };
 
@@ -408,13 +440,13 @@ const cookieJarWrapper = () => {
     clear: function (callback?: (err?: Error | undefined) => void) {
       if (callback) {
         // Callback mode
-        (cookieJar as any).store.removeAllCookies(callback);
+        (resolveJar() as any).store.removeAllCookies(callback);
         return;
       }
 
       // Promise mode
       return new Promise<void>((resolve, reject) => {
-        (cookieJar as any).store.removeAllCookies((err?: Error) => {
+        (resolveJar() as any).store.removeAllCookies((err?: Error) => {
           if (err) reject(err);
           else resolve();
         });
@@ -432,7 +464,8 @@ const cookieJarWrapper = () => {
 
       if (callback) {
         // Callback mode
-        cookieJar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
+        const jar = resolveJar();
+        jar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
           if (err) return callback(err);
           const cookieList = cookies || [];
           if (!cookieList.length) return callback(undefined);
@@ -446,7 +479,7 @@ const cookieJarWrapper = () => {
           };
 
           cookieList.forEach((cookie) => {
-            (cookieJar as any).store.removeCookie(cookie.domain, cookie.path, cookie.key, done);
+            (jar as any).store.removeCookie(cookie.domain, cookie.path, cookie.key, done);
           });
         });
         return;
@@ -454,7 +487,8 @@ const cookieJarWrapper = () => {
 
       // Promise mode
       return new Promise<void>((resolve, reject) => {
-        cookieJar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
+        const jar = resolveJar();
+        jar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
           if (err) return reject(err);
           const cookieList = cookies || [];
           if (!cookieList.length) return resolve();
@@ -468,7 +502,7 @@ const cookieJarWrapper = () => {
           };
 
           cookieList.forEach((cookie) => {
-            (cookieJar as any).store.removeCookie(cookie.domain, cookie.path, cookie.key, done);
+            (jar as any).store.removeCookie(cookie.domain, cookie.path, cookie.key, done);
           });
         });
       });
@@ -484,7 +518,8 @@ const cookieJarWrapper = () => {
       }
 
       const executeDelete = (callback: (err?: Error) => void) => {
-        cookieJar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
+        const jar = resolveJar();
+        jar.getCookies(url, (err: Error | null, cookies?: Cookie[]) => {
           if (err) return callback(err);
 
           // Filter cookies matching key
@@ -503,7 +538,7 @@ const cookieJarWrapper = () => {
             cookieToDelete = matchingCookies[0];
           }
 
-          (cookieJar as any).store.removeCookie(
+          (jar as any).store.removeCookie(
             cookieToDelete.domain,
             cookieToDelete.path,
             cookieToDelete.key,
@@ -544,7 +579,8 @@ const cookiesModule = {
   updateCookieObj,
   createCookieObj,
   jar: cookieJarWrapper,
-  saveCookies
+  saveCookies,
+  clearSessionJar
 };
 
 export default cookiesModule;
