@@ -389,7 +389,7 @@ const registerHandlers = () => {
 
 // --- Routes ---
 
-app.use('/api/auth', createAuthRouter());
+app.use('/api/auth', createAuthRouter(handlerRegistry, windowShim, createFakeEvent));
 app.use('/api/ipc', requireAuth, createIpcProxyRouter(handlerRegistry, windowShim, createFakeEvent));
 
 // Health check

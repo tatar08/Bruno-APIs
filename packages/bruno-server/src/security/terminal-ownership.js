@@ -46,4 +46,17 @@ function release(terminalSessionId) {
   owners.delete(terminalSessionId);
 }
 
-module.exports = { recordOwner, getOwner, isOwnedBy, release };
+/**
+ * All terminal sessionIds currently owned by `ownerSessionId` — used on
+ * logout (routes/auth.js) to kill terminals the departing session leaves
+ * running rather than leaking them for the lifetime of the server process.
+ */
+function getOwnedTerminals(ownerSessionId) {
+  const owned = [];
+  for (const [terminalSessionId, owner] of owners) {
+    if (owner === ownerSessionId) owned.push(terminalSessionId);
+  }
+  return owned;
+}
+
+module.exports = { recordOwner, getOwner, isOwnedBy, release, getOwnedTerminals };

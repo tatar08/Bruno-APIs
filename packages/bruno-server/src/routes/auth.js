@@ -16,8 +16,34 @@ const {
   parseCookies,
   SESSION_COOKIE_NAME
 } = require('../security/auth');
+const { getOwnedTerminals, release } = require('../security/terminal-ownership');
+const { CHANNELS } = require('@usebruno/rpc-contract');
 
-const createAuthRouter = () => {
+/**
+ * Kills every terminal the departing session owns (Improvement.md P0.4 —
+ * logout previously only revoked the session record, leaving any terminal
+ * processes it started running for the lifetime of the server). Best-effort:
+ * a handler failing to kill one terminal shouldn't block logout or the
+ * cleanup of the others, since the session is going away regardless.
+ */
+const cleanupSessionTerminals = async (sessionId, handlerRegistry, windowShim, createFakeEvent) => {
+  if (!handlerRegistry || !handlerRegistry.hasEvent(CHANNELS.TERMINAL_KILL)) return;
+
+  const terminalIds = getOwnedTerminals(sessionId);
+  await Promise.all(
+    terminalIds.map(async (terminalId) => {
+      try {
+        await handlerRegistry.emit(CHANNELS.TERMINAL_KILL, createFakeEvent(windowShim), terminalId);
+      } catch (err) {
+        console.error(`[Auth] Failed to kill terminal "${terminalId}" on logout:`, err.message);
+      } finally {
+        release(terminalId);
+      }
+    })
+  );
+};
+
+const createAuthRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   const router = express.Router();
 
   // Public: lets the frontend know whether it needs to authenticate at all,
@@ -51,7 +77,8 @@ const createAuthRouter = () => {
     res.json({ csrfToken });
   });
 
-  router.delete('/session', requireAuth, (req, res) => {
+  router.delete('/session', requireAuth, async (req, res) => {
+    await cleanupSessionTerminals(req.brunoSessionId, handlerRegistry, windowShim, createFakeEvent);
     revokeSession(req.brunoSessionId);
     res.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
     res.json({ ok: true });

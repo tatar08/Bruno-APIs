@@ -1,4 +1,4 @@
-const { recordOwner, getOwner, isOwnedBy, release } = require('../terminal-ownership');
+const { recordOwner, getOwner, isOwnedBy, release, getOwnedTerminals } = require('../terminal-ownership');
 
 describe('terminal-ownership', () => {
   it('records and reports the owner of a terminal session', () => {
@@ -39,5 +39,18 @@ describe('terminal-ownership', () => {
     recordOwner('session-h', 'terminal-5');
     expect(getOwner('terminal-5')).toBe('session-h');
     expect(isOwnedBy('session-g', 'terminal-5')).toBe(false);
+  });
+
+  it('getOwnedTerminals lists only the terminals owned by that session', () => {
+    recordOwner('session-i', 'terminal-6');
+    recordOwner('session-i', 'terminal-7');
+    recordOwner('session-j', 'terminal-8');
+
+    expect(getOwnedTerminals('session-i').sort()).toEqual(['terminal-6', 'terminal-7']);
+    expect(getOwnedTerminals('session-j')).toEqual(['terminal-8']);
+  });
+
+  it('getOwnedTerminals returns an empty array for a session that owns nothing', () => {
+    expect(getOwnedTerminals('session-with-no-terminals')).toEqual([]);
   });
 });
