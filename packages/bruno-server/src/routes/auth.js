@@ -17,7 +17,8 @@ const {
   SESSION_COOKIE_NAME
 } = require('../security/auth');
 const { getOwnedTerminals, release } = require('../security/terminal-ownership');
-const { CHANNELS } = require('@usebruno/rpc-contract');
+const { checkAuthRateLimit } = require('../security/auth-rate-limit');
+const { CHANNELS, ERROR_CODES } = require('@usebruno/rpc-contract');
 
 /**
  * Kills every terminal the departing session owns (Improvement.md P0.4 —
@@ -59,6 +60,13 @@ const createAuthRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   router.post('/session', (req, res) => {
     if (!isAuthRequired()) {
       return res.status(400).json({ error: 'Authentication is not enabled on this server' });
+    }
+
+    if (!checkAuthRateLimit(req.ip)) {
+      return res.status(429).json({
+        code: ERROR_CODES.RATE_LIMITED,
+        error: 'Too many authentication attempts, slow down.'
+      });
     }
 
     const { token } = req.body || {};

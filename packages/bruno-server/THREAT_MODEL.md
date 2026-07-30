@@ -94,6 +94,7 @@ event หรือควบคุม resource (เช่น terminal process) �
 | ผู้ใช้ที่ไม่รู้ bootstrap token เรียก IPC ได้เลย | opt-in session auth: bootstrap token (timing-safe compare) → HttpOnly session cookie + CSRF token (double-submit) บน state-changing request | `security/auth.js` |
 | CSRF ผ่าน session cookie ที่ browser แนบให้อัตโนมัติ | CSRF token แยกจาก cookie ต้องส่งผ่าน header `X-CSRF-Token` เท่านั้น (ไม่ใช่ cookie จึงไม่ถูกแนบอัตโนมัติข้าม origin) | `security/auth.js` |
 | bootstrap token หลุดผ่าน log/history แล้วถูกใช้ซ้ำ (ไม่ใช่ single-use) | **ยังไม่ mitigate — accepted risk ดูข้อ 5** | — |
+| client ยิง `POST /api/auth/session` (token exchange) รัวๆ ไม่จำกัด — ไม่ใช่ปัญหาเรื่อง brute-force (token สุ่ม 256 บิต เดาไม่ได้อยู่แล้ว) แต่เป็น availability/DoS: แต่ละ attempt เสีย CPU/response cycle ฟรีไม่จำกัดจำนวน | rate limit เฉพาะ endpoint นี้ แยกจาก IPC rate limit เดิม (คีย์ด้วย IP เพราะยังไม่มี session ตอนเรียก), ดีฟอลต์ 10 ครั้ง/5 นาที ปรับได้ผ่าน `BRUNO_SERVER_AUTH_RATE_LIMIT`/`BRUNO_SERVER_AUTH_RATE_WINDOW_MS` | `security/auth-rate-limit.js` |
 | request/response ถูกดักฟังบนเครือข่าย (MITM) | **ไม่มี TLS ในตัว — accepted risk ดูข้อ 5** | — |
 | client ยิง IPC รัวๆ จนตัด availability ของผู้ใช้อื่น/handler ค้าง | per-client rate limit (200 req/10s), concurrency limit (40 in-flight), handler timeout (30s) — ปรับได้ผ่าน env var | `security/ipc-limits.js` |
 | WebSocket client ส่ง frame ใหญ่/ถี่ผิดปกติ, connection ค้างไม่ปิด | `maxPayload` 64KB, message rate limit (50 msg/10s ต่อ connection), ping/pong heartbeat 30s ตัด connection ที่ไม่ตอบ | `ws/event-bridge.js` |
@@ -134,9 +135,14 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
 2. **Bootstrap token ไม่ใช่ single-use** — `verifyBootstrapToken` เป็น static timing-safe
    compare ไม่มี consumption/burn logic เพราะฉะนั้น token เดียวแลก session ใหม่ได้หลายครั้งไม่จำกัด
    (เอาไปใช้ประโยชน์ตอน live-verify terminal isolation ด้วยตัวมันเอง) ถ้า token หลุดในช่วงที่ auth
-   ยังเปิดอยู่ ผู้โจมตีสร้าง session ของตัวเองได้เรื่อยๆ mitigation ที่มีอยู่ตอนนี้คือ token
-   ยาว 32 byte random และพิมพ์ทาง console ครั้งเดียวตอน startup เท่านั้น (ไม่มีทางดึงย้อนหลังถ้าไม่ได้
-   เก็บ log ไว้)
+   ยังเปิดอยู่ ผู้โจมตีสร้าง session ของตัวเองได้เรื่อยๆ **นี่เป็นการตัดสินใจตั้งใจ ไม่ใช่ของที่ลืมทำ**
+   — token นี้ถูกออกแบบให้เป็น credential ที่แชร์กันได้ระหว่างหลาย client/ผู้ใช้ที่เข้าถึง Bridge
+   เดียวกันได้ (สอดคล้องกับ P0.4 ที่รองรับหลาย session พร้อมกัน) ถ้าทำเป็น single-use จะจำกัดให้
+   login ได้แค่ client เดียวต่อการ restart server หนึ่งครั้ง ขัดกับโมเดลการใช้งานนี้ mitigation ที่มี
+   อยู่ตอนนี้คือ token ยาว 32 byte random, พิมพ์ทาง console ครั้งเดียวตอน startup เท่านั้น (ไม่มีทาง
+   ดึงย้อนหลังถ้าไม่ได้เก็บ log ไว้), และ rate limit บน endpoint แลก token เอง
+   (`security/auth-rate-limit.js`, ดูตาราง boundary 1 ข้างบน) ที่ปิด availability/DoS vector ของ
+   endpoint นี้แยกต่างหากจากประเด็น single-use นี้
 3. **`BRUNO_SERVER_ALLOWED_ROOTS` ไม่ได้บังคับตั้งค่า** — ถ้าไม่ตั้ง filesystem sandbox
    (`allowed-roots.js`) จะ fail-open คือไม่จำกัดอะไรเลย เหมือนก่อนมี P0.3 การตัดสินใจนี้สอดคล้องกับ
    pattern เดิมทั้งไฟล์ (ทุก control opt-in ไม่เปลี่ยนพฤติกรรมเดิมโดยดีฟอลต์) แต่หมายความว่า deploy

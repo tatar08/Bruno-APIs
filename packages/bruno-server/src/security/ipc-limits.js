@@ -17,22 +17,32 @@ const RATE_WINDOW_MS = Number(process.env.BRUNO_SERVER_IPC_RATE_WINDOW_MS) || 10
 const MAX_CONCURRENT = Number(process.env.BRUNO_SERVER_IPC_MAX_CONCURRENT) || 40;
 const TIMEOUT_MS = Number(process.env.BRUNO_SERVER_IPC_TIMEOUT_MS) || 30000;
 
-const requestTimestamps = new Map(); // clientKey -> number[]
-const activeCounts = new Map(); // clientKey -> number
+/**
+ * A sliding-window rate limiter keyed by an arbitrary client key. Factored
+ * out so other endpoints with different limits (e.g. auth-rate-limit.js)
+ * can reuse the same algorithm without duplicating it or sharing state with
+ * the IPC limiter below.
+ */
+function createSlidingWindowLimiter(limit, windowMs) {
+  const timestampsByClient = new Map(); // clientKey -> number[]
 
-function checkRateLimit(clientKey) {
-  const now = Date.now();
-  const timestamps = (requestTimestamps.get(clientKey) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  return function check(clientKey) {
+    const now = Date.now();
+    const timestamps = (timestampsByClient.get(clientKey) || []).filter((t) => now - t < windowMs);
 
-  if (timestamps.length >= RATE_LIMIT) {
-    requestTimestamps.set(clientKey, timestamps);
-    return false;
-  }
+    if (timestamps.length >= limit) {
+      timestampsByClient.set(clientKey, timestamps);
+      return false;
+    }
 
-  timestamps.push(now);
-  requestTimestamps.set(clientKey, timestamps);
-  return true;
+    timestamps.push(now);
+    timestampsByClient.set(clientKey, timestamps);
+    return true;
+  };
 }
+
+const checkRateLimit = createSlidingWindowLimiter(RATE_LIMIT, RATE_WINDOW_MS);
+const activeCounts = new Map(); // clientKey -> number
 
 function acquireConcurrencySlot(clientKey) {
   const current = activeCounts.get(clientKey) || 0;
@@ -85,6 +95,7 @@ module.exports = {
   releaseConcurrencySlot,
   withTimeout,
   IpcTimeoutError,
+  createSlidingWindowLimiter,
   RATE_LIMIT,
   RATE_WINDOW_MS,
   MAX_CONCURRENT,
