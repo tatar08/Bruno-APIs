@@ -139,6 +139,23 @@ Runner ฝั่ง electron catch error ระดับ run แล้วส่�
 
 ---
 
+## 4.1 สถานะการ implement Section 9 quick wins (อัปเดตหลังลงมือทำ)
+
+ทำเสร็จแล้วใน `packages/bruno-server`:
+
+- Loopback bind เป็นค่าเริ่มต้น (`BRUNO_SERVER_HOST`, default `127.0.0.1`)
+- Origin allowlist สำหรับ HTTP CORS และ WebSocket `verifyClient` — default อนุญาตเฉพาะ loopback origin, ขยายได้ผ่าน `BRUNO_SERVER_ALLOWED_ORIGINS` (`security/origin-policy.js`)
+- ปิด `terminal:*` และ git clone/connect/disconnect ตามค่าเริ่มต้น, เปิดผ่าน `BRUNO_SERVER_ENABLE_PRIVILEGED_CHANNELS=true` (`security/privileged-channels.js`)
+- WebSocket: `maxPayload` 64KB, heartbeat ping/pong 30s พร้อม terminate connection ค้าง, message rate limit 50 msg/10s
+- ลด JSON/urlencoded body limit จาก 100mb → 25mb (`BRUNO_SERVER_JSON_LIMIT`)
+- **P0.3 Filesystem Sandbox แบบ coarse (opt-in)** — `security/allowed-roots.js` + unit tests (`security/__tests__/allowed-roots.spec.js`, ครอบ traversal + symlink escape): ปิดอยู่โดยดีฟอลต์ (ไม่กระทบพฤติกรรมเดิม), เปิดผ่าน `BRUNO_SERVER_ALLOWED_ROOTS` แล้วจะสแกน argument ทุกตัวของทุก IPC call (รวม nested object/array ลึก 3 ชั้น) หา absolute path แล้วเช็คว่าอยู่ใน root ที่อนุญาตไหม (resolve ผ่าน ancestor ที่มีจริงก่อน realpath กัน symlink escape)
+
+**ข้อจำกัดที่ตั้งใจปล่อยไว้ (ต้องรู้ก่อนใช้งานจริง):** ตัวสแกนนี้เป็น generic เดาจาก "string ที่หน้าตาเหมือน absolute path" ไม่รู้ semantic รายช่อง — จาก audit พบว่ามี **~85+ handler** ใน `bruno-electron/src/ipc/` ที่รับ path จาก renderer โดยรูปแบบ argument ไม่เหมือนกันเลย (positional, nested ในอ็อบเจ็กต์, array, source/dest คู่) และมีแค่ 5 handler เท่านั้นที่เคย validate path เอง (`validatePathIsInsideCollection` ใน 4 จุด + inline check ใน `renderer:delete-transient-requests`) ตัว sandbox นี้จึงเป็น **safety net เสริม** ไม่ใช่ per-channel validation ที่สมบูรณ์ — มี extension point `CHANNEL_PATH_EXTRACTORS` ในไฟล์เดียวกันสำหรับเพิ่มความแม่นยำทีละ channel ในอนาคตโดยไม่ต้องแก้ chokepoint
+
+ยังไม่ทำ (เกินขอบเขต quick win): bootstrap token/session auth (P0.1 ส่วนที่เหลือ, ต้อง wire เข้า `ipc-transport.js` ฝั่ง frontend), threat model doc (#1), Playwright browser-bridge project (#7), static RPC manifest audit ของ handler ทั้ง 202+ ตัว (#8), UX prototype file explorer (#10)
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

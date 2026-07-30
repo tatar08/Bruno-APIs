@@ -8,6 +8,7 @@
 
 const express = require('express');
 const { isPrivilegedChannel, PRIVILEGED_CHANNELS_ENABLED } = require('../security/privileged-channels');
+const { findDisallowedPath } = require('../security/allowed-roots');
 
 const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   const router = express.Router();
@@ -25,6 +26,13 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
     if (isPrivilegedChannel(channel) && !PRIVILEGED_CHANNELS_ENABLED) {
       return res.status(403).json({
         error: `Channel "${channel}" is disabled by default in Browser Bridge mode (terminal execution / git clone-connect). Set BRUNO_SERVER_ENABLE_PRIVILEGED_CHANNELS=true to enable it.`
+      });
+    }
+
+    const disallowedPath = findDisallowedPath(channel, args);
+    if (disallowedPath) {
+      return res.status(403).json({
+        error: `Path "${disallowedPath}" is outside the allowed roots configured for this Bridge (BRUNO_SERVER_ALLOWED_ROOTS).`
       });
     }
 
