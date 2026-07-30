@@ -65,6 +65,17 @@ function revokeSession(sessionId) {
   sessions.delete(sessionId);
 }
 
+/**
+ * Total live (non-expired-at-time-of-last-touch) session count — used by
+ * resource-limits.js to cap total concurrent sessions the server will admit.
+ * Not lazily pruned of expired entries here (getSession() does that on
+ * read), so this can overcount briefly until an expired session is next
+ * looked up; acceptable for an availability safety net, not a hard bound.
+ */
+function getSessionCount() {
+  return sessions.size;
+}
+
 function parseCookies(header) {
   const cookies = {};
   if (!header) return cookies;
@@ -124,6 +135,7 @@ module.exports = {
   createSession,
   getSession,
   revokeSession,
+  getSessionCount,
   requireAuth,
   isSessionCookieValid,
   parseCookies,

@@ -12,13 +12,16 @@ const {
   createSession,
   getSession,
   revokeSession,
+  getSessionCount,
   requireAuth,
   parseCookies,
   SESSION_COOKIE_NAME
 } = require('../security/auth');
 const { getOwnedTerminals, release } = require('../security/terminal-ownership');
 const { getOwnedPaths, release: releaseWatcherOwner } = require('../security/watcher-ownership');
+const { wsConnectionOwnership, grpcConnectionOwnership } = require('../security/connection-ownership');
 const { checkAuthRateLimit } = require('../security/auth-rate-limit');
+const { sessionLimitExceeded, MAX_CONCURRENT_SESSIONS } = require('../security/resource-limits');
 const { cookies: cookiesModule } = require('@usebruno/requests');
 const { CHANNELS, ERROR_CODES } = require('@usebruno/rpc-contract');
 
@@ -72,6 +75,49 @@ const cleanupSessionWatchers = (sessionId, getCollectionWatcher) => {
 };
 
 /**
+ * Closes every WebSocket/gRPC connection the departing session owns (see
+ * connection-ownership.js) — logout previously left these running forever,
+ * same gap this fixed for terminals above. Both close/end/cancel channels
+ * are ipcMain.handle()-registered (invoke, not emit), unlike terminal:kill.
+ * gRPC uses cancel-request rather than end-request for cleanup, since cancel
+ * is the forceful teardown (end-request is a graceful half-close meant for
+ * an in-progress client stream, not a departing session). Best-effort: a
+ * handler failing to close one connection shouldn't block logout or the
+ * cleanup of the others.
+ */
+const cleanupSessionConnections = async (sessionId, handlerRegistry, windowShim, createFakeEvent) => {
+  if (handlerRegistry && handlerRegistry.has(CHANNELS.RENDERER_WS_CLOSE_CONNECTION)) {
+    const wsConnectionIds = wsConnectionOwnership.getOwnedConnections(sessionId);
+    await Promise.all(
+      wsConnectionIds.map(async (connectionId) => {
+        try {
+          await handlerRegistry.invoke(CHANNELS.RENDERER_WS_CLOSE_CONNECTION, createFakeEvent(windowShim), connectionId);
+        } catch (err) {
+          console.error(`[Auth] Failed to close WebSocket connection "${connectionId}" on logout:`, err.message);
+        } finally {
+          wsConnectionOwnership.release(connectionId);
+        }
+      })
+    );
+  }
+
+  if (handlerRegistry && handlerRegistry.has(CHANNELS.GRPC_CANCEL_REQUEST)) {
+    const grpcConnectionIds = grpcConnectionOwnership.getOwnedConnections(sessionId);
+    await Promise.all(
+      grpcConnectionIds.map(async (connectionId) => {
+        try {
+          await handlerRegistry.invoke(CHANNELS.GRPC_CANCEL_REQUEST, createFakeEvent(windowShim), { requestId: connectionId });
+        } catch (err) {
+          console.error(`[Auth] Failed to cancel gRPC connection "${connectionId}" on logout:`, err.message);
+        } finally {
+          grpcConnectionOwnership.release(connectionId);
+        }
+      })
+    );
+  }
+};
+
+/**
  * Drops the departing session's in-memory cookie jar (see
  * @usebruno/requests/src/cookies — resolveJar()). Unlike terminals/watchers
  * there's nothing external to tear down here (no OS process, no filesystem
@@ -112,6 +158,13 @@ const createAuthRouter = (handlerRegistry, windowShim, createFakeEvent, getColle
       return res.status(401).json({ error: 'Invalid bootstrap token' });
     }
 
+    if (sessionLimitExceeded(getSessionCount())) {
+      return res.status(429).json({
+        code: ERROR_CODES.RESOURCE_LIMIT_EXCEEDED,
+        error: `This Bridge already has ${MAX_CONCURRENT_SESSIONS} concurrent sessions, the configured maximum (BRUNO_SERVER_MAX_CONCURRENT_SESSIONS). Log out an existing session and try again.`
+      });
+    }
+
     const { sessionId, csrfToken } = createSession();
     res.cookie(SESSION_COOKIE_NAME, sessionId, {
       httpOnly: true,
@@ -125,6 +178,7 @@ const createAuthRouter = (handlerRegistry, windowShim, createFakeEvent, getColle
 
   router.delete('/session', requireAuth, async (req, res) => {
     await cleanupSessionTerminals(req.brunoSessionId, handlerRegistry, windowShim, createFakeEvent);
+    await cleanupSessionConnections(req.brunoSessionId, handlerRegistry, windowShim, createFakeEvent);
     cleanupSessionWatchers(req.brunoSessionId, getCollectionWatcher);
     cleanupSessionCookies(req.brunoSessionId);
     revokeSession(req.brunoSessionId);

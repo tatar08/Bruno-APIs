@@ -19,17 +19,29 @@ const {
 const { getCapability } = require('../security/channel-capabilities');
 const { getMaxPayloadBytes, validateArgs } = require('../security/channel-policy');
 const { runWithSession } = require('../session-context');
-const { recordOwner, isOwnedBy, release } = require('../security/terminal-ownership');
+const { recordOwner, isOwnedBy, release, getOwnedTerminals } = require('../security/terminal-ownership');
 const {
   recordOwner: recordWatcherOwner,
-  release: releaseWatcherOwner
+  release: releaseWatcherOwner,
+  getOwnedPaths
 } = require('../security/watcher-ownership');
+const { wsConnectionOwnership, grpcConnectionOwnership } = require('../security/connection-ownership');
+const { terminalLimitExceeded, watcherLimitExceeded } = require('../security/resource-limits');
 const { CHANNELS, ERROR_CODES } = require('@usebruno/rpc-contract');
 
 // terminal:input/resize/kill all take the target terminal sessionId as their
 // first argument (enforced by CHANNEL_SCHEMAS in channel-policy.js, so args[0]
 // is guaranteed to be a string by the time the ownership check below runs).
 const TERMINAL_ACTION_CHANNELS = new Set([CHANNELS.TERMINAL_INPUT, CHANNELS.TERMINAL_RESIZE, CHANNELS.TERMINAL_KILL]);
+
+// renderer:ws:send-message/close-connection and grpc:send-message take the
+// connection's requestId as args[0] (a raw string — see
+// ws-event-handlers.js / grpc-event-handlers.js). grpc:end-request/cancel-request
+// take it as args[0].requestId instead (an object), so they're handled
+// separately below rather than folded into these sets.
+const WS_CONNECTION_ACTION_CHANNELS = new Set([CHANNELS.RENDERER_WS_SEND_MESSAGE, CHANNELS.RENDERER_WS_CLOSE_CONNECTION]);
+const GRPC_CONNECTION_ACTION_CHANNELS = new Set([CHANNELS.GRPC_SEND_MESSAGE]);
+const GRPC_CONNECTION_ACTION_CHANNELS_BY_PARAM = new Set([CHANNELS.GRPC_END_REQUEST, CHANNELS.GRPC_CANCEL_REQUEST]);
 
 const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   const router = express.Router();
@@ -81,6 +93,58 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
         code: ERROR_CODES.TERMINAL_ACCESS_DENIED,
         error: `Terminal session "${args[0]}" belongs to a different Browser Bridge session.`
       });
+    }
+
+    // WebSocket/gRPC connection isolation (Improvement.md P0.4) — see
+    // connection-ownership.js. requestId location differs by channel: a raw
+    // args[0] for send-message/close-connection, but args[0].requestId for
+    // grpc:end-request/cancel-request.
+    if (req.brunoSessionId) {
+      if (WS_CONNECTION_ACTION_CHANNELS.has(channel) && !wsConnectionOwnership.isOwnedBy(req.brunoSessionId, args[0])) {
+        return res.status(403).json({
+          code: ERROR_CODES.CONNECTION_ACCESS_DENIED,
+          error: `WebSocket connection "${args[0]}" belongs to a different Browser Bridge session.`
+        });
+      }
+
+      if (GRPC_CONNECTION_ACTION_CHANNELS.has(channel) && !grpcConnectionOwnership.isOwnedBy(req.brunoSessionId, args[0])) {
+        return res.status(403).json({
+          code: ERROR_CODES.CONNECTION_ACCESS_DENIED,
+          error: `gRPC connection "${args[0]}" belongs to a different Browser Bridge session.`
+        });
+      }
+
+      if (
+        GRPC_CONNECTION_ACTION_CHANNELS_BY_PARAM.has(channel) &&
+        !grpcConnectionOwnership.isOwnedBy(req.brunoSessionId, args[0]?.requestId)
+      ) {
+        return res.status(403).json({
+          code: ERROR_CODES.CONNECTION_ACCESS_DENIED,
+          error: `gRPC connection "${args[0]?.requestId}" belongs to a different Browser Bridge session.`
+        });
+      }
+    }
+
+    // Per-session resource caps (Improvement.md P0.4) — see resource-limits.js
+    // for why this is per-session rather than per-user. Checked before
+    // dispatch so a session already at its cap can't create one more.
+    if (req.brunoSessionId) {
+      if (channel === CHANNELS.TERMINAL_CREATE && terminalLimitExceeded(getOwnedTerminals(req.brunoSessionId).length)) {
+        return res.status(429).json({
+          code: ERROR_CODES.RESOURCE_LIMIT_EXCEEDED,
+          error: 'This session has reached its terminal limit (BRUNO_SERVER_MAX_TERMINALS_PER_SESSION). Close an existing terminal and try again.'
+        });
+      }
+
+      if (
+        (channel === CHANNELS.RENDERER_OPEN_MULTIPLE_COLLECTIONS || channel === CHANNELS.RENDERER_ADD_COLLECTION_WATCHER) &&
+        watcherLimitExceeded(getOwnedPaths(req.brunoSessionId).length)
+      ) {
+        return res.status(429).json({
+          code: ERROR_CODES.RESOURCE_LIMIT_EXCEEDED,
+          error: 'This session has reached its watched-collection limit (BRUNO_SERVER_MAX_WATCHED_PATHS_PER_SESSION). Close an existing collection and try again.'
+        });
+      }
     }
 
     // Sessions (when auth is enabled) identify a client more precisely than
@@ -143,14 +207,44 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
         }
       }
 
+      // Track/release WebSocket/gRPC connection ownership (see
+      // connection-ownership.js). start-connection doesn't return the
+      // connection id (only { success }), so it's read back from the
+      // request the caller sent in — the same uid wsClient/grpcClient key
+      // their internal connection map by. No-op when there's no auth
+      // session to scope by.
+      if (req.brunoSessionId) {
+        if (channel === CHANNELS.RENDERER_WS_START_CONNECTION && result?.success) {
+          wsConnectionOwnership.recordOwner(req.brunoSessionId, args[0]?.request?.uid);
+        } else if (channel === CHANNELS.RENDERER_WS_CLOSE_CONNECTION) {
+          wsConnectionOwnership.release(args[0]);
+        } else if (channel === CHANNELS.GRPC_START_CONNECTION && result?.success) {
+          grpcConnectionOwnership.recordOwner(req.brunoSessionId, args[0]?.request?.uid);
+        } else if (channel === CHANNELS.GRPC_END_REQUEST || channel === CHANNELS.GRPC_CANCEL_REQUEST) {
+          grpcConnectionOwnership.release(args[0]?.requestId);
+        }
+      }
+
       if (fireAndForget) {
         return res.json({ ok: true });
       }
 
-      const responseData =
-        channel === CHANNELS.TERMINAL_LIST_SESSIONS && req.brunoSessionId && Array.isArray(result)
-          ? result.filter((session) => isOwnedBy(req.brunoSessionId, session.sessionId))
-          : result;
+      let responseData = result;
+      if (req.brunoSessionId) {
+        if (channel === CHANNELS.TERMINAL_LIST_SESSIONS && Array.isArray(result)) {
+          responseData = result.filter((session) => isOwnedBy(req.brunoSessionId, session.sessionId));
+        } else if (channel === CHANNELS.RENDERER_WS_GET_ACTIVE_CONNECTIONS && Array.isArray(result?.activeConnectionIds)) {
+          responseData = {
+            ...result,
+            activeConnectionIds: result.activeConnectionIds.filter((id) => wsConnectionOwnership.isOwnedBy(req.brunoSessionId, id))
+          };
+        } else if (channel === CHANNELS.GRPC_GET_ACTIVE_CONNECTIONS && Array.isArray(result?.activeConnectionIds)) {
+          responseData = {
+            ...result,
+            activeConnectionIds: result.activeConnectionIds.filter((id) => grpcConnectionOwnership.isOwnedBy(req.brunoSessionId, id))
+          };
+        }
+      }
 
       return res.json({ data: responseData !== undefined ? responseData : null });
     } catch (err) {

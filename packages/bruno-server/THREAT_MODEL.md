@@ -126,6 +126,8 @@ event หรือควบคุม resource (เช่น terminal process) �
 | terminal process ที่ session เป็นเจ้าของยังรันค้างอยู่หลัง logout (leak, ไม่ใช่ cross-session access แต่เป็น resource ที่ควรตายไปพร้อม session) | `DELETE /api/auth/session` เดิน `getOwnedTerminals()` แล้ว kill ทุกตัวแบบ best-effort ก่อน `revokeSession` | `security/terminal-ownership.js`, `routes/auth.js` |
 | collection watcher (filesystem, chokidar) ที่ session เป็นเจ้าของยังทำงานค้างอยู่หลัง logout แม้ไม่มี session ไหนพึ่งพาแล้ว | ref-counted ownership (`Map<watchPath, Set<sessionId>>`) — `removeWatcher()` จะถูกเรียกจริงก็ต่อเมื่อ session สุดท้ายที่ยังพึ่งพา path นั้นออกเท่านั้น ไม่ทำลาย watcher ที่ session อื่นยังใช้อยู่ | `security/watcher-ownership.js`, `routes/auth.js`, `routes/ipc-proxy.js` |
 | HTTP cookie (session token, auth cookie ของ API ที่ทดสอบ) ที่ session A ตั้งไว้หลุดไปติดกับ request ที่ session B ยิงถึง domain เดียวกัน (single process-wide `CookieJar`) | jar ต่อ session แยกกันจริง เลือกใช้ผ่าน `AsyncLocalStorage` key เดียวกับที่ event routing ใช้ (`resolveJar()`), จบอายุ (`clearSessionJar`) ตอน logout — jar กลางเดิม (desktop/CLI/no-auth) ไม่ถูกแตะ ยังทำงานเหมือนเดิมทุกกรณี | `@usebruno/requests`'s `session-context.ts`, `cookies/index.ts`, `session-context.js`, `routes/auth.js` |
+| session B รู้/เดา requestId ของ WebSocket หรือ gRPC connection ที่ session A เปิดค้างอยู่ (`wsClient`/`grpcClient` เป็น singleton เก็บด้วย requestId ล้วน ไม่รู้จัก session) แล้ว enumerate ผ่าน `get-active-connections`, ส่งข้อความแทรก, หรือปิด/cancel connection ของ A | ownership map ผูก requestId กับ owner ตอน `start-connection` สำเร็จ, เช็คก่อน `send-message`/`close-connection`/`end-request`/`cancel-request` ทุกครั้ง, filter `get-active-connections` ให้เห็นเฉพาะของตัวเอง, ปิด connection ที่ยังค้างอยู่ตอน logout | `security/connection-ownership.js`, `routes/ipc-proxy.js`, `routes/auth.js` |
+| session เดียวสร้าง terminal/watched-collection ไม่จำกัดจำนวน หรือสร้าง session ใหม่ไม่จำกัดจำนวน (resource exhaustion บน server process เดียวที่ทุก session ใช้ร่วมกัน) | limit ต่อ session (terminal, watched path) และ limit รวมทั้ง server (concurrent session) อ่านจาก env var ปรับได้ ดีฟอลต์ 10/20/50 — เช็คก่อน dispatch เสมอ เกิน limit ปฏิเสธด้วย `429 RESOURCE_LIMIT_EXCEEDED` | `security/resource-limits.js`, `routes/auth.js`, `routes/ipc-proxy.js` |
 
 ## 5. Accepted risk / gap ที่รู้อยู่แล้วและยังไม่ปิด
 
@@ -153,14 +155,20 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
 4. **rate/concurrency limit เป็นแบบ in-memory ต่อ process เดียว** — ถ้า deploy เป็นหลาย instance
    ข้างหลัง load balancer ตัวจำกัดนี้จะนับแยกกันต่อ instance ไม่ได้รวมกัน (ตอนนี้ยังไม่มี pattern
    deploy แบบ multi-instance ในเอกสารไหนเลย จึงยังไม่ใช่ปัญหาจริงในทางปฏิบัติ)
-5. **session-scoped isolation ยังไม่ครอบคลุมทุก resource type** — ตอนนี้มีแค่ event routing,
-   terminal, filesystem watcher, และ HTTP cookie jar (boundary 4 สี่แถวแรก) ยังไม่มีสำหรับ active
-   workspace/collection state หรือ per-user resource limit — ทั้งหมดนี้ต้องมี "session ownership"
-   concept แบบเดียวกับ terminal/watcher/cookie ผูกกับ resource type อื่นเพิ่ม ซึ่งเป็นงานที่ใหญ่กว่า 1
-   increment ต่อ resource (**secret/credential ต่อ session ตรวจสอบแล้วไม่ใช่ gap** —
-   `EnvironmentSecretsStore`/`Oauth2Store` scope ตาม collection โดยตั้งใจ ไม่ใช่ตาม session เพราะ
-   ต้องแชร์กันได้ระหว่างหลาย session ที่ collaborate บน collection เดียวกัน ดู `find bug and
-   Improvement.md` increment ที่หก)
+5. **session-scoped isolation ยังไม่ครอบคลุมทุก resource type** — ตอนนี้มี event routing, terminal,
+   filesystem watcher, HTTP cookie jar, และ WebSocket/gRPC connection (boundary 4 หกแถวบน) บวก
+   resource limit ต่อ session/รวมทั้ง server (แถวสุดท้าย) แต่ยังไม่มีสำหรับ 4 จุด active state ที่รุนแรง
+   น้อยกว่า: OAuth2 pending-request ที่ยัง unscoped, `MountManager` แบบ last-mount-wins, legacy
+   active-global-environment ที่ไม่ผูก session, และ last-opened-workspace/collection list ที่มีผลต่อ
+   default landing view ของ session อื่น — ไม่ leak ข้อมูลข้าม session โดยตรงเหมือนที่แก้ไปแล้วด้านบน
+   เป็นแค่ shared-state/UX ambiguity ระดับต่ำกว่า ยังไม่ implement (**secret/credential ต่อ session
+   ตรวจสอบแล้วไม่ใช่ gap** — `EnvironmentSecretsStore`/`Oauth2Store` scope ตาม collection โดยตั้งใจ
+   ไม่ใช่ตาม session เพราะต้องแชร์กันได้ระหว่างหลาย session ที่ collaborate บน collection เดียวกัน;
+   **"per-user" resource limit ตามที่ระบุใน `Improvement.md` เดิมกลายเป็น per-session** เพราะสถาปัตยกรรม
+   นี้ไม่มี user identity จริง มีแค่ anonymous session จาก bootstrap token เดียวที่ตั้งใจให้ reuse ได้ —
+   ดู `find bug and Improvement.md` increment ที่หกและเจ็ด; **gRPC connection ownership ยัง live-verify
+   แบบ end-to-end ไม่ได้** เพราะต้องมี `.proto`/gRPC server จริงมาทดสอบ ใช้ unit test + code review
+   แทนสำหรับตอนนี้ — ดู increment ที่เจ็ด)
 
 ## 6. คำแนะนำการ deploy (ไม่ใช่ default behavior — เป็น operator responsibility)
 

@@ -80,6 +80,17 @@ describe('Bridge authentication', () => {
       expect(auth.getSession(sessionId)).toBeNull();
     });
 
+    it('getSessionCount tracks creates and revokes', () => {
+      expect(auth.getSessionCount()).toBe(0);
+      const a = auth.createSession();
+      const b = auth.createSession();
+      expect(auth.getSessionCount()).toBe(2);
+      auth.revokeSession(a.sessionId);
+      expect(auth.getSessionCount()).toBe(1);
+      auth.revokeSession(b.sessionId);
+      expect(auth.getSessionCount()).toBe(0);
+    });
+
     it('requireAuth rejects requests with no session cookie', () => {
       const json = jest.fn();
       const res = { status: jest.fn(() => ({ json })) };
