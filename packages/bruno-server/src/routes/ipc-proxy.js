@@ -16,6 +16,8 @@ const {
   withTimeout,
   IpcTimeoutError
 } = require('../security/ipc-limits');
+const { getCapability } = require('../security/channel-capabilities');
+const { getMaxPayloadBytes, validateArgs } = require('../security/channel-policy');
 
 const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   const router = express.Router();
@@ -34,6 +36,20 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
       return res.status(403).json({
         error: `Channel "${channel}" is disabled by default in Browser Bridge mode (terminal execution / git clone-connect). Set BRUNO_SERVER_ENABLE_PRIVILEGED_CHANNELS=true to enable it.`
       });
+    }
+
+    const sourceFile = handlerRegistry.getChannelSource(channel);
+    const maxPayloadBytes = getMaxPayloadBytes(channel, sourceFile);
+    const contentLength = Number(req.headers['content-length']);
+    if (maxPayloadBytes !== null && Number.isFinite(contentLength) && contentLength > maxPayloadBytes) {
+      return res.status(413).json({
+        error: `Payload too large for channel "${channel}" (capability "${getCapability(channel, sourceFile)}"): ${contentLength} bytes exceeds the ${maxPayloadBytes} byte limit for this channel type.`
+      });
+    }
+
+    const argsError = validateArgs(channel, args);
+    if (argsError) {
+      return res.status(400).json({ error: argsError });
     }
 
     const disallowedPath = findDisallowedPath(channel, args);
@@ -102,11 +118,20 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
    * Lists all registered IPC channels (for debugging)
    */
   router.get('/channels', (req, res) => {
+    const describeChannel = (channel) => {
+      const sourceFile = handlerRegistry.getChannelSource(channel);
+      return { channel, capability: getCapability(channel, sourceFile) };
+    };
+
     res.json({
       channels: handlerRegistry.getChannels(),
       eventChannels: handlerRegistry.getEventChannels(),
       count: handlerRegistry.getChannels().length,
-      eventCount: handlerRegistry.getEventChannels().length
+      eventCount: handlerRegistry.getEventChannels().length,
+      capabilities: [
+        ...handlerRegistry.getChannels().map(describeChannel),
+        ...handlerRegistry.getEventChannels().map(describeChannel)
+      ]
     });
   });
 

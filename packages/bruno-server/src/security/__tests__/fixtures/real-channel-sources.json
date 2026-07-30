@@ -1,0 +1,918 @@
+[
+  {
+    "channel": "renderer:browse-directory",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:browse-files",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:browse-pac-file",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:load-runner-dataset",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:exists-sync",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:resolve-path",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:is-directory",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:find-unique-folder-name",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:ready",
+    "sourceFile": "ipc/preferences.js"
+  },
+  {
+    "channel": "renderer:save-preferences",
+    "sourceFile": "ipc/preferences.js"
+  },
+  {
+    "channel": "renderer:clear-http-https-agent-cache",
+    "sourceFile": "ipc/preferences.js"
+  },
+  {
+    "channel": "renderer:refresh-pac-cache",
+    "sourceFile": "ipc/preferences.js"
+  },
+  {
+    "channel": "renderer:get-system-proxy-variables",
+    "sourceFile": "ipc/preferences.js"
+  },
+  {
+    "channel": "renderer:refresh-system-proxy",
+    "sourceFile": "ipc/preferences.js"
+  },
+  {
+    "channel": "renderer:snapshot:get",
+    "sourceFile": "ipc/snapshot.js"
+  },
+  {
+    "channel": "renderer:snapshot:get-tabs",
+    "sourceFile": "ipc/snapshot.js"
+  },
+  {
+    "channel": "renderer:snapshot:get-collection",
+    "sourceFile": "ipc/snapshot.js"
+  },
+  {
+    "channel": "renderer:snapshot:save",
+    "sourceFile": "ipc/snapshot.js"
+  },
+  {
+    "channel": "send-http-request",
+    "sourceFile": "network/index.js"
+  },
+  {
+    "channel": "clear-oauth2-cache",
+    "sourceFile": "network/index.js"
+  },
+  {
+    "channel": "cancel-http-request",
+    "sourceFile": "network/index.js"
+  },
+  {
+    "channel": "fetch-gql-schema",
+    "sourceFile": "network/index.js"
+  },
+  {
+    "channel": "renderer:run-collection-folder",
+    "sourceFile": "network/index.js"
+  },
+  {
+    "channel": "renderer:save-response-to-file",
+    "sourceFile": "network/index.js"
+  },
+  {
+    "channel": "connections-changed",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "grpc:start-connection",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "grpc:get-active-connections",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "grpc:send-message",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "grpc:end-request",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "grpc:cancel-request",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "grpc:load-methods-reflection",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "grpc:load-methods-proto",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "grpc:generate-sample-message",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "grpc:generate-grpcurl",
+    "sourceFile": "network/grpc-event-handlers.js"
+  },
+  {
+    "channel": "renderer:ws:start-connection",
+    "sourceFile": "network/ws-event-handlers.js"
+  },
+  {
+    "channel": "renderer:ws:get-active-connections",
+    "sourceFile": "network/ws-event-handlers.js"
+  },
+  {
+    "channel": "renderer:ws:queue-message",
+    "sourceFile": "network/ws-event-handlers.js"
+  },
+  {
+    "channel": "renderer:ws:send-message",
+    "sourceFile": "network/ws-event-handlers.js"
+  },
+  {
+    "channel": "renderer:ws:close-connection",
+    "sourceFile": "network/ws-event-handlers.js"
+  },
+  {
+    "channel": "renderer:ws:is-connection-active",
+    "sourceFile": "network/ws-event-handlers.js"
+  },
+  {
+    "channel": "renderer:ws:connection-status",
+    "sourceFile": "network/ws-event-handlers.js"
+  },
+  {
+    "channel": "renderer:create-collection",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:clone-collection",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:move-collection-to-workspace",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:rename-collection",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-folder-root",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-collection-root",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:new-request",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-request",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-transient-request",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-multiple-requests",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-file",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:update-variable-in-file",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:create-environment",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-environment",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:rename-environment",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:delete-environment",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-dotenv-variables",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-dotenv-raw",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:create-dotenv-file",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:delete-dotenv-file",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:update-environment-color",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:export-environment",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:rename-item-name",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:rename-item-filename",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:new-folder",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:delete-item",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:delete-transient-requests",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:open-collection",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:open-multiple-collections",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:set-collection-workspace",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:remove-collection",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:import-collection",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:clone-folder",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:resequence-items",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:move-file-item",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:move-item",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:move-item-cross-format",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:move-folder-item",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:update-bruno-config",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:open-devtools",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:load-gql-schema-file",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:delete-cookies-for-domain",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:delete-cookie",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:convert-to-json",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:add-cookie",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:modify-cookie",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:get-parsed-cookie",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:create-cookie-string",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-collection-security-config",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:get-collection-security-config",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:update-ui-state-snapshot",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:fetch-oauth2-credentials",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:refresh-oauth2-credentials",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:cancel-oauth2-authorization-request",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:is-oauth2-authorization-request-in-progress",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:load-request-via-worker",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:load-request",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:load-large-request",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:mount-collection",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:mount-workspace-scratch",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:add-collection-watcher",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:save-scratch-request",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:show-in-folder",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:convert-postman-to-bruno",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:install-postman-packages",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:get-collection-json",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:export-collection-zip",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:is-bruno-collection-zip",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:import-collection-zip",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:migrate-collection-to-yml",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:scan-for-bruno-files",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "main:complete-quit-flow",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "main:force-quit",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "renderer:create-workspace",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:open-workspace",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:open-workspace-dialog",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:load-workspace-collections",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:reorder-workspace-collections",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:load-workspace-apispecs",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:get-last-opened-workspaces",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:rename-workspace",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:close-workspace",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:export-workspace",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:import-workspace",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:save-workspace-docs",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:load-workspace-environments",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:create-workspace-environment",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:delete-workspace-environment",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:import-workspace-environment",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:update-workspace-environment",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:rename-workspace-environment",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:copy-workspace-environment",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:add-collection-to-workspace",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:ensure-collections-folder",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:start-workspace-watcher",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:remove-collection-from-workspace",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:connect-collection-to-git",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:disconnect-collection-from-git",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:get-collection-workspaces",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:get-default-workspace",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:create-global-environment",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:save-global-environment",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:rename-global-environment",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:delete-global-environment",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:select-global-environment",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:get-global-environments",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:save-workspace-dotenv-variables",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:save-workspace-dotenv-raw",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:create-workspace-dotenv-file",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:delete-workspace-dotenv-file",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:update-global-environment-color",
+    "sourceFile": "ipc/global-environments.js"
+  },
+  {
+    "channel": "renderer:clone-git-repository",
+    "sourceFile": "ipc/git.js"
+  },
+  {
+    "channel": "renderer:start-system-monitoring",
+    "sourceFile": "ipc/system-monitor.js"
+  },
+  {
+    "channel": "renderer:stop-system-monitoring",
+    "sourceFile": "ipc/system-monitor.js"
+  },
+  {
+    "channel": "renderer:is-system-monitoring-active",
+    "sourceFile": "ipc/system-monitor.js"
+  },
+  {
+    "channel": "renderer:open-api-spec",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "renderer:open-api-spec-file",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "renderer:save-api-spec",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "renderer:create-api-spec",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "renderer:remove-api-spec",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "renderer:fetch-api-spec",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "renderer:swagger-fetch",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "renderer:ensure-apispec-folder",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "main:open-api-spec",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "renderer:check-openapi-updates",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:compare-openapi-specs",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:get-collection-drift",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:get-endpoint-diff-data",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:apply-openapi-sync",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:update-openapi-sync-config",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:save-openapi-spec",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:fetch-openapi-spec",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:read-openapi-spec",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:remove-openapi-sync-config",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:add-missing-endpoints",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:reset-endpoints-to-spec",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:delete-endpoints",
+    "sourceFile": "ipc/openapi-sync.js"
+  },
+  {
+    "channel": "renderer:get-ai-status",
+    "sourceFile": "ai/index.js"
+  },
+  {
+    "channel": "renderer:set-ai-api-key",
+    "sourceFile": "ai/index.js"
+  },
+  {
+    "channel": "renderer:clear-ai-api-key",
+    "sourceFile": "ai/index.js"
+  },
+  {
+    "channel": "renderer:get-ai-api-key",
+    "sourceFile": "ai/index.js"
+  },
+  {
+    "channel": "renderer:ai-test-provider",
+    "sourceFile": "ai/index.js"
+  },
+  {
+    "channel": "renderer:ai-generate-text",
+    "sourceFile": "ai/index.js"
+  },
+  {
+    "channel": "renderer:ai-generate-script",
+    "sourceFile": "ai/index.js"
+  },
+  {
+    "channel": "renderer:ai-autocomplete",
+    "sourceFile": "ai/autocomplete.js"
+  },
+  {
+    "channel": "terminal:create",
+    "sourceFile": "ipc/terminal.js"
+  },
+  {
+    "channel": "terminal:list-sessions",
+    "sourceFile": "ipc/terminal.js"
+  },
+  {
+    "channel": "renderer:get-file-cache-size",
+    "sourceFile": "ipc/mount.js"
+  },
+  {
+    "channel": "renderer:clear-file-cache",
+    "sourceFile": "ipc/mount.js"
+  },
+  {
+    "channel": "renderer:mount-collection-v2",
+    "sourceFile": "ipc/mount.js"
+  },
+  {
+    "channel": "renderer:window-is-maximized",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:window-is-fullscreen",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:toggle-devtools",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:reset-zoom",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:zoom-in",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:zoom-out",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:set-zoom-level",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:toggle-fullscreen",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:open-docs",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:open-about",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:open-preferences",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "main:cache-clear",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "electron-store-get-data",
+    "sourceFile": "electron-store/index.js"
+  },
+  {
+    "channel": "main:workspaces-ready",
+    "sourceFile": "app/onboarding.js"
+  },
+  {
+    "channel": "main:open-preferences",
+    "sourceFile": "ipc/preferences.js"
+  },
+  {
+    "channel": "renderer:theme-change",
+    "sourceFile": "ipc/preferences.js"
+  },
+  {
+    "channel": "internal:snapshot:reset",
+    "sourceFile": "ipc/snapshot.js"
+  },
+  {
+    "channel": "main:open-collection",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "main:open-docs",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "main:collection-opened",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "main:start-quit-flow",
+    "sourceFile": "ipc/collection.js"
+  },
+  {
+    "channel": "main:renderer-ready",
+    "sourceFile": "ipc/workspace.js"
+  },
+  {
+    "channel": "renderer:notifications-opened",
+    "sourceFile": "ipc/notifications.js"
+  },
+  {
+    "channel": "main:apispec-opened",
+    "sourceFile": "ipc/apiSpec.js"
+  },
+  {
+    "channel": "renderer:ai-stream-text",
+    "sourceFile": "ai/index.js"
+  },
+  {
+    "channel": "renderer:ai-stop-stream",
+    "sourceFile": "ai/index.js"
+  },
+  {
+    "channel": "renderer:ai-chat-stop",
+    "sourceFile": "ai/chat.js"
+  },
+  {
+    "channel": "renderer:ai-chat-stream",
+    "sourceFile": "ai/chat.js"
+  },
+  {
+    "channel": "renderer:ai-autocomplete-cancel",
+    "sourceFile": "ai/autocomplete.js"
+  },
+  {
+    "channel": "terminal:input",
+    "sourceFile": "ipc/terminal.js"
+  },
+  {
+    "channel": "terminal:resize",
+    "sourceFile": "ipc/terminal.js"
+  },
+  {
+    "channel": "terminal:kill",
+    "sourceFile": "ipc/terminal.js"
+  },
+  {
+    "channel": "renderer:window-minimize",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:window-maximize",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "renderer:window-close",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "menu:reset-zoom",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "menu:zoom-in",
+    "sourceFile": "src/index.js"
+  },
+  {
+    "channel": "menu:zoom-out",
+    "sourceFile": "src/index.js"
+  }
+]
