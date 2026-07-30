@@ -20,8 +20,13 @@ const { EventBridge } = require('./ws/event-bridge');
 const { WindowShim, createFakeEvent } = require('./adapters/window-shim');
 const { HandlerRegistry } = require('./handler-registry');
 const { createIpcProxyRouter } = require('./routes/ipc-proxy');
+const { isOriginAllowed } = require('./security/origin-policy');
 
 const PORT = process.env.BRUNO_SERVER_PORT || 4000;
+// Loopback by default so the Bridge isn't reachable from the LAN/internet
+// without an explicit opt-in. Set BRUNO_SERVER_HOST=0.0.0.0 to allow that.
+const HOST = process.env.BRUNO_SERVER_HOST || '127.0.0.1';
+const JSON_BODY_LIMIT = process.env.BRUNO_SERVER_JSON_LIMIT || '25mb';
 
 // --- Initialize core components ---
 
@@ -41,12 +46,12 @@ const handlerRegistry = new HandlerRegistry();
 // --- Middleware ---
 
 app.use(cors({
-  origin: true, // Allow all origins in development
+  origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
   credentials: true
 }));
 
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }));
 
 // --- Register IPC handlers from bruno-electron ---
 
@@ -398,11 +403,11 @@ try {
   process.exit(1);
 }
 
-server.listen(PORT, () => {
-  console.log(`\n✅ Bruno Bridge Server running on http://localhost:${PORT}`);
-  console.log(`   WebSocket events on ws://localhost:${PORT}/ws/events`);
-  console.log(`   Health check: http://localhost:${PORT}/api/health`);
-  console.log(`   IPC channels: http://localhost:${PORT}/api/ipc/channels\n`);
+server.listen(PORT, HOST, () => {
+  console.log(`\n✅ Bruno Bridge Server running on http://${HOST}:${PORT}`);
+  console.log(`   WebSocket events on ws://${HOST}:${PORT}/ws/events`);
+  console.log(`   Health check: http://${HOST}:${PORT}/api/health`);
+  console.log(`   IPC channels: http://${HOST}:${PORT}/api/ipc/channels\n`);
 });
 
 // Graceful shutdown

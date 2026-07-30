@@ -6,6 +6,15 @@
  */
 
 const { WebSocketServer } = require('ws');
+const { isOriginAllowed } = require('../security/origin-policy');
+
+// Client messages are only small subscribe/unsubscribe control frames, so a
+// generous-but-bounded payload cap blocks memory-pressure abuse without
+// affecting legitimate use.
+const MAX_PAYLOAD_BYTES = 64 * 1024;
+const HEARTBEAT_INTERVAL_MS = 30000;
+const MESSAGE_RATE_LIMIT = 50;
+const MESSAGE_RATE_WINDOW_MS = 10000;
 
 class EventBridge {
   constructor() {
@@ -13,20 +22,44 @@ class EventBridge {
     this._clients = new Set();
     // Track which channels each client is subscribed to
     this._subscriptions = new Map(); // ws -> Set<channel>
+    this._heartbeatInterval = null;
   }
 
   /**
    * Attach the WebSocket server to an HTTP server
    */
   attach(server) {
-    this._wss = new WebSocketServer({ server, path: '/ws/events' });
+    this._wss = new WebSocketServer({
+      server,
+      path: '/ws/events',
+      maxPayload: MAX_PAYLOAD_BYTES,
+      verifyClient: ({ origin }, callback) => {
+        if (isOriginAllowed(origin)) return callback(true);
+        callback(false, 403, 'Origin not allowed');
+      }
+    });
 
     this._wss.on('connection', (ws) => {
       this._clients.add(ws);
       this._subscriptions.set(ws, new Set());
+      ws.isAlive = true;
+      ws._messageTimestamps = [];
       console.log(`[EventBridge] Client connected (total: ${this._clients.size})`);
 
+      ws.on('pong', () => {
+        ws.isAlive = true;
+      });
+
       ws.on('message', (raw) => {
+        const now = Date.now();
+        ws._messageTimestamps = ws._messageTimestamps.filter((t) => now - t < MESSAGE_RATE_WINDOW_MS);
+        ws._messageTimestamps.push(now);
+        if (ws._messageTimestamps.length > MESSAGE_RATE_LIMIT) {
+          console.warn('[EventBridge] Client exceeded message rate limit, closing connection');
+          ws.close(1008, 'Rate limit exceeded');
+          return;
+        }
+
         try {
           const msg = JSON.parse(raw.toString());
           if (msg.type === 'subscribe' && msg.channel) {
@@ -51,6 +84,20 @@ class EventBridge {
         this._subscriptions.delete(ws);
       });
     });
+
+    this._heartbeatInterval = setInterval(() => {
+      for (const ws of [...this._clients]) {
+        if (ws.isAlive === false) {
+          ws.terminate();
+          continue;
+        }
+        ws.isAlive = false;
+        ws.ping();
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+    this._heartbeatInterval.unref?.();
+
+    this._wss.on('close', () => clearInterval(this._heartbeatInterval));
   }
 
   /**

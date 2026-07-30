@@ -7,6 +7,7 @@
  */
 
 const express = require('express');
+const { isPrivilegedChannel, PRIVILEGED_CHANNELS_ENABLED } = require('../security/privileged-channels');
 
 const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   const router = express.Router();
@@ -20,6 +21,12 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   router.post('/:channel', async (req, res) => {
     const { channel } = req.params;
     const { args = [], fireAndForget = false } = req.body;
+
+    if (isPrivilegedChannel(channel) && !PRIVILEGED_CHANNELS_ENABLED) {
+      return res.status(403).json({
+        error: `Channel "${channel}" is disabled by default in Browser Bridge mode (terminal execution / git clone-connect). Set BRUNO_SERVER_ENABLE_PRIVILEGED_CHANNELS=true to enable it.`
+      });
+    }
 
     const isEvent = fireAndForget && handlerRegistry.hasEvent(channel);
 
