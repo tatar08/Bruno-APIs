@@ -23,7 +23,8 @@ const ERROR_CODES = Object.freeze({
   PAYLOAD_TOO_LARGE: 'PAYLOAD_TOO_LARGE',
   INVALID_ARGS: 'INVALID_ARGS',
   HANDLER_ERROR: 'HANDLER_ERROR',
-  GENERIC_ERROR: 'GENERIC_ERROR'
+  GENERIC_ERROR: 'GENERIC_ERROR',
+  TERMINAL_ACCESS_DENIED: 'TERMINAL_ACCESS_DENIED'
 });
 
 // Codes for conditions that are safe to retry unchanged (the request itself

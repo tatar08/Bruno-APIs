@@ -19,7 +19,13 @@ const {
 const { getCapability } = require('../security/channel-capabilities');
 const { getMaxPayloadBytes, validateArgs } = require('../security/channel-policy');
 const { runWithSession } = require('../session-context');
-const { ERROR_CODES } = require('@usebruno/rpc-contract');
+const { recordOwner, isOwnedBy, release } = require('../security/terminal-ownership');
+const { CHANNELS, ERROR_CODES } = require('@usebruno/rpc-contract');
+
+// terminal:input/resize/kill all take the target terminal sessionId as their
+// first argument (enforced by CHANNEL_SCHEMAS in channel-policy.js, so args[0]
+// is guaranteed to be a string by the time the ownership check below runs).
+const TERMINAL_ACTION_CHANNELS = new Set([CHANNELS.TERMINAL_INPUT, CHANNELS.TERMINAL_RESIZE, CHANNELS.TERMINAL_KILL]);
 
 const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   const router = express.Router();
@@ -64,6 +70,15 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
       });
     }
 
+    // Terminal process isolation (Improvement.md P0.4): only meaningful once
+    // a P0.1 auth session exists to scope by — see terminal-ownership.js.
+    if (req.brunoSessionId && TERMINAL_ACTION_CHANNELS.has(channel) && !isOwnedBy(req.brunoSessionId, args[0])) {
+      return res.status(403).json({
+        code: ERROR_CODES.TERMINAL_ACCESS_DENIED,
+        error: `Terminal session "${args[0]}" belongs to a different Browser Bridge session.`
+      });
+    }
+
     // Sessions (when auth is enabled) identify a client more precisely than
     // IP alone (e.g. multiple tabs behind the same NAT/proxy); fall back to
     // IP when auth is off, same as the WebSocket rate limiter's per-connection scope.
@@ -102,11 +117,25 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
       const dispatch = req.brunoSessionId ? runWithSession(req.brunoSessionId, dispatchHandler) : dispatchHandler();
       const result = await withTimeout(Promise.resolve(dispatch), channel);
 
+      // Track/release terminal ownership (see terminal-ownership.js) so the
+      // access check above and the list-sessions filter below have data to
+      // work with. No-ops when there's no auth session to scope by.
+      if (channel === CHANNELS.TERMINAL_CREATE && req.brunoSessionId && result) {
+        recordOwner(req.brunoSessionId, result);
+      } else if (channel === CHANNELS.TERMINAL_KILL) {
+        release(args[0]);
+      }
+
       if (fireAndForget) {
         return res.json({ ok: true });
       }
 
-      return res.json({ data: result !== undefined ? result : null });
+      const responseData =
+        channel === CHANNELS.TERMINAL_LIST_SESSIONS && req.brunoSessionId && Array.isArray(result)
+          ? result.filter((session) => isOwnedBy(req.brunoSessionId, session.sessionId))
+          : result;
+
+      return res.json({ data: responseData !== undefined ? responseData : null });
     } catch (err) {
       if (err instanceof IpcTimeoutError) {
         console.error(`[IPC Proxy] Timeout in handler "${channel}"`);
