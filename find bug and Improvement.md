@@ -127,6 +127,14 @@ Runner ฝั่ง electron catch error ระดับ run แล้วส่�
 7. ตัดสินใจ + document พฤติกรรม `stopExecution` ข้าม iterations (B9)
 8. แก้ B10, B11 เก็บตก
 
+**สถานะขั้นที่ 1-2 — เสร็จแล้วทั้งหมด** (commit `ae9ef0a`, ก่อนเริ่ม P0 roadmap): B1/B2/B12 แก้พร้อมกันตามข้อ 1 (เลิก merge `currentEnvVars`, ใช้ `envVars`/`runtimeVariables` shared reference เดิม — B12 เลยหายไปเองเพราะ fallback กับ path ปกติใช้ reference เดียวกันอยู่แล้ว), B3/B6 แก้แล้ว (table view filter ผ่าน `activeFilterConfig.predicate`, `testrun-ended` error โชว์ใน UI), `parseDataFile.js` (B7) ลบทิ้งแล้ว, B4/B5 แก้แล้ว (RunnerResults อ่าน dataset/iteration count จาก `runnerInfo` ของ run จริง, Run Again ใช้ `runnerInfo.isRecursive`), B10/B11 แก้แล้ว (error path ส่ง `__brunoDisableParsingResponseJson` ให้ `parseDataFromResponse` เหมือน success path, delay input init เป็น `''` ไม่ใช่ `null`, เงื่อนไข `cancelled` ที่ไม่มีทางเกิดถูกลบออก)
+
+**ข้อ 7 (B9 — ตัดสินใจ + document พฤติกรรม `stopExecution`)**: คงพฤติกรรมเดิม (`bru.runner.stopExecution()` หยุดทั้ง run ไม่ใช่แค่ iteration ปัจจุบัน) ไว้ตามเดิม โดยตั้งใจไม่เปลี่ยนเป็นสไตล์ Postman (หยุดแค่ iteration แล้วรันต่อ) เพราะเป็น behavior change ที่กระทบผู้ใช้เดิมที่อาจพึ่งพา semantics ปัจจุบันอยู่แล้ว (breaking change ทาง UX ไม่ต่างจากเหตุผลที่ P0.1/capability-grant-flow เลือกไม่แตะ default โดยไม่ถามผู้ใช้ก่อน) — ถือเป็น **accepted, documented behavior** ไม่ใช่บัค: `stopExecution` แปลว่า "หยุดทั้ง run" ตามชื่อฟังก์ชัน ถ้าต้องการหยุดเฉพาะ iteration ควรเป็น API ใหม่แยกต่างหาก (เช่น `bru.runner.skipIteration()`) ไม่ใช่เปลี่ยนความหมายของตัวเดิม
+
+B8 ถูกครอบคลุมแล้วโดย P0.3 filesystem sandbox (`allowed-roots.js` สแกน argument ทุกตัวของทุก IPC call รวมถึง `renderer:load-runner-dataset` เป็น generic mechanism ไม่ต้องแก้ทีละ handler — ดูหัวข้อ 4.1)
+
+**ข้อเสนอเพิ่ม 3 ข้อด้านล่าง — ยังไม่ทำ**: แต่ละข้อเป็นการตัดสินใจ scope/architecture ที่ใหญ่กว่า bug fix ธรรมดา (เพิ่ม test infra ใหม่, ย้าย module ข้าม package, เพิ่ม concurrency limit ที่กระทบพฤติกรรม run ที่มีอยู่) จึงเก็บไว้เป็น proposal ที่ยังไม่ implement แทนที่จะเดาทำเอง — ดูรายละเอียดแต่ละข้อด้านล่าง
+
 ### ขั้นที่ 3 — เข้าสู่ roadmap เดิมใน Improvement.md
 
 ลำดับใน `Improvement.md` ยังเหมาะสม ไม่ต้องแก้ — เริ่มที่ **P0.1 (Bridge auth + loopback binding)** และ **P0.3 (Filesystem sandbox)** โดย B8 เป็นหลักฐานเพิ่มว่า P0.3 ควรครอบคลุม handler ทุกตัวที่รับ path จาก renderer รวมถึง `renderer:load-runner-dataset`, `renderer:browse-pac-file`, `renderer:resolve-path`
