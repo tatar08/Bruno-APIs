@@ -7,6 +7,8 @@
  * to browser clients via WebSocket.
  */
 
+const { getCurrentSessionId } = require('../session-context');
+
 class WindowShim {
   constructor(eventBridge) {
     this._eventBridge = eventBridge;
@@ -15,7 +17,17 @@ class WindowShim {
     this.webContents = {
       send: (channel, ...args) => {
         if (this._destroyed) return;
-        this._eventBridge.broadcast(channel, ...args);
+        // Inside a session-scoped IPC call (session-context.js), route only
+        // to that session's WS connections (Improvement.md P0.4); outside
+        // one (auth disabled, or an event fired autonomously rather than in
+        // response to a specific client, e.g. a file watcher) fall back to
+        // the original global broadcast — unchanged behavior for both cases.
+        const sessionId = getCurrentSessionId();
+        if (sessionId) {
+          this._eventBridge.sendToSession(sessionId, channel, ...args);
+        } else {
+          this._eventBridge.broadcast(channel, ...args);
+        }
       },
       on: () => {},
       once: () => {},

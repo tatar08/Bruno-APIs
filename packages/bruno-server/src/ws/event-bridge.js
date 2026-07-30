@@ -7,7 +7,11 @@
 
 const { WebSocketServer } = require('ws');
 const { isOriginAllowed } = require('../security/origin-policy');
-const { isSessionCookieValid } = require('../security/auth');
+const { isSessionCookieValid, parseCookies, SESSION_COOKIE_NAME } = require('../security/auth');
+
+function getSessionIdFromCookieHeader(cookieHeader) {
+  return parseCookies(cookieHeader)[SESSION_COOKIE_NAME] || null;
+}
 
 // Client messages are only small subscribe/unsubscribe control frames, so a
 // generous-but-bounded payload cap blocks memory-pressure abuse without
@@ -41,9 +45,14 @@ class EventBridge {
       }
     });
 
-    this._wss.on('connection', (ws) => {
+    this._wss.on('connection', (ws, req) => {
       this._clients.add(ws);
       this._subscriptions.set(ws, new Set());
+      // null when auth (P0.1) is disabled, or the session cookie is absent —
+      // such connections only ever receive broadcast()-routed events, never
+      // sendToSession()-routed ones, which matches today's global-broadcast
+      // behavior for the (default) no-auth case.
+      ws._sessionId = getSessionIdFromCookieHeader(req.headers.cookie);
       ws.isAlive = true;
       ws._messageTimestamps = [];
       console.log(`[EventBridge] Client connected (total: ${this._clients.size})`);
@@ -103,16 +112,13 @@ class EventBridge {
   }
 
   /**
-   * Broadcast an event to all connected browser clients.
-   * This is the equivalent of mainWindow.webContents.send(channel, ...data)
+   * Sends `message` to every client for which `shouldSend(client)` is true
+   * and which is subscribed to `channel` (or has no subscriptions tracked).
    */
-  broadcast(channel, ...data) {
-    if (!this._wss || this._clients.size === 0) return;
-
-    const message = JSON.stringify({ channel, data });
-
+  _sendToClients(channel, message, shouldSend) {
     for (const client of this._clients) {
-      // Only send to clients subscribed to this channel (or all if no subscriptions tracked)
+      if (!shouldSend(client)) continue;
+
       const subs = this._subscriptions.get(client);
       if (subs && subs.size > 0 && !subs.has(channel)) {
         continue;
@@ -126,6 +132,29 @@ class EventBridge {
         }
       }
     }
+  }
+
+  /**
+   * Broadcast an event to all connected browser clients.
+   * This is the equivalent of mainWindow.webContents.send(channel, ...data)
+   * for the (default) no-auth case, where there is no per-client session to
+   * target — every connected client is assumed to be the one desktop user.
+   */
+  broadcast(channel, ...data) {
+    if (!this._wss || this._clients.size === 0) return;
+    const message = JSON.stringify({ channel, data });
+    this._sendToClients(channel, message, () => true);
+  }
+
+  /**
+   * Send an event only to WebSocket connections authenticated as
+   * `sessionId` (Improvement.md P0.4) — used when a session-scoped IPC call
+   * triggers an event, so other browser tabs/users don't see it.
+   */
+  sendToSession(sessionId, channel, ...data) {
+    if (!this._wss || this._clients.size === 0 || !sessionId) return;
+    const message = JSON.stringify({ channel, data });
+    this._sendToClients(channel, message, (client) => client._sessionId === sessionId);
   }
 
   /**

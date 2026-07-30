@@ -18,6 +18,7 @@ const {
 } = require('../security/ipc-limits');
 const { getCapability } = require('../security/channel-capabilities');
 const { getMaxPayloadBytes, validateArgs } = require('../security/channel-policy');
+const { runWithSession } = require('../session-context');
 
 const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   const router = express.Router();
@@ -86,9 +87,14 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
 
     try {
       const fakeEvent = createFakeEvent(windowShim);
-      const dispatch = isEvent
-        ? handlerRegistry.emit(channel, fakeEvent, ...args)
-        : handlerRegistry.invoke(channel, fakeEvent, ...args);
+      const dispatchHandler = () =>
+        isEvent ? handlerRegistry.emit(channel, fakeEvent, ...args) : handlerRegistry.invoke(channel, fakeEvent, ...args);
+
+      // Only session-scope the call (and therefore any events it triggers
+      // via WindowShim, see session-context.js) when P0.1 auth identified a
+      // real session; without one there's no way to distinguish clients, so
+      // events fall back to the original global broadcast.
+      const dispatch = req.brunoSessionId ? runWithSession(req.brunoSessionId, dispatchHandler) : dispatchHandler();
       const result = await withTimeout(Promise.resolve(dispatch), channel);
 
       if (fireAndForget) {
