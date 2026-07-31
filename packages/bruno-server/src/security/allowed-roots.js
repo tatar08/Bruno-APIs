@@ -38,6 +38,11 @@
  * read-only root by default. Getting this list wrong in the "channel
  * omitted" direction only costs a false-positive rejection, never a
  * silent write through what was configured as read-only.
+ *
+ * Runtime revocation: routes/admin.js exposes an authenticated (when P0.1
+ * auth is on) GET/DELETE pair over listAllowedRoots()/revokeRoot() so a
+ * root can be narrowed without restarting the server. See those functions
+ * below for why this is revoke-only (no un-revoke, no adding new roots).
  */
 
 const fs = require('fs');
@@ -81,7 +86,37 @@ const parseAllowedRoots = () => {
 
 const allowedRoots = parseAllowedRoots();
 
+// Runtime-revoked roots (Improvement.md P0.3: "ให้ผู้ใช้ revoke root ได้").
+// BRUNO_SERVER_ALLOWED_ROOTS is read once at process start, so this is the
+// only way to narrow access without a restart. Intentionally in-memory and
+// one-directional (revoke only, no un-revoke API) — a restart re-parses the
+// env var and forgets any revocation, which is the expected way back to a
+// previously-revoked root.
+const revokedRootPaths = new Set();
+
 const isFilesystemSandboxEnabled = () => allowedRoots !== null;
+
+/**
+ * @returns {{ path: string, readOnly: boolean, revoked: boolean }[]}
+ */
+function listAllowedRoots() {
+  if (!isFilesystemSandboxEnabled()) return [];
+  return allowedRoots.map((root) => ({ ...root, revoked: revokedRootPaths.has(root.path) }));
+}
+
+/**
+ * Revokes a configured root by its exact resolved path (as returned by
+ * listAllowedRoots()) so it's rejected for every channel from now on, same
+ * as a path fully outside every allowed root.
+ * @returns {boolean} whether `rootPath` matched a configured root
+ */
+function revokeRoot(rootPath) {
+  if (!isFilesystemSandboxEnabled()) return false;
+  const match = allowedRoots.find((root) => root.path === rootPath);
+  if (!match) return false;
+  revokedRootPaths.add(rootPath);
+  return true;
+}
 
 function realpathBestEffort(absolutePath) {
   try {
@@ -130,6 +165,7 @@ function isUnderRoot(resolvedPath, rootPath) {
 function findContainingRoot(resolvedPath) {
   let readOnlyMatch = null;
   for (const root of allowedRoots) {
+    if (revokedRootPaths.has(root.path)) continue;
     if (isUnderRoot(resolvedPath, root.path)) {
       if (!root.readOnly) return root;
       readOnlyMatch = root;
@@ -219,6 +255,8 @@ module.exports = {
   findDisallowedPath,
   findPathPolicyViolation,
   isReadOnlySafeChannel,
+  listAllowedRoots,
+  revokeRoot,
   // exported for testing
   resolveForContainmentCheck,
   findPathsInValue

@@ -168,6 +168,53 @@ describe('allowed-roots filesystem sandbox', () => {
     });
   });
 
+  describe('runtime root revocation (listAllowedRoots / revokeRoot)', () => {
+    it('reports enabled=false and an empty list when the sandbox is disabled', () => {
+      delete process.env.BRUNO_SERVER_ALLOWED_ROOTS;
+      const sandbox = loadModule();
+
+      expect(sandbox.listAllowedRoots()).toEqual([]);
+      expect(sandbox.revokeRoot('/anything')).toBe(false);
+    });
+
+    it('lists configured roots with readOnly/revoked status, and revoke narrows access', () => {
+      const roRoot = path.join(tmpDir, 'revoke-ro-root');
+      fs.mkdirSync(roRoot, { recursive: true });
+      try {
+        process.env.BRUNO_SERVER_ALLOWED_ROOTS = `${allowedRoot},${roRoot}:ro`;
+        const sandbox = loadModule();
+
+        const before = sandbox.listAllowedRoots();
+        expect(before).toEqual([
+          { path: allowedRoot, readOnly: false, revoked: false },
+          { path: roRoot, readOnly: true, revoked: false }
+        ]);
+
+        const p = path.join(allowedRoot, 'foo.bru');
+        expect(sandbox.isPathAllowed(p)).toBe(true);
+
+        expect(sandbox.revokeRoot(allowedRoot)).toBe(true);
+
+        expect(sandbox.isPathAllowed(p)).toBe(false);
+        expect(sandbox.findDisallowedPath('renderer:save-file', [p])).toBe(p);
+
+        const after = sandbox.listAllowedRoots();
+        expect(after.find((r) => r.path === allowedRoot).revoked).toBe(true);
+        expect(after.find((r) => r.path === roRoot).revoked).toBe(false);
+      } finally {
+        fs.rmSync(roRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('returns false for a path that does not match any configured root', () => {
+      process.env.BRUNO_SERVER_ALLOWED_ROOTS = allowedRoot;
+      const sandbox = loadModule();
+
+      expect(sandbox.revokeRoot('/not/a/configured/root')).toBe(false);
+      expect(sandbox.isPathAllowed(path.join(allowedRoot, 'foo.bru'))).toBe(true);
+    });
+  });
+
   describe('findPathsInValue', () => {
     it('extracts absolute-path-shaped strings from nested arrays and objects, ignoring non-paths', () => {
       const { findPathsInValue } = loadModule();

@@ -132,7 +132,7 @@ Browser version ในปัจจุบันมี functional parity กับ
 - ✅ resolve path ด้วย `realpath` ก่อน authorize
 - ✅ ป้องกัน `..`, symlink escape — มี unit test ครอบทั้งคู่; UNC/network path และ case-insensitive bypass บน Windows ยังไม่ได้ทดสอบเฉพาะเจาะจง
 - ✅ แยก read/write permission ต่อ root — root ต่อท้ายด้วย `:ro` (เช่น `BRUNO_SERVER_ALLOWED_ROOTS=/rw-root,/reference-root:ro`) ถูก enforce เป็น read-only; fail-safe ต่อ channel ที่ยังไม่ตรวจสอบ (มี allowlist มือ 8 channel ที่ยืนยันว่าอ่านอย่างเดียวจาก `filesystem.js`, channel อื่นถือเป็น write แล้วบล็อกกับ root ที่เป็น ro ไปก่อน) — error code แยก `PATH_READ_ONLY_ROOT`
-- ให้ผู้ใช้ revoke root ได้ — ยังไม่ทำ (ตั้งค่าผ่าน env var ตอน start เท่านั้น ไม่มี runtime UI/API — เป็น product/UX decision)
+- ✅ ให้ผู้ใช้ revoke root ได้ — runtime admin API (`GET`/`DELETE /api/admin/allowed-roots`), mount หลัง `requireAuth` เหมือน `/api/ipc`; revoke-only (narrow เท่านั้น ไม่มี un-revoke/add), เก็บ state ใน memory ที่ reset กลับเป็นค่า env var ตอน restart; log ผ่าน `logRootRevoked`
 - ✅ บันทึก audit event โดยไม่ log secret/file content — `security/audit-log.js` log เฉพาะ channel/denied-path/session/requestId ตอน sandbox ปฏิเสธ (403) ไม่แตะ argument หรือ file content
 - upload ต้องตรวจ size, extension, magic bytes และ filename normalization — ยังไม่ทำ (ยังไม่มี upload flow จริงในระบบจนกว่าจะทำ P1.1 file explorer)
 
@@ -151,7 +151,7 @@ Browser version ในปัจจุบันมี functional parity กับ
 - ✅ reference-count shared filesystem watchers และ cleanup เมื่อ session ปิด
 - ✅ จำกัดจำนวน sessions/terminals/watchers ต่อ session (ผ่าน `resource-limits.js`, ปรับได้ผ่าน env var — "ต่อ user" ปรับเป็น "ต่อ session" เพราะสถาปัตยกรรมนี้ไม่มี user จริง มีแต่ anonymous session)
 
-**ที่เหลือ (severity ต่ำ, บันทึกเป็น follow-up ไม่ใช่ตัดทิ้ง)**: onboarding flow (`hasLaunchedBefore` flag) ยังเป็น shared singleton ระดับ server ไม่ผูก session — only fires ตอน session แรก boot เท่านั้น ผลกระทบต่ำกว่าจุดอื่นที่แก้ไปแล้วมาก
+**ตัดสินใจแล้ว — onboarding singleton คงพฤติกรรมเดิม ไม่ใช่ gap**: onboarding flow (`hasLaunchedBefore` flag) เป็น shared singleton ระดับ server process โดยตั้งใจ ไม่ผูก session — ผู้ใช้ยืนยันแล้วว่าตรงกับโมเดล "Bridge เดียวใช้ร่วมกันหลายคน" ของ P0.4 (นับครั้งแรกที่ server process รันทั้งหมด ไม่ใช่ต่อ browser tab/session) จึงไม่ต้องแก้ไขเพิ่ม
 
 **Acceptance criteria:** integration test สอง browser contexts ต้องไม่รับ event หรือ state ของอีก context ✅ (unit + live E2E ยืนยันแล้วสำหรับ cookie, WS/gRPC connection, terminal, watcher — active-state 4 จุดสุดท้ายยืนยันด้วย unit test + code review ไม่มี live E2E เพิ่ม)
 

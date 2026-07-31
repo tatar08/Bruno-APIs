@@ -29,6 +29,7 @@ const { WindowShim, createFakeEvent } = require('./adapters/window-shim');
 const { HandlerRegistry } = require('./handler-registry');
 const { createIpcProxyRouter } = require('./routes/ipc-proxy');
 const { createAuthRouter } = require('./routes/auth');
+const { createAdminRouter } = require('./routes/admin');
 const { isOriginAllowed } = require('./security/origin-policy');
 const { isAuthRequired, requireAuth, bootstrapToken } = require('./security/auth');
 const { validateStartupConfig } = require('./config-validation');
@@ -424,6 +425,7 @@ const registerHandlers = () => {
 
 app.use('/api/auth', createAuthRouter(handlerRegistry, windowShim, createFakeEvent, getCollectionWatcher));
 app.use('/api/ipc', requireAuth, createIpcProxyRouter(handlerRegistry, windowShim, createFakeEvent));
+app.use('/api/admin', requireAuth, createAdminRouter());
 
 // Health check
 app.get('/api/health', (req, res) => {

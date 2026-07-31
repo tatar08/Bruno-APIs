@@ -95,6 +95,7 @@ event หรือควบคุม resource (เช่น terminal process) �
 | CSRF ผ่าน session cookie ที่ browser แนบให้อัตโนมัติ | CSRF token แยกจาก cookie ต้องส่งผ่าน header `X-CSRF-Token` เท่านั้น (ไม่ใช่ cookie จึงไม่ถูกแนบอัตโนมัติข้าม origin) | `security/auth.js` |
 | bootstrap token หลุดผ่าน log/history แล้วถูกใช้ซ้ำ (ไม่ใช่ single-use) | **ยังไม่ mitigate — accepted risk ดูข้อ 5** | — |
 | client ยิง `POST /api/auth/session` (token exchange) รัวๆ ไม่จำกัด — ไม่ใช่ปัญหาเรื่อง brute-force (token สุ่ม 256 บิต เดาไม่ได้อยู่แล้ว) แต่เป็น availability/DoS: แต่ละ attempt เสีย CPU/response cycle ฟรีไม่จำกัดจำนวน | rate limit เฉพาะ endpoint นี้ แยกจาก IPC rate limit เดิม (คีย์ด้วย IP เพราะยังไม่มี session ตอนเรียก), ดีฟอลต์ 10 ครั้ง/5 นาที ปรับได้ผ่าน `BRUNO_SERVER_AUTH_RATE_LIMIT`/`BRUNO_SERVER_AUTH_RATE_WINDOW_MS` | `security/auth-rate-limit.js` |
+| client เรียก `GET`/`DELETE /api/admin/allowed-roots` เพื่ออ่าน/แก้ filesystem sandbox config ระหว่างรัน (attack surface ใหม่ — ก่อนหน้านี้ config นี้อ่านจาก env var ตอน start เท่านั้น ไม่มี endpoint ให้ mutate ได้เลย) | mount หลัง `requireAuth` เหมือน `/api/ipc` ทุกประการ (ต้องมี session + CSRF header ถ้าเปิด auth); ออกแบบเป็น **revoke-only** โดยตั้งใจ — เรียกได้แค่ narrow allowed roots ให้แคบลง (ไม่มี un-revoke, ไม่มี add-root ผ่าน API) ทางเดียวที่จะขยายสิทธิ์กลับคือแก้ env var แล้ว restart process เอง ดังนั้นแม้ endpoint นี้ถูกเรียกโดยไม่ได้ตั้งใจหรือถูกละเมิด ผลลัพธ์แย่สุดคือ access แคบลง ไม่ใช่กว้างขึ้น; ทุกครั้งที่ revoke สำเร็จ log audit event ผูกกับ session | `routes/admin.js`, `security/allowed-roots.js`, `security/audit-log.js` |
 | request/response ถูกดักฟังบนเครือข่าย (MITM) | **ไม่มี TLS ในตัว — accepted risk ดูข้อ 5** | — |
 | client ยิง IPC รัวๆ จนตัด availability ของผู้ใช้อื่น/handler ค้าง | per-client rate limit (200 req/10s), concurrency limit (40 in-flight), handler timeout (30s) — ปรับได้ผ่าน env var | `security/ipc-limits.js` |
 | WebSocket client ส่ง frame ใหญ่/ถี่ผิดปกติ, connection ค้างไม่ปิด | `maxPayload` 64KB, message rate limit (50 msg/10s ต่อ connection), ping/pong heartbeat 30s ตัด connection ที่ไม่ตอบ | `ws/event-bridge.js` |
@@ -174,7 +175,8 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
    end-to-end ไม่ได้** เพราะต้องมี `.proto`/gRPC server จริงมาทดสอบ ใช้ unit test + code review แทน
    สำหรับตอนนี้ — ดู increment ที่เจ็ด; ที่เหลือที่ตั้งใจไม่แตะใน increment ที่แปด: `default-workspace.js`'s
    physical directory creation (product-level decision แยกต่างหาก) และ onboarding-promise singleton
-   ใน `preferences.js` (severity ต่ำกว่ามาก, follow-up แยก))
+   ใน `preferences.js` — **ตัดสินใจแล้ว (ไม่ใช่ gap)**: onboarding นับต่อ server process ตามเดิมโดยตั้งใจ
+   เพื่อให้ตรงกับโมเดล multi-session ที่ใช้ Bridge เดียวร่วมกัน)
 
 ## 6. คำแนะนำการ deploy (ไม่ใช่ default behavior — เป็น operator responsibility)
 

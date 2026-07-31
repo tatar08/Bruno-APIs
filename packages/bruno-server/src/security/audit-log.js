@@ -12,4 +12,10 @@ function logSandboxDenial({ channel, path, sessionId, requestId }) {
   console.warn(`[FilesystemSandbox] Denied — ${parts.join(' ')}`);
 }
 
-module.exports = { logSandboxDenial };
+function logRootRevoked({ path, sessionId }) {
+  const parts = [`path="${path}"`];
+  if (sessionId) parts.push(`session=${sessionId}`);
+  console.warn(`[FilesystemSandbox] Root revoked — ${parts.join(' ')}`);
+}
+
+module.exports = { logSandboxDenial, logRootRevoked };
