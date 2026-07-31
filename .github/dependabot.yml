@@ -1,0 +1,56 @@
+# Dependabot config (Improvement.md P1.6, step 1: "เพิ่ม Renovate/Dependabot
+# แบบ grouped updates").
+#
+# This repo is an npm workspaces monorepo with a single root
+# package-lock.json, so one "npm" entry rooted at "/" covers every
+# packages/* workspace — Dependabot resolves workspace dependencies against
+# the shared lockfile automatically, it does not need one entry per package.
+#
+# Grouped by the same three risk buckets Improvement.md's P1.6 plan calls
+# out explicitly ("แยก runtime, build tooling และ UI libraries เพื่อลด blast
+# radius" — don't bump everything in one PR): runtime (Electron/Express,
+# where a major bump needs the smoke-test/security-checklist process P1.6
+# describes), UI libraries (React/Phaser/etc., need visual/interaction
+# regression checking), and build tooling (bundlers, linters, test runners —
+# lowest risk to app behavior). Anything not matching a group still gets its
+# own individual PR rather than being silently skipped.
+#
+# This file only adds automated update PRs to review — it does not perform
+# or schedule any dependency upgrade itself. The actual major-version bumps
+# (Node/Electron/React/Express baselines) remain separate, deliberate
+# increments per the rest of the P1.6 plan.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      runtime:
+        patterns:
+          - "electron"
+          - "electron-*"
+          - "express"
+      ui-libraries:
+        patterns:
+          - "react"
+          - "react-*"
+          - "@reduxjs/*"
+          - "redux*"
+          - "phaser"
+      build-tooling:
+        patterns:
+          - "webpack*"
+          - "rspack*"
+          - "@rspack/*"
+          - "babel*"
+          - "@babel/*"
+          - "eslint*"
+          - "jest*"
+          - "@jest/*"
+          - "prettier*"
+          - "playwright*"
+          - "@playwright/*"
+    commit-message:
+      prefix: "chore(deps)"

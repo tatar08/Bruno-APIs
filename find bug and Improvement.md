@@ -523,6 +523,19 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P1.6 Runtime and Dependency Modernization — step 1 (Dependabot config) เสร็จแล้ว, step 2-6 ตั้งใจไม่ทำ
+
+สำรวจ roadmap ที่เหลือหลัง P0.2/P0.3 increment สองอันข้างบน — เหลือ P1.1 (UI feature ใหญ่), P1.2 ที่เหลือ (decision-blocked), P1.5 OAuth popup UI (ตัดสินใจ out-of-scope ไปแล้ว), P1.6 (mix ของ mechanical item 1 กับ major-version bump เสี่ยงสูง item 2-6), และ P2.x/P3.x (greenfield หลายเดือน) — เลือกทำเฉพาะ P1.6 ข้อ 1 เพราะเป็นข้อเดียวใน roadmap ทั้งหมดที่เหลือที่ทั้ง (a) ไม่ต้องถามผู้ใช้ก่อน และ (b) ไม่ใช่ UI feature ใหญ่ที่ต้อง design decision
+
+**การเปลี่ยนแปลงจริง**:
+- `.github/dependabot.yml` (ใหม่, สร้าง `.github/` ด้วยเพราะ repo นี้ไม่มี directory นี้มาก่อนเลย) — `npm` ecosystem รากที่ `/` (ครอบทุก `packages/*` workspace ผ่าน root lockfile เดียวกัน ไม่ต้องเขียนทีละ package) แบ่ง 3 group ตาม risk bucket ที่ roadmap เขียนไว้เองว่า "แยก runtime, build tooling และ UI libraries เพื่อลด blast radius": `runtime` (electron/electron-*/express), `ui-libraries` (react/react-*/@reduxjs/redux*/phaser), `build-tooling` (webpack/rspack/babel/eslint/jest/prettier/playwright) — dependency ที่ไม่ตรง pattern ไหนเลยยังได้ PR แยกของตัวเอง ไม่ถูกข้ามเงียบ ๆ
+- เป็น config ที่ **เปิดใช้ automated update PR ให้ review เท่านั้น** ไม่ได้ trigger หรือ schedule การ upgrade จริงใด ๆ ไม่กระทบ dependency version ปัจจุบันเลยแม้แต่ตัวเดียว — ความเสี่ยงเท่ากับศูนย์ในแง่ runtime behavior
+- `Improvement.md` — P1.6 heading เปลี่ยนเป็น 🟡 เสร็จบางส่วน, step 1 mark ✅, step 2-6 ระบุชัดว่า "ยังไม่ทำ" พร้อมเหตุผลแยกแต่ละข้อ
+
+**ตั้งใจไม่ทำ step 2-6 (Node/Electron/React/Express major-version bump + upgrade policy)**: roadmap เขียนเตือนเรื่องนี้ไว้เอง ("อย่า upgrade ทุก dependency ใน PR เดียว") และ major bump โดยเฉพาะ Electron มีประวัติกระทบ native module/behavior ได้กว้างกว่าที่ unit/integration test ในนี้จะจับได้ทั้งหมด ต่างจาก P0.2/P0.3 ที่เป็น additive security safety-net ล้วน ๆ ไม่กระทบ behavior เดิมเลย — step เหล่านี้เข้าเกณฑ์ "genuine product/architecture-scope decision" ที่ต้องถามผู้ใช้ก่อนเริ่มจริงตามแนวทางที่ยึดมาตลอดทั้ง session ไม่ใช่ทำเองแบบ self-scoped ได้
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

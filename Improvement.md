@@ -279,7 +279,7 @@ API ควรใช้ opaque file handles แทนส่ง absolute path ก�
 - ✅ test parallel OAuth flows จากสอง sessions — mechanism เดิม (`pendingRequests` keyed by state, isolation ต่อ session) มี test coverage อยู่แล้วใน `oauth2-protocol-handler.spec.js`; เพิ่ม test ใหม่สำหรับ `resolveOauth2AuthorizationRequest`/`rejectOauth2AuthorizationRequest` ที่ route ใหม่เรียกใช้โดยตรง
 - **out of scope ในรอบนี้ (ตัดสินใจแล้ว)**: implicit grant ถูก reject อย่างชัดเจนเมื่อรันผ่าน Bridge (`getOAuth2TokenUsingImplicitGrant`) เพราะ browser ไม่ส่ง URL hash fragment ไปที่ server ได้ — ไม่มีทางแก้ทาง technical, และ OAuth 2.1 เองก็ deprecate implicit grant อยู่แล้ว; frontend popup UI (เปิด popup, จัดการ popup-blocked, ปิด popup อัตโนมัติหลัง callback) เป็น follow-up แยกต่างหาก
 
-### P1.6 Runtime and Dependency Modernization
+### P1.6 Runtime and Dependency Modernization 🟡 เสร็จบางส่วน (step 1 เท่านั้น)
 
 สถานะ ณ กรกฎาคม 2026:
 
@@ -290,14 +290,14 @@ API ควรใช้ opaque file handles แทนส่ง absolute path ก�
 
 แผนแนะนำ:
 
-1. เพิ่ม Renovate/Dependabot แบบ grouped updates
-2. upgrade Node baseline เป็น 24 LTS และทดสอบ 26 แบบ allowed-to-fail
-3. upgrade Electron ทีละ major พร้อม smoke test/security checklist
-4. upgrade React 19.2 และแก้ React 19 ref warnings
-5. migrate Bridge ไป Express 5 พร้อม contract/integration tests
-6. กำหนด quarterly dependency upgrade window และ SLA สำหรับ security patches
+1. ✅ เพิ่ม Renovate/Dependabot แบบ grouped updates — `.github/dependabot.yml` (npm ecosystem, root-rooted ครอบทุก workspace ผ่าน lockfile เดียว) แบ่งกลุ่ม `runtime` (Electron/Express), `ui-libraries` (React/Redux/Phaser), `build-tooling` (bundler/lint/test tooling) ตาม risk bucket ที่ข้อความด้านล่างระบุไว้เอง — เป็นแค่ config เปิดใช้ automated PR ให้ review เท่านั้น ไม่ได้ trigger upgrade จริงใด ๆ
+2. upgrade Node baseline เป็น 24 LTS และทดสอบ 26 แบบ allowed-to-fail — ยังไม่ทำ (major runtime bump ต้องตัดสินใจร่วมกับผู้ใช้ก่อน มี regression risk จริง)
+3. upgrade Electron ทีละ major พร้อม smoke test/security checklist — ยังไม่ทำ (เหตุผลเดียวกับข้อ 2)
+4. upgrade React 19.2 และแก้ React 19 ref warnings — ยังไม่ทำ
+5. migrate Bridge ไป Express 5 พร้อม contract/integration tests — ยังไม่ทำ
+6. กำหนด quarterly dependency upgrade window และ SLA สำหรับ security patches — ยังไม่ทำ (เป็น process/policy decision ของทีม ไม่ใช่โค้ด)
 
-อย่า upgrade ทุก dependency ใน PR เดียว ควรแยก runtime, build tooling และ UI libraries เพื่อลด blast radius
+อย่า upgrade ทุก dependency ใน PR เดียว ควรแยก runtime, build tooling และ UI libraries เพื่อลด blast radius — **ข้อ 2-6 ตั้งใจไม่ทำในรอบนี้**: เป็น major-version bump ที่มี regression risk จริงตามที่ข้อความนี้เตือนไว้เอง (Electron major bump โดยเฉพาะมีประวัติกระทบ native module/behavior ได้กว้าง) ควรถามผู้ใช้ก่อนเริ่ม ไม่ใช่การตัดสินใจที่ทำเองได้แบบ P0.2/P0.3 ที่เป็น additive safety-net ล้วน ๆ
 
 ---
 
