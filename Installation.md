@@ -256,7 +256,40 @@ Browser Bridge ใช้โฟลเดอร์ข้อมูลต่อไ�
 
 Collections และ Workspaces ยังอยู่ในตำแหน่งที่ผู้ใช้เลือก ไม่ได้ถูกย้ายเข้าโฟลเดอร์ config
 
-### 5.7 หยุด Browser
+### 5.7 รัน Browser Bridge ด้วย Docker
+
+`packages/bruno-server/Dockerfile` build image เดียวที่มีทั้ง Bridge API/WebSocket และ bruno-app production build (static frontend) รวมกัน ไม่ต้องรันสอง process แยกแบบข้อ 5.4
+
+Build context ต้องเป็น root ของ monorepo (ไม่ใช่ `packages/bruno-server`) เพราะ Bridge ต้อง require โมดูลจาก `packages/bruno-electron` โดยตรง:
+
+```text
+docker build -f packages/bruno-server/Dockerfile -t bruno-bridge .
+```
+
+รัน container โดยกำหนด `BRUNO_SERVER_ALLOWED_ROOTS` ให้ตรงกับโฟลเดอร์ collection ที่ mount เข้ามา และ mount volume ให้ `USER_DATA_DIR` (`/home/node/.config/bruno` ภายใน container ซึ่งตรงกับข้อ 5.6) เพื่อให้ preferences/master key อยู่รอดข้าม container restart:
+
+```text
+docker run -d --name bruno-bridge \
+  -p 4000:4000 \
+  -v bruno-bridge-data:/home/node/.config/bruno \
+  -v /home/alice/Documents/bruno:/collections \
+  -e BRUNO_SERVER_ALLOWED_ROOTS=/collections \
+  bruno-bridge
+```
+
+Image ออกแบบให้รันแบบ non-root (`node` user, uid 1000) และรองรับ read-only root filesystem — ถ้าต้องการความปลอดภัยเพิ่ม สามารถเพิ่ม `--read-only --tmpfs /tmp` ได้โดยไม่ต้องปรับ image (ตรวจสอบแล้วว่า container ยังผ่าน `HEALTHCHECK` และให้บริการ API/WebSocket/static frontend ได้ปกติภายใต้ flag นี้)
+
+Environment variable ที่เกี่ยวข้อง (ดู `packages/bruno-server/THREAT_MODEL.md` สำหรับรายละเอียดเต็ม):
+
+- `BRUNO_SERVER_ALLOWED_ROOTS` — allowlist ของ path ที่ Bridge อนุญาตให้เปิดเป็น collection (บังคับตั้งใน container เพราะไม่มี native file picker ยืนยันผู้ใช้)
+- `BRUNO_SERVER_REQUIRE_AUTH` — บังคับ authentication ก่อนเรียก API
+- `BRUNO_SERVER_ALLOWED_ORIGINS` — allowlist origin สำหรับ CORS
+- `BRUNO_SERVER_BASE_PATH` — path prefix เมื่อ mount Bridge ไว้หลัง reverse proxy (เช่น `/bridge`) แทน origin root
+- `BRUNO_SERVER_MASTER_KEY` / `BRUNO_SERVER_MASTER_KEY_PATH` — master key สำหรับเข้ารหัสข้อมูลที่ rest
+
+ค่า default ของ image ตั้ง `BRUNO_SERVER_HOST=0.0.0.0` (ต่างจาก default `127.0.0.1` ตอนรันแบบ bare-metal) เพราะขอบเขตความปลอดภัยของ container คือ network namespace ของตัว container เอง — จะเข้าถึงได้ก็ต่อเมื่อ operator เปิด port ออกมาอย่างชัดเจนด้วย `-p`/`--expose` เท่านั้น
+
+### 5.8 หยุด Browser
 
 กด `Ctrl+C` ใน terminal ที่รัน `npm run dev:browser` หรือกด `Ctrl+C` ในทั้งสอง terminal ถ้ารันแยกกัน
 
@@ -714,7 +747,40 @@ Browser Bridge stores application data in:
 
 Collections and workspaces remain in the locations selected by the user; they are not moved into the configuration directory.
 
-### 5.7 Stop Browser Mode
+### 5.7 Run Browser Bridge with Docker
+
+`packages/bruno-server/Dockerfile` builds a single image that bundles both the Bridge API/WebSocket server and the bruno-app production build (static frontend) — no need to run two separate processes as in section 5.4.
+
+The build context must be the monorepo root (not `packages/bruno-server`), since the Bridge requires bruno-electron's modules directly:
+
+```text
+docker build -f packages/bruno-server/Dockerfile -t bruno-bridge .
+```
+
+Run the container with `BRUNO_SERVER_ALLOWED_ROOTS` set to match the collection directory you mount in, and a volume for `USER_DATA_DIR` (`/home/node/.config/bruno` inside the container, matching section 5.6) so preferences and the master key survive container restarts:
+
+```text
+docker run -d --name bruno-bridge \
+  -p 4000:4000 \
+  -v bruno-bridge-data:/home/node/.config/bruno \
+  -v /home/alice/Documents/bruno:/collections \
+  -e BRUNO_SERVER_ALLOWED_ROOTS=/collections \
+  bruno-bridge
+```
+
+The image runs as a non-root user (`node`, uid 1000) and supports a read-only root filesystem — for extra hardening, add `--read-only --tmpfs /tmp` with no image changes required (verified: the container still passes its `HEALTHCHECK` and serves the API/WebSocket/static frontend normally under this flag).
+
+Relevant environment variables (see `packages/bruno-server/THREAT_MODEL.md` for full details):
+
+- `BRUNO_SERVER_ALLOWED_ROOTS` — allowlist of paths the Bridge may open as a collection (required in a container since there is no native file picker to confirm user intent)
+- `BRUNO_SERVER_REQUIRE_AUTH` — require authentication before API calls succeed
+- `BRUNO_SERVER_ALLOWED_ORIGINS` — CORS origin allowlist
+- `BRUNO_SERVER_BASE_PATH` — path prefix when the Bridge is mounted behind a reverse proxy (e.g. `/bridge`) instead of the origin root
+- `BRUNO_SERVER_MASTER_KEY` / `BRUNO_SERVER_MASTER_KEY_PATH` — master key for encrypting data at rest
+
+The image defaults to `BRUNO_SERVER_HOST=0.0.0.0` (unlike the `127.0.0.1` default for a bare-metal install) because the container's own network namespace is the security boundary — it is only reachable once the operator explicitly publishes the port with `-p`/`--expose`.
+
+### 5.8 Stop Browser Mode
 
 Press `Ctrl+C` in the terminal running `npm run dev:browser`, or stop both terminals if the components were started separately.
 
@@ -937,6 +1003,7 @@ This reinstalls dependencies across the workspace. On Windows, errors mentioning
 | Browser Bridge only          | `npm run dev:server`                |
 | Web UI only                  | `npm run dev:web`                   |
 | Browser production build     | `npm run build:web`                 |
+| Browser Bridge Docker image  | `docker build -f packages/bruno-server/Dockerfile -t bruno-bridge .` |
 | Desktop development          | `npm run dev`                       |
 | Electron only                | `npm run dev:electron`              |
 | Desktop build for current OS | `npm run build:electron`            |

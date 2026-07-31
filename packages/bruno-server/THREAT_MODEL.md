@@ -243,3 +243,10 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
   `/health/live`/`/health/ready` ตั้งใจไม่ผูกกับ prefix นี้เพราะ orchestrator (k8s liveness/readiness
   probe ฯลฯ) โดยทั่วไป probe container ตรงๆ ข้าม reverse proxy อยู่แล้ว ไม่ได้ผ่าน path prefix
   เดียวกับ traffic ของผู้ใช้จริง
+- ถ้ารันผ่าน `packages/bruno-server/Dockerfile` (Improvement.md P1.3): image ตั้ง
+  `BRUNO_SERVER_HOST=0.0.0.0` เป็นค่าเริ่มต้น (ต่างจาก default `127.0.0.1` ตอนรัน bare-metal) เพราะ
+  ขอบเขตความปลอดภัยของ container คือ network namespace ของตัว container เอง — เข้าถึงได้ก็ต่อเมื่อ
+  operator เปิด port ออกมาด้วย `-p`/`--expose` อย่างชัดเจนเท่านั้น image ออกแบบให้รันเป็น non-root
+  user (`node`, uid 1000) และรองรับ `--read-only` root filesystem ได้ (ทดสอบแล้ว) โดยต้อง mount
+  volume ให้ `/home/node/.config/bruno` (`USER_DATA_DIR`) และ `--tmpfs /tmp` ดู `Installation.md`
+  ข้อ 5.7 สำหรับตัวอย่างคำสั่งเต็ม

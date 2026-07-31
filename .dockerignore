@@ -1,0 +1,24 @@
+# Keep the bruno-server production build (packages/bruno-server/Dockerfile)
+# context small and reproducible — host-side installs/builds/state must never
+# leak into the image; npm ci and the frontend build run fresh inside it.
+node_modules
+**/node_modules
+dist
+**/dist
+out
+**/out
+coverage
+**/coverage
+playwright-report
+test-results
+.git
+.cache
+.tmp
+tmp
+*.log
+.env
+.env.*
+!.env.*.example
+.DS_Store
+.idea
+.vscode

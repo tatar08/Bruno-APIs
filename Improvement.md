@@ -238,13 +238,13 @@ API ควรใช้ opaque file handles แทนส่ง absolute path ก�
 
 ไม่ควร retry destructive action อัตโนมัติหากไม่มี idempotency guarantee
 
-### P1.3 Production Browser Packaging 🟡 เสร็จบางส่วน (static serving + runtime config + reverse proxy base path เสร็จแล้ว)
+### P1.3 Production Browser Packaging 🟡 เสร็จบางส่วน (static serving + runtime config + reverse proxy base path + Docker image เสร็จแล้ว)
 
 - ✅ Bridge serve production static assets ชุดเดียวกับ API — `bruno-server/src/index.js` auto-detect `bruno-app/dist/index.html` (override ได้ด้วย `BRUNO_SERVER_STATIC_DIR`); ถ้าไม่เจอ build ก็ทำงานเหมือนเดิมทุกอย่าง (API/WS อย่างเดียว, frontend host แยก) — ไม่ใช่ breaking change
 - ✅ runtime config endpoint แทน compile-time/hardcoded port — `GET {basePath}/api/runtime-config` คืน `{ basePath }`; ตอน serve static ด้วยตัวเอง ค่าเดียวกันถูก inject ตรงเป็น `window.__BRUNO_RUNTIME_CONFIG__` ใน `index.html` (`static-frontend.js`'s `injectRuntimeConfig`) แทนที่ `window.__BRUNO_SERVER_PORT__` เดิมที่เป็น dead code (ไม่มีจุดไหน set ค่าจริงเลยทั้ง repo)
 - ✅ รองรับ reverse proxy base path ผ่าน `BRUNO_SERVER_BASE_PATH` (validate format ใน `config-validation.js`) — prefix ทุก `/api/*` route, WS server (`event-bridge.js`'s `attach(server, basePath)`), static assets, และ SPA fallback ให้ตรงกัน; ฝั่ง frontend (`ipc-transport.js`) อ่าน basePath จาก `window.__BRUNO_RUNTIME_CONFIG__` เวลาสร้าง `BRIDGE_SERVER_URL`/`WS_URL` — ถ้าไม่มี (เช่น dev mode หรือ frontend host แยก) ก็ fallback ไปพฤติกรรมเดิมเป๊ะๆ (root path, ไม่มี prefix) `/health/live`/`/health/ready` ตั้งใจไม่ prefix เพราะ orchestrator ส่วนใหญ่ probe container ตรงๆ ข้าม reverse proxy
+- ✅ Docker image แบบ non-root, read-only filesystem และ mount allowed roots แบบ explicit — `packages/bruno-server/Dockerfile` (multi-stage: `deps` → `build` → `runtime`) build image เดียวรวม Bridge + bruno-app static build; runtime stage คัดลอกเฉพาะ workspace package ที่ require() จริง (ตรวจสอบด้วยการ grep import จริง ไม่ใช่แค่ `package.json` เพราะพบว่า under-declare หลายจุด) ไม่ใช่ทั้ง repo; รันเป็น non-root `node` user (uid 1000), รองรับ `--read-only` root filesystem (ทดสอบแล้วด้วย `--tmpfs /tmp` + mount volume ที่ `/home/node/.config/bruno` สำหรับ `USER_DATA_DIR`), มี `HEALTHCHECK` ผูกกับ `/health/live`; default `BRUNO_SERVER_HOST=0.0.0.0` ภายใน container (ต่างจาก bare-metal default `127.0.0.1`) เพราะ network namespace ของ container เองเป็น isolation boundary อยู่แล้ว — ดู `Installation.md` ข้อ 5.7 และ `THREAT_MODEL.md` ข้อ 6 สำหรับรายละเอียดและตัวอย่างคำสั่งเต็ม
 - ยังไม่ทำ — HTTPS/WSS สำหรับ non-loopback mode (deployment-topology decision ที่ควรถามผู้ใช้ก่อน)
-- ยังไม่ทำ — Docker image แบบ non-root, read-only filesystem และ mount allowed roots แบบ explicit (repo นี้ยังไม่มี Dockerfile เลย)
 - ✅ `/health/live`, `/health/ready`, build info และ dependency readiness
 - ✅ graceful shutdown ที่ปิด watchers, terminals, sockets และ pending requests (มี ordering fix ยืนยันแล้วว่าไม่ hang รอ timeout)
 - ✅ configuration validation ตอน start; invalid config ต้อง fail fast
