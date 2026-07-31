@@ -114,7 +114,9 @@ event หรือควบคุม resource (เช่น terminal process) �
 |---|---|---|
 | client ส่ง path แบบ `..` traversal ออกนอก root ที่อนุญาต | resolve แบบ absolute แล้วเช็คว่าอยู่ใต้ allowed root ก่อนถึง handler | `security/allowed-roots.js` |
 | path อยู่ใต้ root ตามตัวอักษร แต่จริงๆ เป็น symlink ที่ชี้ออกไปนอก root | realpath ancestor ที่มีอยู่จริงก่อนเทียบ (แก้ทั้ง symlink ที่มีอยู่แล้วและ ancestor ที่เป็น symlink) | `security/allowed-roots.js` |
+| channel ที่ไม่รู้จัก (เขียนหรือไม่เขียนก็ไม่รู้) เรียกเข้า root ที่ผู้ใช้ตั้งใจให้อ่านอย่างเดียว (`:ro` suffix) จนเขียนทับไฟล์ reference/read-only ได้ | root ที่ตั้ง `:ro` บังคับว่ามีแค่ channel ในรายการที่ตรวจสอบมือแล้วว่าเป็น read-only จริง (`READ_ONLY_SAFE_CHANNELS`) เท่านั้นที่แตะได้ — channel อื่นทั้งหมด รวมถึงตัวที่ยังไม่รู้จักในอนาคต ถือเป็น write แล้วบล็อกอัตโนมัติ (fail-safe ไม่ใช่ fail-open) คืน `403 PATH_READ_ONLY_ROOT` แยกจาก `PATH_OUTSIDE_ALLOWED_ROOT` | `security/allowed-roots.js`, `@usebruno/rpc-contract`'s `ERROR_CODES` |
 | ไม่ได้ตั้ง `BRUNO_SERVER_ALLOWED_ROOTS` เลย | **ดีฟอลต์คือไม่จำกัด (fail-open) — accepted risk ดูข้อ 5** | — |
+| sandbox ปฏิเสธ path (outside-root หรือ read-only-root) แต่ไม่มีร่องรอยฝั่ง server ว่าใครพยายามเข้าถึงอะไร | log audit event ทุกครั้งที่ปฏิเสธ (channel, path ที่ถูกปฏิเสธ, session, requestId) — ไม่แตะ argument หรือ file content อื่นเลย | `security/audit-log.js`, `routes/ipc-proxy.js` |
 
 ### Boundary 4 — แยกระหว่าง session
 
