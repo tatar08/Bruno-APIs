@@ -59,6 +59,28 @@ const saveCookies = (url, headers) => {
   }
 };
 
+// Caps how many dataset iterations `runInParallel` fires at once. Without this,
+// a dataset of e.g. 10,000 rows fired every chain simultaneously (unbounded
+// sockets/processes) -- this is a fixed safety bound, not user-configurable,
+// since normal-sized datasets (<= this limit) run exactly as before.
+const RUNNER_PARALLEL_CONCURRENCY_LIMIT = 10;
+
+// Runs `worker` over `items` with at most `limit` calls in flight at once.
+// `shouldStop()` is polled before starting each new item so an in-progress
+// abort (see `abortController` in the runner loop) stops queuing new work
+// without needing to cancel already-started workers.
+const runWithConcurrencyLimit = async (items, limit, worker, shouldStop = () => false) => {
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  const runners = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length && !shouldStop()) {
+      const currentIndex = nextIndex++;
+      await worker(items[currentIndex], currentIndex);
+    }
+  });
+  await Promise.all(runners);
+};
+
 const getJsSandboxRuntime = (collection) => {
   const securityConfig = get(collection, 'securityConfig', {});
 
@@ -1553,27 +1575,32 @@ const registerNetworkIpc = (mainWindow) => {
 
       if (runnerOptions.runInParallel && iterations.length > 1 && !runnerOptions.parallelChild) {
         try {
-          await Promise.all(iterations.map((iterationData, iterationIndex) => runCollectionFolderHandler(
-            event,
-            folderUid ? cloneDeep(folder) : null,
-            cloneDeep(collection),
-            cloneDeep(environment),
-            cloneDeep(baseRuntimeVariables),
-            recursive,
-            delay,
-            cloneDeep(tags),
-            selectedRequestUids,
-            [iterationData],
-            datasetInfo,
-            {
-              parallelChild: true,
-              abortController,
-              activeAbortControllers,
-              cancelTokenUid,
-              iterationIndex,
-              iterationCount: iterations.length
-            }
-          )));
+          await runWithConcurrencyLimit(
+            iterations,
+            RUNNER_PARALLEL_CONCURRENCY_LIMIT,
+            (iterationData, iterationIndex) => runCollectionFolderHandler(
+              event,
+              folderUid ? cloneDeep(folder) : null,
+              cloneDeep(collection),
+              cloneDeep(environment),
+              cloneDeep(baseRuntimeVariables),
+              recursive,
+              delay,
+              cloneDeep(tags),
+              selectedRequestUids,
+              [iterationData],
+              datasetInfo,
+              {
+                parallelChild: true,
+                abortController,
+                activeAbortControllers,
+                cancelTokenUid,
+                iterationIndex,
+                iterationCount: iterations.length
+              }
+            ),
+            () => abortController.signal.aborted
+          );
           deleteCancelToken(cancelTokenUid);
           mainWindow.webContents.send('main:run-folder-event', {
             type: 'testrun-ended',
@@ -2333,3 +2360,5 @@ module.exports.getCertsAndProxyConfig = getCertsAndProxyConfig;
 module.exports.fetchGqlSchemaHandler = fetchGqlSchemaHandler;
 module.exports.executeRequestOnFailHandler = executeRequestOnFailHandler;
 module.exports.buildResponseBodyFromStreamChunks = buildResponseBodyFromStreamChunks;
+module.exports.runWithConcurrencyLimit = runWithConcurrencyLimit;
+module.exports.RUNNER_PARALLEL_CONCURRENCY_LIMIT = RUNNER_PARALLEL_CONCURRENCY_LIMIT;
