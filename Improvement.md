@@ -250,14 +250,23 @@ API ควรใช้ opaque file handles แทนส่ง absolute path ก�
 - ✅ configuration validation ตอน start; invalid config ต้อง fail fast
 - ยังไม่ทำ — SBOM, dependency scanning, signed images/artifacts และ provenance (ต้องมี CI pipeline ก่อน ซึ่ง repo นี้ยังไม่มี)
 
-### P1.4 Real Secret Storage
+### P1.4 Real Secret Storage 🟡 security bug ที่พบระหว่างสำรวจแก้แล้ว (external provider/rotation/lock-unlock ยังไม่ทำ — ตามการตัดสินใจ scope)
 
-- Desktop ใช้ OS keychain/safeStorage ต่อไป
-- Browser local mode ใช้ keyring backend ของ OS หรือ encrypted vault
-- remote/server mode รองรับ external secret provider ผ่าน interface
-- master key ต้องไม่เก็บข้าง ciphertext
-- support rotation, lock/unlock, backup policy และ secret redaction
-- ห้ามใช้ Base64 เป็น encryption fallback
+ก่อนเริ่มงาน survey พบว่า item นี้จริงๆมีปัญหาสองขนาดปนกันอยู่: (A) bug ด้าน crypto ที่กระทบความปลอดภัยจริงในของที่มีอยู่แล้ว กับ (B) ฟีเจอร์เต็มรูปแบบที่ยังไม่มีเลย (external secret provider interface, rotation, lock/unlock, backup policy) ถามผู้ใช้แล้วตัดสินใจ **ทำเฉพาะ (A) รอบนี้** เก็บ (B) ไว้ทำทีหลัง (pattern เดียวกับที่ P1.5 แยก backend ออกจาก UI)
+
+**บั๊กที่พบและแก้แล้ว:**
+- ✅ **zero-IV AES-256-CBC** — `encryption.js`'s `aes256Encrypt` เดิมใช้ IV คงที่เป็นศูนย์เสมอ (`Buffer.alloc(16, 0)`) แปลว่า plaintext เดียวกัน → ciphertext เดียวกันเสมอ (ECB-like leakage, ใครอ่านไฟล์ store ได้จะเห็น pattern ความเท่ากันของค่าลับได้) แก้โดยเปลี่ยนเป็น **AES-256-GCM พร้อม random IV ทุกครั้งที่ encrypt** (`aes256GcmEncrypt`/`aes256GcmDecrypt`, algo tag ใหม่ `$02:`) — ได้ authenticated encryption เป็นของแถมด้วย (tamper/wrong-key detection ผ่าน auth tag) เก็บ decrypt path เดิม (`$01:`, zero-IV) ไว้เป็น **decrypt-only** เพื่ออ่าน ciphertext เก่าที่มีอยู่แล้วได้ — เท่ากับ migrate อัตโนมัติทุกครั้งที่ store อ่าน-แก้ไข-เขียนค่ากลับ (encrypt ใหม่จะได้ format ใหม่เสมอ ไม่ต้อง migration script แยก)
+- ✅ **master key เก็บข้าง ciphertext** — `store/cookies.js` เดิม generate random passkey แล้วเก็บ `encryptedPasskey` ไว้ใน `electron-store` ไฟล์เดียวกับ (`cookies`) ที่เก็บ ciphertext ของ cookie values เอง ตรงข้ามกับ requirement ข้อนี้โดยตรง แก้โดยแยก master key ไปเก็บใน store คนละไฟล์ (`cookies-master-key`) พร้อม one-time migration logic (ย้าย key เก่าไปไฟล์ใหม่แล้วลบออกจากไฟล์เดิม เพื่อไม่ให้ cookie ที่เข้ารหัสไว้แล้วถอดรหัสไม่ได้)
+- ✅ **Bridge ใช้ shared machine-wide key โดยไม่ได้ตั้งใจ** — `safeStorage` shim เดิมใน `bruno-server/src/index.js` คืนค่า `isEncryptionAvailable() => false` เสมอ (เป็น dead-code stub ทั้งก้อน) ทำให้ path `encryptString()`/`encryptStringSafe()` ทุกที่ (AI keys, OAuth2 tokens, secret env vars, ฯลฯ) ตกไปที่ fallback `machineIdSync()`-derived key เสมอเมื่อรันผ่าน Bridge — เป็น key เดียวใช้ร่วมกันทั้ง process ไม่มีการแยกต่อ deployment ไม่มีการ manage ใดๆ แก้โดยสร้าง **`security/master-key.js`**: generate random 32-byte key ครั้งแรกที่ deploy เก็บไว้ในไฟล์แยก (`~/.config/bruno/.keys/bridge-master.key`, permission `0600`, directory `0700`) ไม่ปนกับไฟล์ ciphertext ใดๆ, override ได้ผ่าน `BRUNO_SERVER_MASTER_KEY` (hex, สำหรับ deployment ที่ inject key ผ่าน secrets manager) แล้วเอา key นี้ไป implement `safeStorage`-shaped shim จริง (AES-256-GCM) แทน stub เดิม — `encryption.js` ฝั่ง call site ไม่ต้องแก้อะไรเลยเพราะเดินผ่าน `isEncryptionAvailable()` code path เดิมที่มีอยู่แล้ว
+- ✅ Base64 fallback — สำรวจแล้วไม่พบว่ามีการใช้ Base64 เป็น encryption scheme ที่ไหนเลย (มีแต่ Base64 legitimate สำหรับ HTTP Basic-Auth header/PKCE ที่ไม่เกี่ยวกับ secret-at-rest) — ไม่ใช่ gap ที่ต้องแก้
+- Test coverage ใหม่: `master-key.spec.js` (9 tests: key generation/persistence/permissions, env override, GCM round-trip, random-IV proof, wrong-key auth failure), `encryption.spec.js` เพิ่ม 6 tests (algo `$02:` เป็น default, random IV, passkey round-trip, wrong-passkey ล้มเหลว, legacy `$01:` ยัง decrypt ได้, malformed GCM ciphertext ล้มเหลวแบบ graceful), `cookies-store.test.js` ปรับ mock ให้รองรับ `delete()` (สำหรับ migration logic ใหม่)
+- Live-verified: บูต Bridge server จริงกับ scratch `$HOME` แล้วตรวจสอบว่า `bridge-master.key` ถูกสร้างที่ path ที่คาดไว้ด้วย permission `0600`
+
+**ยังไม่ทำรอบนี้ (ตัดสินใจแล้ว ไม่ใช่ของที่ลืม):**
+- Desktop ยังใช้ OS keychain/safeStorage ตามเดิม (ไม่ได้แตะ — ยังทำงานถูกต้องอยู่แล้ว ไม่มี bug)
+- Browser local mode ใช้ keyring backend ของ OS หรือ encrypted vault แยกต่างหาก — ยังไม่ทำ
+- remote/server mode รองรับ external secret provider ผ่าน interface (เช่น Vault, AWS Secrets Manager) — ยังไม่ทำ ต้องออกแบบ interface shape ก่อน เป็น architecture decision ที่ต้องคุยกับผู้ใช้แยกรอบ
+- key rotation, lock/unlock concept, backup policy — greenfield ทั้งหมด ยังไม่ทำ ("ล็อค" หมายถึงอะไรสำหรับ headless server ก็ยังไม่ได้ตัดสินใจ)
 
 ### P1.5 Browser-Compatible OAuth 2.1 Flow 🟡 backend/API เสร็จแล้ว (UI ยังไม่ทำ — ตามการตัดสินใจ scope)
 

@@ -419,6 +419,32 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P1.4 Real Secret Storage — security bug ที่พบระหว่างสำรวจแก้แล้ว (external provider/rotation/lock-unlock ยังไม่ทำ ตามการตัดสินใจ scope)
+
+ทำตาม "ลุย จาก ยากไปง่ายสุด" ต่อจาก P1.5 — สำรวจ roadmap ที่เหลือ พบว่า P1.4 คือข้อถัดไปที่ยากที่สุด ก่อนลงมือ spawn agent สำรวจ current state ของ secret storage ก่อน (ไม่เขียน code) เพราะ checklist ของ item นี้ (external secret provider interface, master key ต้องไม่เก็บข้าง ciphertext, rotation, lock/unlock, backup policy, ห้าม Base64 fallback) ฟังดูเหมือนต้องมี architecture decision เยอะ
+
+**สิ่งที่ survey เจอ (ร้ายแรงกว่าที่คาดไว้)**: ปัญหาไม่ใช่แค่ "ฟีเจอร์ยังไม่มี" แต่มี **security bug จริงในโค้ดที่มีอยู่แล้ว** อยู่ 3 จุด:
+1. `encryption.js`'s `aes256Encrypt` ใช้ **IV คงที่เป็นศูนย์เสมอ** (`Buffer.alloc(16, 0)`) — AES-256-CBC กับ fixed IV แปลว่า plaintext เดียวกันเข้ารหัสกี่ครั้งก็ได้ ciphertext เดียวกันเป๊ะ ใครอ่านไฟล์ `electron-store` ได้ (เช่น `ai-keys.json`, `oauth2.json`, `env-secrets` ในไฟล์ collection) จะเห็น pattern ว่าค่าลับตัวไหนซ้ำกับตัวไหนได้ทันทีแม้ไม่รู้ค่าจริง (ECB-like equality leakage)
+2. `store/cookies.js` generate random passkey (master key ของ cookie ciphertext ทั้งหมด) แล้วเก็บ `encryptedPasskey` ไว้ใน **ไฟล์ `electron-store` เดียวกัน** (`cookies`) กับ ciphertext ที่มันปกป้องอยู่ — ตรงข้ามกับ requirement "master key ต้องไม่เก็บข้าง ciphertext" ในเช็คลิสต์แบบตรงตัว
+3. **จุดที่ร้ายแรงที่สุด**: `bruno-server`'s `safeStorage` shim เดิมคืน `isEncryptionAvailable() => false` เสมอ (เป็น dead-code stub — `encryptString`/`decryptString` ปลอมข้างในไม่เคยถูกเรียกจริงเลย) ทำให้ `encryption.js`'s `encryptString()` ทุกที่ที่ไม่ได้ส่ง passkey เอง (คือทุก AI key, OAuth2 token, secret env var) ตกไปที่ fallback `machineIdSync()`-derived key เสมอเมื่อรันผ่าน Bridge — เป็น **key เดียวใช้ร่วมกันทั้ง server process** ไม่มีการแยกต่อ session/tenant ไม่มีใครตั้งใจ generate มันขึ้นมาเพื่อจุดประสงค์นี้เลย (มันคือ machine ID ที่ยืมมาใช้) ต่างจาก desktop ที่ `safeStorage` จริงของ Electron ทำงานถูกต้องอยู่แล้ว
+
+ปัญหาข้อ 3 ใหญ่พอที่จะเป็น decision ที่ต้องถามผู้ใช้ก่อนแก้ (ไม่ใช่แค่ self-scoped increment ธรรมดา) เพราะการแก้จริงต้องแตะ encrypted-data-at-rest migration และอาจมี breaking format change — ถามผู้ใช้ว่าจะ scope งานรอบนี้แค่ไหน ผู้ใช้เลือก **"Fix the security bugs only (recommended)"**: แก้ 3 บั๊กข้างบนพร้อม migrate ciphertext เก่าแบบ transparent เก็บ external secret provider interface / rotation / lock-unlock / backup policy ไว้ทำทีหลัง (pattern เดียวกับที่ P1.5 แยก UI ออก)
+
+**การเปลี่ยนแปลงจริง**:
+- `bruno-electron/src/utils/encryption.js` — เพิ่ม `aes256GcmEncrypt`/`aes256GcmDecrypt` (AES-256-GCM, random 12-byte IV ทุกครั้งที่ encrypt, auth tag ป้องกัน tamper/wrong-key) ใต้ algo tag ใหม่ `$02:`; `encryptString()` ทั้ง path ที่มี passkey (cookies) และไม่มี (ทุก store อื่น) เขียนด้วย format ใหม่นี้เสมอ; `aes256Decrypt` เดิม (zero-IV CBC, algo `$01:`) เก็บไว้เป็น **decrypt-only** เพื่ออ่าน ciphertext เก่า — เท่ากับ migrate อัตโนมัติทุกครั้งที่ store อ่าน-แก้ไข-เขียนค่ากลับ ไม่ต้องมี migration script แยก
+- `bruno-electron/src/store/cookies.js` — แยก `encryptedPasskey` ไปเก็บใน `electron-store` คนละไฟล์ (`cookies-master-key`) จากไฟล์ `cookies` ที่เก็บ ciphertext, เพิ่ม one-time migration ใน `initializeEncryption()` (ย้าย key เก่าจากไฟล์เดิมไปไฟล์ใหม่ครั้งเดียวแล้วลบออกจากไฟล์เดิม เพื่อไม่ให้ cookie ที่เข้ารหัสไว้แล้วถอดรหัสไม่ได้)
+- `bruno-server/src/security/master-key.js` (ใหม่) — `getOrCreateMasterKey(filePath)`: generate random 32-byte key ครั้งแรกที่ deploy เก็บในไฟล์แยกต่างหาก (permission `0600`, directory `0700`) ไม่ปนกับไฟล์ ciphertext ใดๆ, override ได้ผ่าน `BRUNO_SERVER_MASTER_KEY` (hex string, สำหรับ deployment ที่ inject key ผ่าน secrets manager แทนไฟล์ local); `createSafeStorageShim(masterKey)`: implement `safeStorage`-shaped object จริง (AES-256-GCM, random IV) แทน stub เดิม
+- `bruno-server/src/index.js` — เพิ่ม `USER_DATA_DIR` constant (ที่เดิมเคย inline อยู่ใน `getPath('userData')`), คำนวณ `MASTER_KEY_PATH = <USER_DATA_DIR>/.keys/bridge-master.key` (override ได้ผ่าน `BRUNO_SERVER_MASTER_KEY_PATH`) แล้วเรียก `getOrCreateMasterKey`/`createSafeStorageShim` ตอน startup แทนที่ `safeStorage` stub เดิมด้วยผลลัพธ์จริง — **ไม่ต้องแก้ `encryption.js` หรือ store ไหนเลย** เพราะเดินผ่าน `isEncryptionAvailable()` code path เดิมที่มีอยู่แล้ว (ตอนนี้คืน `true` จริง)
+- Base64 fallback — สำรวจกว้าง (`grep base64` ใกล้คำว่า `encrypt|secret|credential|safeStorage`) แล้วไม่พบว่ามีการใช้ Base64 เป็น encryption scheme ที่ไหนเลย มีแต่ Base64 ที่ legitimate (HTTP Basic-Auth header, OAuth1/PKCE signing) — ไม่ใช่ gap ที่ต้องแก้ ปิด checklist ข้อนี้ว่าผ่านอยู่แล้ว
+
+**Unit tests ใหม่**: `master-key.spec.js` (ใหม่ทั้งไฟล์, 9 เคส — สร้าง key file ใหม่พร้อม permission ถูกต้อง, คืน key เดิมเมื่อเรียกซ้ำ, regenerate เมื่อไฟล์เดิมความยาวผิด, `BRUNO_SERVER_MASTER_KEY` override ไม่เขียนไฟล์, reject env var ที่ความยาวผิด, `isEncryptionAvailable()` คืน true เสมอ, round-trip encrypt/decrypt, random IV พิสูจน์ด้วยการ encrypt ค่าเดิมสองครั้งได้ผลต่างกัน, decrypt ด้วย key ผิดล้มเหลว), `encryption.spec.js` เพิ่ม 6 เคส (`$02:` เป็น default algo ใหม่, random IV พิสูจน์เหมือนกัน, passkey round-trip สำหรับ use case cookies, wrong-passkey ล้มเหลวเพราะ auth tag, legacy `$01:` ยัง decrypt ได้ผ่าน passkey ที่จำลองขึ้นเอง (ไม่ผูกกับ `machineIdSync()` ของเครื่อง จึง portable), malformed GCM ciphertext ล้มเหลวแบบ graceful ใน `decryptStringSafe`), `cookies-store.test.js` ปรับ mock ให้มี `delete()` (migration logic ใหม่เรียกใช้) — suite รวม: `bruno-server` 215/215 (16 suite, ขึ้นจาก 206), `bruno-electron` 674/679 (5 suite fail เดิมที่ยืนยันแล้วว่าไม่เกี่ยวกับงานนี้ตั้งแต่ P1.5)
+
+**Live verification**: บูต `bruno-server` จริงกับ scratch `$HOME` แยก ยืนยันว่า server start สำเร็จ, `bridge-master.key` ถูกสร้างที่ path ที่คาดไว้ (`<HOME>/.config/bruno/.keys/bridge-master.key`) ด้วย permission `0600` จริง
+
+**ยังไม่ทำรอบนี้ (ตัดสินใจแล้ว ไม่ใช่ของที่ลืมทำ)**: Desktop ไม่ได้แตะ (ใช้ OS keychain/safeStorage เดิมซึ่งทำงานถูกต้องอยู่แล้ว ไม่มี bug); browser local mode keyring/vault, remote/server mode external secret provider interface (Vault, AWS Secrets Manager ฯลฯ), key rotation, lock/unlock concept (ความหมายสำหรับ headless server ยังไม่ได้นิยาม), backup policy — ทั้งหมดนี้ยังเป็น greenfield ตามที่ผู้ใช้ตัดสินใจไว้ว่าเป็น follow-up แยก ไม่ทำรอบนี้
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

@@ -15,6 +15,9 @@ jest.mock('electron-store', () => {
       get: (key, fallback) => (key in data ? data[key] : fallback),
       set: (key, value) => {
         data[key] = value;
+      },
+      delete: (key) => {
+        delete data[key];
       }
     };
   });

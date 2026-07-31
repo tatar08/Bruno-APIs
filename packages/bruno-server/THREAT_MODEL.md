@@ -133,6 +133,21 @@ event หรือควบคุม resource (เช่น terminal process) �
 | session B รู้/เดา requestId ของ WebSocket หรือ gRPC connection ที่ session A เปิดค้างอยู่ (`wsClient`/`grpcClient` เป็น singleton เก็บด้วย requestId ล้วน ไม่รู้จัก session) แล้ว enumerate ผ่าน `get-active-connections`, ส่งข้อความแทรก, หรือปิด/cancel connection ของ A | ownership map ผูก requestId กับ owner ตอน `start-connection` สำเร็จ, เช็คก่อน `send-message`/`close-connection`/`end-request`/`cancel-request` ทุกครั้ง, filter `get-active-connections` ให้เห็นเฉพาะของตัวเอง, ปิด connection ที่ยังค้างอยู่ตอน logout | `security/connection-ownership.js`, `routes/ipc-proxy.js`, `routes/auth.js` |
 | session เดียวสร้าง terminal/watched-collection ไม่จำกัดจำนวน หรือสร้าง session ใหม่ไม่จำกัดจำนวน (resource exhaustion บน server process เดียวที่ทุก session ใช้ร่วมกัน) | limit ต่อ session (terminal, watched path) และ limit รวมทั้ง server (concurrent session) อ่านจาก env var ปรับได้ ดีฟอลต์ 10/20/50 — เช็คก่อน dispatch เสมอ เกิน limit ปฏิเสธด้วย `429 RESOURCE_LIMIT_EXCEEDED` | `security/resource-limits.js`, `routes/auth.js`, `routes/ipc-proxy.js` |
 
+### Boundary 5 — การเข้ารหัสข้อมูลลับที่พักอยู่ (data-at-rest, Improvement.md P1.4)
+
+ไม่ใช่ trust boundary แบบ network/IPC/filesystem/session เหมือน 4 ข้อบน แต่เป็นมิติแยกที่ปกป้อง asset
+"Secrets/environment variables ของ collection" (ข้อ 2) และ AI provider key/OAuth2 token โดยตรง — ใครก็ตามที่
+อ่านไฟล์ `electron-store` (`ai-keys.json`, `oauth2.json`, `cookies.json`, `.bruno` collection files) บนเครื่อง
+ที่รัน Bridge ได้ (เช่น ผ่านช่องโหว่อื่นที่ให้ arbitrary file read, หรือ backup ที่หลุด) ไม่ควรอ่านค่าลับ
+ออกมาได้ง่ายกว่าที่ desktop's `safeStorage` ให้ไว้เดิม
+
+| ภัยคุกคาม | Mitigation | อยู่ที่ |
+|---|---|---|
+| ciphertext ที่ plaintext เดียวกันได้ ciphertext เดียวกันเสมอ (fixed zero-IV AES-CBC เดิม) — เดา/เทียบว่าค่าลับสองตัวเท่ากันหรือไม่ได้แม้ไม่รู้ค่าจริง | AES-256-GCM พร้อม random IV ทุกครั้งที่ encrypt (algo tag `$02:`) แทนที่การเขียนใหม่ทั้งหมด, auth tag ตรวจ tamper/wrong-key เป็นของแถม; ciphertext เก่า (`$01:`) ยัง decrypt ได้ (backward-compat) แต่ไม่มีอะไรเขียนกลับไปเป็น format เก่าอีกแล้ว — migrate เป็น GCM อัตโนมัติทุกครั้งที่ store อ่าน-แก้ไข-เขียนค่ากลับ | `bruno-electron/src/utils/encryption.js` |
+| Bridge ไม่เคยมี real master key ของตัวเอง — `safeStorage` shim เดิมคืน `isEncryptionAvailable() => false` เสมอ (dead-code stub) ทำให้ทุก secret ตกไปที่ key ที่ derive จาก `machineIdSync()` เสมอ เป็น key เดียวใช้ร่วมกันทั้ง server process ไม่มีการแยกต่อ deployment ไม่มีใครตั้งใจ generate ขึ้นมาเพื่อจุดประสงค์นี้ | generate random 32-byte master key จริงตอน deploy ครั้งแรก เก็บในไฟล์แยกต่างหาก (permission `0600`, directory `0700`, ไม่ปนกับไฟล์ ciphertext ใดๆ) แล้ว implement `safeStorage`-shaped shim จริงด้วย AES-256-GCM แทน stub — override ได้ผ่าน `BRUNO_SERVER_MASTER_KEY` (hex) สำหรับ deployment ที่ inject key ผ่าน secrets manager แทนไฟล์ local | `security/master-key.js`, `src/index.js` |
+| master key เก็บอยู่ไฟล์เดียวกับ ciphertext ที่มันปกป้อง (`store/cookies.js` เดิม) — ใครอ่านไฟล์เดียวได้ก็ได้ทั้งคู่ | แยก `encryptedPasskey` ไปเก็บ `electron-store` คนละไฟล์ (`cookies-master-key`) จากไฟล์ ciphertext (`cookies`), มี one-time migration ย้าย key เก่าไปไฟล์ใหม่แล้วลบออกจากไฟล์เดิมเพื่อไม่ให้ cookie ที่เข้ารหัสไว้แล้วถอดรหัสไม่ได้ | `bruno-electron/src/store/cookies.js` |
+| Base64 ถูกใช้เป็น encryption fallback แทนการเข้ารหัสจริง | สำรวจกว้างแล้วไม่พบว่ามีที่ไหนใช้ Base64 แทนการเข้ารหัส (มีแต่ Base64 legitimate สำหรับ HTTP Basic-Auth header/PKCE) — ตรวจแล้วไม่ใช่ gap | — |
+
 ## 5. Accepted risk / gap ที่รู้อยู่แล้วและยังไม่ปิด
 
 รายการนี้คือสิ่งที่ตั้งใจ "ยังไม่ทำ" ในตอนนี้ พร้อมเหตุผล ไม่ใช่สิ่งที่ถูกมองข้าม — ใครก็ตามที่จะ
@@ -193,6 +208,19 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
    อยู่แค่ในเครื่องเดียวกันโดยธรรมชาติ — ผู้ใช้ที่ตั้ง `state` เองควรเลือกค่าที่คาดเดายากพอ ยังไม่มี
    validation บังคับความยาว/entropy ขั้นต่ำของ custom state ใน increment นี้ — **inherited risk ที่รับรู้
    แล้ว ไม่ใช่ของใหม่ที่สร้างขึ้นจากงานนี้**
+8. **P1.4 ยังไม่มี external secret provider interface, key rotation, lock/unlock, หรือ backup policy**
+   — increment ที่แก้ไปแล้ว (boundary 5 ข้างบน) แก้เฉพาะ bug ด้าน crypto ที่มีอยู่จริง (zero-IV,
+   master key เก็บข้าง ciphertext, Bridge ใช้ shared machine-wide key) ตัดสินใจร่วมกับผู้ใช้แล้วว่า
+   **ทำแค่นั้นในรอบนี้** ส่วนที่เหลือใน P1.4 checklist เดิม (remote/server mode รองรับ external
+   secret provider ผ่าน interface, rotation, lock/unlock, backup policy) ยังเป็น greenfield ทั้งหมด
+   — **ตัดสินใจแล้ว ไม่ใช่ของที่ลืมทำ** เก็บไว้เป็น follow-up ที่ต้องออกแบบ interface/UX เพิ่มเติมก่อน
+   ลงมือ (เช่น "lock" หมายถึงอะไรสำหรับ headless server process ที่ไม่มีใครมานั่งปลดล็อกเอง)
+9. **master key ของ Bridge ยังพึ่งพา filesystem permission ของ OS ล้วนๆ ไม่มี hardware-backed
+   protection** — ต่างจาก desktop ที่ `safeStorage` อาจใช้ OS keychain/TPM แล้วแต่แพลตฟอร์ม
+   `MASTER_KEY_PATH` (`.keys/bridge-master.key`, `0600`) ป้องกันได้แค่ระดับ "user อื่นบนเครื่องเดียวกัน
+   อ่านไม่ได้" ถ้า attacker มี root หรือ physical access ถึงเครื่องที่รัน Bridge ก็อ่าน key ไฟล์ได้ตรงๆ —
+   ยอมรับความเสี่ยงนี้ไว้ก่อนเพราะเป็น baseline ขั้นต่ำที่ดีกว่า shared-machineId-key เดิมมาก ส่วน HSM/KMS
+   integration เป็นส่วนหนึ่งของ external secret provider interface ที่ยังไม่ทำ (ดูข้อ 8)
 
 ## 6. คำแนะนำการ deploy (ไม่ใช่ default behavior — เป็น operator responsibility)
 
@@ -202,3 +230,9 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
   ที่สุดเท่าที่ยังใช้งานได้จริง, วาง TLS-terminating reverse proxy ไว้ข้างหน้าเสมอ
 - คง `BRUNO_SERVER_ENABLE_PRIVILEGED_CHANNELS=false` (ค่าดีฟอลต์) ไว้ เว้นแต่ผู้ใช้ที่เข้าถึง
   Bridge ทุกคนควรมีสิทธิ์รัน shell command บนเครื่องนั้นจริงๆ
+- ถ้า deploy ผ่าน container/orchestrator ที่ filesystem เป็น ephemeral (rebuild image ทุกครั้งที่
+  deploy) ตั้ง `BRUNO_SERVER_MASTER_KEY` เป็น secret ที่ inject จาก secrets manager ของ platform เอง
+  (แทนที่จะให้ `security/master-key.js` generate ไฟล์ใหม่ทุกครั้งที่ container รีสตาร์ท ซึ่งจะทำให้
+  secret ที่เข้ารหัสไว้ก่อนหน้าถอดรหัสไม่ได้อีก) — generate ค่าแบบสุ่มด้วย
+  `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` แล้วเก็บใน secrets
+  manager เดียวกับที่เก็บ credential อื่นของ deployment นี้

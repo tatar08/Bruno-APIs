@@ -33,6 +33,7 @@ const { createAdminRouter } = require('./routes/admin');
 const { createOauth2CallbackRouter } = require('./routes/oauth2');
 const { isOriginAllowed } = require('./security/origin-policy');
 const { isAuthRequired, requireAuth, bootstrapToken } = require('./security/auth');
+const { getOrCreateMasterKey, createSafeStorageShim } = require('./security/master-key');
 const { validateStartupConfig } = require('./config-validation');
 const { getBuildInfo } = require('./health');
 
@@ -62,6 +63,19 @@ const JSON_BODY_LIMIT = process.env.BRUNO_SERVER_JSON_LIMIT || '25mb';
 // window.webContents.send() delivery path both apply either way.
 const OAUTH2_CALLBACK_URL =
   process.env.BRUNO_SERVER_OAUTH2_CALLBACK_URL || `http://${HOST}:${PORT}/api/oauth2/callback`;
+
+// Same directory bruno-electron's store/*.js files (ai-keys.json, oauth2.json,
+// cookies.json, ...) resolve via app.getPath('userData') below.
+const USER_DATA_DIR = path.join(require('os').homedir(), '.config', 'bruno');
+
+// A real, persistent, per-deployment encryption key for the Bridge
+// (Improvement.md P1.4). Without this, bruno-electron's encryption.js falls
+// through to a key derived from machineIdSync() — one shared, unmanaged key
+// for every session on this server process. Kept in its own subdirectory
+// (not beside the ciphertext files above) with restrictive file permissions.
+const MASTER_KEY_PATH = process.env.BRUNO_SERVER_MASTER_KEY_PATH || path.join(USER_DATA_DIR, '.keys', 'bridge-master.key');
+const masterKey = getOrCreateMasterKey(MASTER_KEY_PATH);
+const safeStorageShim = createSafeStorageShim(masterKey);
 
 // --- Initialize core components ---
 
@@ -124,7 +138,7 @@ const electronShim = {
     getPath: (name) => {
       const os = require('os');
       const paths = {
-        userData: path.join(os.homedir(), '.config', 'bruno'),
+        userData: USER_DATA_DIR,
         home: os.homedir(),
         temp: os.tmpdir(),
         desktop: path.join(os.homedir(), 'Desktop'),
@@ -187,11 +201,9 @@ const electronShim = {
     register: () => {},
     unregisterAll: () => {}
   },
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (value) => Buffer.from(value),
-    decryptString: (value) => Buffer.from(value)
-  },
+  // Backed by a real per-deployment master key (security/master-key.js),
+  // not a stub — see MASTER_KEY_PATH above (Improvement.md P1.4).
+  safeStorage: safeStorageShim,
   webUtils: {
     getPathForFile: (file) => file.path || file.name || ''
   },

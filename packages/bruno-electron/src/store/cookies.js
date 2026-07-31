@@ -17,8 +17,16 @@ class CookiesStore {
       name: 'cookies',
       clearInvalidConfig: true,
       defaults: {
-        encryptedPasskey: null,
         cookies: {}
+      }
+    });
+    // The encrypted master passkey must not live in the same file as the
+    // ciphertext it protects (Improvement.md P1.4), so it gets its own store.
+    this.keyStore = new Store({
+      name: 'cookies-master-key',
+      clearInvalidConfig: true,
+      defaults: {
+        encryptedPasskey: null
       }
     });
   }
@@ -30,7 +38,18 @@ class CookiesStore {
 
   initializeEncryption() {
     try {
-      let encryptedPasskey = this.store.get('encryptedPasskey');
+      // One-time migration: earlier versions stored the encrypted passkey
+      // alongside the cookie ciphertext in the same store file. Move it to
+      // the dedicated key store so existing cookies stay decryptable.
+      const legacyEncryptedPasskey = this.store.get('encryptedPasskey');
+      if (legacyEncryptedPasskey !== undefined) {
+        if (legacyEncryptedPasskey && !this.keyStore.get('encryptedPasskey')) {
+          this.keyStore.set('encryptedPasskey', legacyEncryptedPasskey);
+        }
+        this.store.delete('encryptedPasskey');
+      }
+
+      let encryptedPasskey = this.keyStore.get('encryptedPasskey');
       if (!encryptedPasskey) {
         // Generate cryptographically secure random passkey
         const passkey = this.#generatePasskey();
@@ -40,7 +59,7 @@ class CookiesStore {
           this.#passkey = null;
           return;
         }
-        this.store.set('encryptedPasskey', encryptedPasskey);
+        this.keyStore.set('encryptedPasskey', encryptedPasskey);
       }
       this.#passkey = decryptString(encryptedPasskey);
       if (!this.#passkey) {

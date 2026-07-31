@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { encryptString, decryptString, encryptStringSafe, decryptStringSafe } = require('../../src/utils/encryption');
 
 // We can only unit test aes 256 fallback as safeStorage is only available
@@ -10,6 +11,58 @@ describe('Encryption and Decryption Tests', () => {
     const decrypted = decryptString(encrypted);
 
     expect(decrypted).toBe(plaintext);
+  });
+
+  it('should write new encryptions using AES-256-GCM (algo 02), not the legacy zero-IV format', () => {
+    const encrypted = encryptString('bruno is awesome');
+    expect(encrypted.startsWith('$02:')).toBe(true);
+  });
+
+  it('should use a random IV, so encrypting the same plaintext twice yields different ciphertext (Improvement.md P1.4 — no more zero-IV equality leakage)', () => {
+    const a = encryptString('same-value');
+    const b = encryptString('same-value');
+
+    expect(a).not.toBe(b);
+    expect(decryptString(a)).toBe('same-value');
+    expect(decryptString(b)).toBe('same-value');
+  });
+
+  it('should round-trip through encryptString/decryptString when a passkey is supplied (cookies store use case)', () => {
+    const passkey = 'a-cookie-store-passkey';
+    const encrypted = encryptString('cookie-value', passkey);
+
+    expect(encrypted.startsWith('$02:')).toBe(true);
+    expect(decryptString(encrypted, passkey)).toBe('cookie-value');
+  });
+
+  it('should fail to decrypt AES-256-GCM ciphertext with the wrong passkey (authenticated encryption catches it)', () => {
+    const encrypted = encryptString('cookie-value', 'correct-passkey');
+    expect(() => decryptString(encrypted, 'wrong-passkey')).toThrow();
+  });
+
+  it('should still decrypt legacy zero-IV AES-256-CBC ciphertext for backward compatibility (algo 01, decrypt-only)', () => {
+    const passkey = 'test-passkey-for-legacy-format';
+    const plaintext = 'legacy secret value';
+
+    // Replicates the old, no-longer-written fixed zero-IV CBC scheme that
+    // decryptString must still be able to read so pre-existing ciphertext
+    // isn't orphaned by the switch to AES-256-GCM.
+    const key = crypto.createHash('sha256').update(passkey).digest();
+    const iv = Buffer.alloc(16, 0);
+    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+    let encryptedHex = cipher.update(plaintext, 'utf8', 'hex');
+    encryptedHex += cipher.final('hex');
+    const legacyCiphertext = `$01:${encryptedHex}`;
+
+    expect(decryptString(legacyCiphertext, passkey)).toBe(plaintext);
+  });
+
+  it('should handle malformed AES-256-GCM ciphertext gracefully in decryptStringSafe', () => {
+    const malformed = '$02:00112233445566778899aabbccddeeff';
+    const result = decryptStringSafe(malformed);
+
+    expect(result.success).toBe(false);
+    expect(result.value).toBe('');
   });
 
   it('should handle empty strings in encryptString', () => {

@@ -4,7 +4,8 @@ const { safeStorage } = require('electron');
 
 // Constants for algorithm identification
 const ELECTRONSAFESTORAGE_ALGO = '00';
-const AES256_ALGO = '01';
+const AES256_ALGO = '01'; // legacy fixed zero-IV CBC — decrypt-only, kept for reading pre-existing ciphertext
+const AES256GCM_ALGO = '02'; // random IV + auth tag; everything new is written in this format
 
 function deriveKeyAndIv(password, keyLength, ivLength) {
   const key = Buffer.alloc(keyLength);
@@ -29,17 +30,40 @@ function deriveKeyAndIv(password, keyLength, ivLength) {
   return { key, iv };
 }
 
-function aes256Encrypt(data, passkey = null) {
+function aes256GcmEncrypt(data, passkey = null) {
   const rawKey = passkey || machineIdSync();
-  const iv = Buffer.alloc(16, 0); // Default IV for new encryption
   const key = crypto.createHash('sha256').update(rawKey).digest(); // Derive a 32-byte key
-  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  const iv = crypto.randomBytes(12); // Random per-encryption IV — never reused across calls
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   let encrypted = cipher.update(data, 'utf8', 'hex');
   encrypted += cipher.final('hex');
+  const authTag = cipher.getAuthTag();
 
-  return encrypted;
+  // iv and authTag are fixed-length (12 / 16 bytes), so a plain
+  // concatenation is unambiguous to split back apart on decrypt.
+  return iv.toString('hex') + authTag.toString('hex') + encrypted;
 }
 
+function aes256GcmDecrypt(data, passkey = null) {
+  const rawKey = passkey || machineIdSync();
+  const key = crypto.createHash('sha256').update(rawKey).digest();
+
+  const iv = Buffer.from(data.slice(0, 24), 'hex');
+  const authTag = Buffer.from(data.slice(24, 56), 'hex');
+  const ciphertext = data.slice(56);
+
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  let decrypted = decipher.update(ciphertext, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+
+// Legacy fixed zero-IV AES-256-CBC. Kept decrypt-only so ciphertext written
+// by older Bruno versions keeps working; nothing encrypts into this format
+// anymore (aes256GcmEncrypt above replaced it — zero IV meant identical
+// plaintexts always produced identical ciphertext, leaking equality
+// patterns to anyone with read access to the store file).
 function aes256Decrypt(data, passkey = null) {
   const rawKey = passkey || machineIdSync();
 
@@ -109,8 +133,8 @@ function encryptString(str, passkey = null) {
       return '';
     }
     try {
-      const encryptedString = aes256Encrypt(str, passkey);
-      return `$${AES256_ALGO}:${encryptedString}`;
+      const encryptedString = aes256GcmEncrypt(str, passkey);
+      return `$${AES256GCM_ALGO}:${encryptedString}`;
     } catch (err) {
       // Any error indicates the passkey is unusable; return empty string
       return '';
@@ -122,8 +146,8 @@ function encryptString(str, passkey = null) {
     return `$${ELECTRONSAFESTORAGE_ALGO}:${encryptedString}`;
   }
 
-  const encryptedString = aes256Encrypt(str);
-  return `$${AES256_ALGO}:${encryptedString}`;
+  const encryptedString = aes256GcmEncrypt(str);
+  return `$${AES256GCM_ALGO}:${encryptedString}`;
 }
 
 function decryptString(str, passkey = null) {
@@ -145,7 +169,7 @@ function decryptString(str, passkey = null) {
   const algo = str.substring(1, colonIndex);
   const encryptedString = str.substring(colonIndex + 1);
 
-  if ([ELECTRONSAFESTORAGE_ALGO, AES256_ALGO].indexOf(algo) === -1) {
+  if ([ELECTRONSAFESTORAGE_ALGO, AES256_ALGO, AES256GCM_ALGO].indexOf(algo) === -1) {
     throw new Error('Decrypt failed: Invalid algo');
   }
 
@@ -157,8 +181,13 @@ function decryptString(str, passkey = null) {
     }
   }
 
+  // Legacy zero-IV format, decrypt-only — see aes256Decrypt's comment above.
   if (algo === AES256_ALGO) {
     return aes256Decrypt(encryptedString, passkey || null);
+  }
+
+  if (algo === AES256GCM_ALGO) {
+    return aes256GcmDecrypt(encryptedString, passkey || null);
   }
   throw new Error('Decrypt failed: Invalid algo');
 }
