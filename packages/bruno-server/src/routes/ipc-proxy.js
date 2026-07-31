@@ -55,6 +55,11 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   router.post('/:channel', async (req, res) => {
     const { channel } = req.params;
     const { args = [], fireAndForget = false } = req.body;
+    // Improvement.md P1.2: BrowserTransport generates one of these per HTTP
+    // call so a hung/timed-out request can be correlated between the
+    // client's console and this server's logs. Purely informational --
+    // absent for any client that doesn't send it (e.g. direct API callers).
+    const requestId = req.headers['x-request-id'] || null;
 
     if (isPrivilegedChannel(channel) && !PRIVILEGED_CHANNELS_ENABLED) {
       return res.status(403).json({
@@ -249,16 +254,17 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
       return res.json({ data: responseData !== undefined ? responseData : null });
     } catch (err) {
       if (err instanceof IpcTimeoutError) {
-        console.error(`[IPC Proxy] Timeout in handler "${channel}"`);
-        return res.status(504).json({ code: ERROR_CODES.HANDLER_TIMEOUT, error: err.message });
+        console.error(`[IPC Proxy] Timeout in handler "${channel}"${requestId ? ` (requestId=${requestId})` : ''}`);
+        return res.status(504).json({ code: ERROR_CODES.HANDLER_TIMEOUT, error: err.message, requestId });
       }
 
-      console.error(`[IPC Proxy] Error in handler "${channel}":`, err.message);
+      console.error(`[IPC Proxy] Error in handler "${channel}"${requestId ? ` (requestId=${requestId})` : ''}:`, err.message);
 
       return res.status(500).json({
         code: ERROR_CODES.HANDLER_ERROR,
         error: err.message || 'Internal server error',
-        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+        stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+        requestId
       });
     } finally {
       releaseConcurrencySlot(clientKey);

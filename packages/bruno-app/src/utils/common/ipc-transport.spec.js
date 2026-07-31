@@ -9,7 +9,9 @@ import {
   RECONNECT_BASE_DELAY_MS,
   RECONNECT_MAX_DELAY_MS,
   HEARTBEAT_INTERVAL_MS,
-  HEARTBEAT_MAX_MISSED
+  HEARTBEAT_MAX_MISSED,
+  INVOKE_TIMEOUT_MS,
+  IpcTimeoutError
 } from './ipc-transport';
 
 class FakeWebSocket {
@@ -212,6 +214,70 @@ describe('BrowserTransport (Improvement.md P1.2)', () => {
       // net effect: still subscribed -> exactly one pending action for this channel
       expect(transport._wsQueue.size).toBe(1);
       expect(transport._wsQueue.get('main:app-loaded')).toBe('subscribe');
+    });
+  });
+
+  describe('invoke() request id, timeout, and cancellation (Improvement.md P1.2)', () => {
+    const findIpcCall = () => global.fetch.mock.calls.find(([url]) => url.includes('/api/ipc/'));
+
+    beforeEach(() => {
+      global.fetch = jest.fn();
+    });
+
+    afterEach(() => {
+      delete global.fetch;
+    });
+
+    it('attaches a unique X-Request-Id header to every IPC call', async () => {
+      global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: 'ok' }) });
+
+      await transport.invoke('renderer:some-channel');
+      const [, firstOptions] = findIpcCall();
+      const firstId = firstOptions.headers['X-Request-Id'];
+      expect(typeof firstId).toBe('string');
+      expect(firstId.length).toBeGreaterThan(0);
+
+      await transport.invoke('renderer:some-channel');
+      const ipcCalls = global.fetch.mock.calls.filter(([url]) => url.includes('/api/ipc/'));
+      const secondId = ipcCalls[ipcCalls.length - 1][1].headers['X-Request-Id'];
+      expect(secondId).not.toBe(firstId);
+    });
+
+    it('aborts the request and rejects with IpcTimeoutError once INVOKE_TIMEOUT_MS elapses without a response', async () => {
+      global.fetch.mockImplementation((url, options) => {
+        if (!url.includes('/api/ipc/')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        return new Promise((resolve, reject) => {
+          options.signal.addEventListener('abort', () => {
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        });
+      });
+
+      const invokePromise = transport.invoke('renderer:hangs-forever');
+      const rejection = invokePromise.catch((err) => err);
+
+      await jest.advanceTimersByTimeAsync(INVOKE_TIMEOUT_MS);
+
+      const err = await rejection;
+      expect(err).toBeInstanceOf(IpcTimeoutError);
+      expect(err.channel).toBe('renderer:hangs-forever');
+      expect(err.requestId).toEqual(expect.any(String));
+    });
+
+    it('surfaces the server-echoed requestId on the thrown error for a failed call', async () => {
+      global.fetch.mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: 'handler blew up', requestId: 'server-req-123' })
+      });
+
+      await expect(transport.invoke('renderer:some-channel')).rejects.toMatchObject({
+        requestId: 'server-req-123'
+      });
     });
   });
 });

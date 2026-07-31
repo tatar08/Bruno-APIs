@@ -114,6 +114,36 @@ export const RECONNECT_MAX_DELAY_MS = 30000;
 export const HEARTBEAT_INTERVAL_MS = 15000;
 export const HEARTBEAT_MAX_MISSED = 2;
 
+// Client-side safety net for invoke()/send() HTTP calls (Improvement.md P1.2).
+// Deliberately set above the server's own execution timeout (ipc-limits.js,
+// default 30000ms via BRUNO_SERVER_IPC_TIMEOUT_MS) so a normal slow handler
+// gets a chance to finish and return its own clear 504 first; this only
+// fires for requests that never get a response at all — a dropped
+// connection, a proxy black hole, a browser tab suspended mid-request, etc.
+export const INVOKE_TIMEOUT_MS = 45000;
+
+function generateRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Thrown when an invoke()/send() HTTP call is aborted for exceeding
+ * INVOKE_TIMEOUT_MS. Carries the same requestId sent in the X-Request-Id
+ * header, so a hung request can be correlated with bruno-server's console
+ * output (see ipc-proxy.js, which logs and echoes back the same id).
+ */
+export class IpcTimeoutError extends Error {
+  constructor(channel, requestId, timeoutMs) {
+    super(`Request to channel "${channel}" timed out after ${timeoutMs}ms (requestId=${requestId})`);
+    this.name = 'IpcTimeoutError';
+    this.channel = channel;
+    this.requestId = requestId;
+  }
+}
+
 /**
  * Electron Transport — delegates directly to window.ipcRenderer
  * (the existing preload.js bridge)
@@ -467,6 +497,9 @@ class BrowserTransport {
         if (result.stack) {
           error.stack = result.stack;
         }
+        if (result.requestId) {
+          error.requestId = result.requestId;
+        }
         throw error;
       }
 
@@ -480,20 +513,36 @@ class BrowserTransport {
   }
 
   /**
-   * Shared fetch call for invoke(): attaches the CSRF header (a no-op when
-   * the bridge doesn't require auth, since _csrfToken stays null) and
-   * credentials so the HttpOnly session cookie round-trips.
+   * Shared fetch call for invoke()/send() (Improvement.md P1.2): attaches
+   * the CSRF header (a no-op when the bridge doesn't require auth, since
+   * _csrfToken stays null) and credentials so the HttpOnly session cookie
+   * round-trips, a per-call X-Request-Id for correlating a hung request with
+   * bruno-server's console (see ipc-proxy.js), and an AbortController tied
+   * to INVOKE_TIMEOUT_MS so a request that never gets a response doesn't
+   * hang forever.
    */
   _fetchIpc(channel, args, extra = {}) {
-    const headers = { 'Content-Type': 'application/json' };
+    const requestId = generateRequestId();
+    const headers = { 'Content-Type': 'application/json', 'X-Request-Id': requestId };
     if (_csrfToken) headers['X-CSRF-Token'] = _csrfToken;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), INVOKE_TIMEOUT_MS);
 
     return fetch(`${BRIDGE_SERVER_URL}/api/ipc/${encodeURIComponent(channel)}`, {
       method: 'POST',
       credentials: 'include',
       headers,
-      body: JSON.stringify({ args, ...extra })
-    });
+      body: JSON.stringify({ args, ...extra }),
+      signal: controller.signal
+    })
+      .catch((err) => {
+        if (err.name === 'AbortError') {
+          throw new IpcTimeoutError(channel, requestId, INVOKE_TIMEOUT_MS);
+        }
+        throw err;
+      })
+      .finally(() => clearTimeout(timeoutId));
   }
 
   /**
