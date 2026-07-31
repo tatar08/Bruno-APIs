@@ -236,3 +236,10 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
   secret ที่เข้ารหัสไว้ก่อนหน้าถอดรหัสไม่ได้อีก) — generate ค่าแบบสุ่มด้วย
   `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` แล้วเก็บใน secrets
   manager เดียวกับที่เก็บ credential อื่นของ deployment นี้
+- ถ้า mount Bridge ไว้หลัง reverse proxy ที่ path prefix (ไม่ใช่ origin root) ให้ตั้ง
+  `BRUNO_SERVER_BASE_PATH` ให้ตรงกับ prefix นั้น (เช่น `/bridge`) — ครอบคลุมทั้ง `/api/*` route,
+  WebSocket (`/ws/events`), static asset ของ frontend ที่ Bridge serve เอง (ถ้าตั้ง
+  `BRUNO_SERVER_STATIC_DIR`/มี `bruno-app` build อยู่), และ `OAUTH2_CALLBACK_URL` ที่คำนวณอัตโนมัติ —
+  `/health/live`/`/health/ready` ตั้งใจไม่ผูกกับ prefix นี้เพราะ orchestrator (k8s liveness/readiness
+  probe ฯลฯ) โดยทั่วไป probe container ตรงๆ ข้าม reverse proxy อยู่แล้ว ไม่ได้ผ่าน path prefix
+  เดียวกับ traffic ของผู้ใช้จริง

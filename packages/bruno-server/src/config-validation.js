@@ -25,6 +25,12 @@ const POSITIVE_INTEGER_ENV_VARS = [
 // JSON body limit: a plain byte count, or a number followed by a unit.
 const BYTE_SIZE_RE = /^\d+(\.\d+)?\s*(b|kb|mb|gb|tb)?$/i;
 
+// Reverse proxy base path (Improvement.md P1.3): one or more `/segment`
+// path components, no trailing slash, no empty segments — matches what
+// gets safely concatenated in front of every route/static-asset/WS path in
+// index.js without producing a double slash or an unanchored path.
+const BASE_PATH_RE = /^\/[a-zA-Z0-9_-]+(\/[a-zA-Z0-9_-]+)*$/;
+
 const isPositiveInteger = (value) => Number.isFinite(value) && Number.isInteger(value) && value > 0;
 
 /**
@@ -52,6 +58,16 @@ const validateStartupConfig = (env = process.env) => {
   if (env.BRUNO_SERVER_JSON_LIMIT !== undefined && !BYTE_SIZE_RE.test(env.BRUNO_SERVER_JSON_LIMIT.trim())) {
     errors.push(
       `BRUNO_SERVER_JSON_LIMIT="${env.BRUNO_SERVER_JSON_LIMIT}" must be a byte size like "25mb" or a plain number of bytes`
+    );
+  }
+
+  if (
+    env.BRUNO_SERVER_BASE_PATH !== undefined &&
+    env.BRUNO_SERVER_BASE_PATH !== '' &&
+    !BASE_PATH_RE.test(env.BRUNO_SERVER_BASE_PATH)
+  ) {
+    errors.push(
+      `BRUNO_SERVER_BASE_PATH="${env.BRUNO_SERVER_BASE_PATH}" must be empty or a path like "/bridge" (no trailing slash, alphanumeric/hyphen/underscore segments only)`
     );
   }
 

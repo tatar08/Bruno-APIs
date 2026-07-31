@@ -11,9 +11,20 @@
  *   const unsub = transport.on('event-name', handler);
  */
 
-const BRIDGE_SERVER_URL = typeof window !== 'undefined'
-  ? `${window.location.protocol}//${window.location.hostname}:${window.__BRUNO_SERVER_PORT__ || 4000}`
-  : 'http://localhost:4000';
+// Reverse proxy base path (Improvement.md P1.3) — set only when the Bridge
+// serves this same build of bruno-app itself, injected into index.html as
+// `window.__BRUNO_RUNTIME_CONFIG__` (see bruno-server/src/index.js and
+// static-frontend.js). Absent when the frontend is hosted separately from
+// the Bridge (dev server, CDN, etc.), in which case there is no base path
+// to know about and every request goes to the origin root, same as before
+// this existed.
+const RUNTIME_CONFIG = (typeof window !== 'undefined' && window.__BRUNO_RUNTIME_CONFIG__) || null;
+
+const BRIDGE_SERVER_URL = RUNTIME_CONFIG
+  ? `${window.location.protocol}//${window.location.host}${RUNTIME_CONFIG.basePath || ''}`
+  : typeof window !== 'undefined'
+    ? `${window.location.protocol}//${window.location.hostname}:${window.__BRUNO_SERVER_PORT__ || 4000}`
+    : 'http://localhost:4000';
 
 const WS_URL = BRIDGE_SERVER_URL.replace(/^http/, 'ws');
 

@@ -131,6 +131,26 @@ describe('EventBridge', () => {
     });
   });
 
+  describe('attach() base path (Improvement.md P1.3)', () => {
+    it('mounts at /ws/events by default', () => {
+      const server = new http.Server();
+      const bridge = new EventBridge();
+      bridge.attach(server);
+
+      expect(bridge._wss.options.path).toBe('/ws/events');
+      bridge._wss.close();
+    });
+
+    it('prefixes the WS path with a given base path', () => {
+      const server = new http.Server();
+      const bridge = new EventBridge();
+      bridge.attach(server, '/bridge');
+
+      expect(bridge._wss.options.path).toBe('/bridge/ws/events');
+      bridge._wss.close();
+    });
+  });
+
   describe('connection handling', () => {
     let bridge;
     let server;

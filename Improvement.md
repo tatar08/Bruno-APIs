@@ -238,11 +238,11 @@ API ควรใช้ opaque file handles แทนส่ง absolute path ก�
 
 ไม่ควร retry destructive action อัตโนมัติหากไม่มี idempotency guarantee
 
-### P1.3 Production Browser Packaging 🟡 เสร็จบางส่วน
+### P1.3 Production Browser Packaging 🟡 เสร็จบางส่วน (static serving + runtime config + reverse proxy base path เสร็จแล้ว)
 
-- ยังไม่ทำ — ให้ Bridge serve production static assets ชุดเดียวกับ API (ต้องแก้ rsbuild config + runtime config mechanism ก่อน)
-- ยังไม่ทำ — runtime config endpoint แทน compile-time/hardcoded port (`window.__BRUNO_SERVER_PORT__` เป็น dead code ปัจจุบัน ไม่มีจุดไหน set ค่าจริง)
-- ยังไม่ทำ — รองรับ reverse proxy base path (ต้องแก้ hardcoded `/api/...`/`/ws/events` หลายจุดใน `ipc-transport.js`)
+- ✅ Bridge serve production static assets ชุดเดียวกับ API — `bruno-server/src/index.js` auto-detect `bruno-app/dist/index.html` (override ได้ด้วย `BRUNO_SERVER_STATIC_DIR`); ถ้าไม่เจอ build ก็ทำงานเหมือนเดิมทุกอย่าง (API/WS อย่างเดียว, frontend host แยก) — ไม่ใช่ breaking change
+- ✅ runtime config endpoint แทน compile-time/hardcoded port — `GET {basePath}/api/runtime-config` คืน `{ basePath }`; ตอน serve static ด้วยตัวเอง ค่าเดียวกันถูก inject ตรงเป็น `window.__BRUNO_RUNTIME_CONFIG__` ใน `index.html` (`static-frontend.js`'s `injectRuntimeConfig`) แทนที่ `window.__BRUNO_SERVER_PORT__` เดิมที่เป็น dead code (ไม่มีจุดไหน set ค่าจริงเลยทั้ง repo)
+- ✅ รองรับ reverse proxy base path ผ่าน `BRUNO_SERVER_BASE_PATH` (validate format ใน `config-validation.js`) — prefix ทุก `/api/*` route, WS server (`event-bridge.js`'s `attach(server, basePath)`), static assets, และ SPA fallback ให้ตรงกัน; ฝั่ง frontend (`ipc-transport.js`) อ่าน basePath จาก `window.__BRUNO_RUNTIME_CONFIG__` เวลาสร้าง `BRIDGE_SERVER_URL`/`WS_URL` — ถ้าไม่มี (เช่น dev mode หรือ frontend host แยก) ก็ fallback ไปพฤติกรรมเดิมเป๊ะๆ (root path, ไม่มี prefix) `/health/live`/`/health/ready` ตั้งใจไม่ prefix เพราะ orchestrator ส่วนใหญ่ probe container ตรงๆ ข้าม reverse proxy
 - ยังไม่ทำ — HTTPS/WSS สำหรับ non-loopback mode (deployment-topology decision ที่ควรถามผู้ใช้ก่อน)
 - ยังไม่ทำ — Docker image แบบ non-root, read-only filesystem และ mount allowed roots แบบ explicit (repo นี้ยังไม่มี Dockerfile เลย)
 - ✅ `/health/live`, `/health/ready`, build info และ dependency readiness

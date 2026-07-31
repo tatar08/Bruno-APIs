@@ -31,12 +31,16 @@ class EventBridge {
   }
 
   /**
-   * Attach the WebSocket server to an HTTP server
+   * Attach the WebSocket server to an HTTP server.
+   *
+   * @param {string} basePath reverse proxy mount prefix (Improvement.md
+   *   P1.3), e.g. '/bridge'. Empty string mounts at the origin root, same
+   *   as before this parameter existed.
    */
-  attach(server) {
+  attach(server, basePath = '') {
     this._wss = new WebSocketServer({
       server,
-      path: '/ws/events',
+      path: `${basePath}/ws/events`,
       maxPayload: MAX_PAYLOAD_BYTES,
       verifyClient: ({ origin, req }, callback) => {
         if (!isOriginAllowed(origin)) return callback(false, 403, 'Origin not allowed');

@@ -21,6 +21,7 @@ if (process.env.BRUNO_RPC_CONTRACT_DUMP === 'true') {
 
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 
@@ -36,6 +37,7 @@ const { isAuthRequired, requireAuth, bootstrapToken } = require('./security/auth
 const { getOrCreateMasterKey, createSafeStorageShim } = require('./security/master-key');
 const { validateStartupConfig } = require('./config-validation');
 const { getBuildInfo } = require('./health');
+const { injectRuntimeConfig } = require('./static-frontend');
 
 // Fail fast on invalid config rather than letting a typo'd env var silently
 // fall back to its default deep inside some other module (Improvement.md P1.3).
@@ -53,6 +55,14 @@ const PORT = process.env.BRUNO_SERVER_PORT || 4000;
 const HOST = process.env.BRUNO_SERVER_HOST || '127.0.0.1';
 const JSON_BODY_LIMIT = process.env.BRUNO_SERVER_JSON_LIMIT || '25mb';
 
+// Reverse proxy base path (Improvement.md P1.3) — when the Bridge is mounted
+// under a path prefix (e.g. https://host/bridge/...) instead of the origin
+// root, every API/health/WS route and the static frontend below need to
+// agree on the same prefix. Validated by config-validation.js at startup.
+// Liveness/readiness probes deliberately stay unprefixed (see below) since
+// orchestrators typically hit the container directly, bypassing any proxy.
+const BASE_PATH = process.env.BRUNO_SERVER_BASE_PATH || '';
+
 // Fixed OAuth2 loopback callback the Bridge forces as the redirect_uri for
 // every OAuth2 request it proxies (Improvement.md P1.5). Overridable for
 // deployments that sit behind a reverse proxy/different public origin than
@@ -62,7 +72,7 @@ const JSON_BODY_LIMIT = process.env.BRUNO_SERVER_JSON_LIMIT || '25mb';
 // whether auth is enabled), since redirect-URI forcing and the
 // window.webContents.send() delivery path both apply either way.
 const OAUTH2_CALLBACK_URL =
-  process.env.BRUNO_SERVER_OAUTH2_CALLBACK_URL || `http://${HOST}:${PORT}/api/oauth2/callback`;
+  process.env.BRUNO_SERVER_OAUTH2_CALLBACK_URL || `http://${HOST}:${PORT}${BASE_PATH}/api/oauth2/callback`;
 
 // Same directory bruno-electron's store/*.js files (ai-keys.json, oauth2.json,
 // cookies.json, ...) resolve via app.getPath('userData') below.
@@ -84,7 +94,7 @@ const server = http.createServer(app);
 
 // Event bridge for WebSocket push events
 const eventBridge = new EventBridge();
-eventBridge.attach(server);
+eventBridge.attach(server, BASE_PATH);
 
 // Window shim that routes webContents.send() to the event bridge
 const windowShim = new WindowShim(eventBridge);
@@ -453,21 +463,30 @@ const registerHandlers = () => {
 
 // --- Routes ---
 
-app.use('/api/auth', createAuthRouter(handlerRegistry, windowShim, createFakeEvent, getCollectionWatcher));
-app.use('/api/ipc', requireAuth, createIpcProxyRouter(handlerRegistry, windowShim, createFakeEvent));
-app.use('/api/admin', requireAuth, createAdminRouter());
+app.use(`${BASE_PATH}/api/auth`, createAuthRouter(handlerRegistry, windowShim, createFakeEvent, getCollectionWatcher));
+app.use(`${BASE_PATH}/api/ipc`, requireAuth, createIpcProxyRouter(handlerRegistry, windowShim, createFakeEvent));
+app.use(`${BASE_PATH}/api/admin`, requireAuth, createAdminRouter());
 // Not behind requireAuth — see routes/oauth2.js's header comment for why an
 // IdP redirect can never carry a Bridge session cookie/CSRF token.
-app.use('/api/oauth2', createOauth2CallbackRouter());
+app.use(`${BASE_PATH}/api/oauth2`, createOauth2CallbackRouter());
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get(`${BASE_PATH}/api/health`, (req, res) => {
   res.json({
     status: 'ok',
     mode: 'bridge-server',
     channels: handlerRegistry.getChannels().length,
     wsClients: eventBridge.clientCount
   });
+});
+
+// Runtime config (Improvement.md P1.3) — lets the frontend discover its
+// reverse proxy base path at request time instead of needing it baked in at
+// build time. Same-origin deployments (the Bridge serving its own static
+// build, below) get this injected directly into index.html; anything else
+// can still fetch it explicitly.
+app.get(`${BASE_PATH}/api/runtime-config`, (req, res) => {
+  res.json({ basePath: BASE_PATH });
 });
 
 // Liveness: the process is up and handling requests. Deliberately checks
@@ -499,6 +518,48 @@ app.get('/health/ready', (req, res) => {
   });
 });
 
+// --- Static frontend (Improvement.md P1.3) ---
+//
+// Optional: only enabled when a bruno-app production build (`npm run build`
+// in packages/bruno-app) is present at BRUNO_APP_DIST_DIR. When absent, the
+// Bridge behaves exactly as it always has — API/WS only, with the frontend
+// hosted separately (e.g. a dev server, or a CDN/static host pointed at the
+// same build). Registered after every /api and /health route above so
+// those always win; only unmatched GETs fall through to the SPA.
+const BRUNO_APP_DIST_DIR = process.env.BRUNO_SERVER_STATIC_DIR || path.join(__dirname, '../../bruno-app/dist');
+const STATIC_INDEX_HTML_PATH = path.join(BRUNO_APP_DIST_DIR, 'index.html');
+const serveStaticFrontend = fs.existsSync(STATIC_INDEX_HTML_PATH);
+
+if (serveStaticFrontend) {
+  // Read + inject once at startup rather than per-request — BASE_PATH is
+  // fixed for the process lifetime, so there's nothing to recompute.
+  const indexHtmlWithRuntimeConfig = injectRuntimeConfig(
+    fs.readFileSync(STATIC_INDEX_HTML_PATH, 'utf8'),
+    { basePath: BASE_PATH }
+  );
+  const serveIndexHtml = (req, res) => {
+    res.set('Content-Type', 'text/html').send(indexHtmlWithRuntimeConfig);
+  };
+
+  // `index: false` stops express.static from auto-serving the on-disk
+  // index.html (without the injected runtime config) for `/`.
+  app.use(BASE_PATH, express.static(BRUNO_APP_DIST_DIR, { index: false }));
+  app.get(`${BASE_PATH}/`, serveIndexHtml);
+  app.get(`${BASE_PATH}/index.html`, serveIndexHtml);
+  // SPA fallback: any other GET under BASE_PATH that isn't a real static
+  // asset falls through to index.html so client-side routing (deep links,
+  // page refreshes) works. /api and /health are already handled above and
+  // never reach here; the explicit check is just cheap insurance.
+  app.get(`${BASE_PATH}/*`, (req, res, next) => {
+    if (req.path.startsWith(`${BASE_PATH}/api/`) || req.path.startsWith('/health/')) return next();
+    serveIndexHtml(req, res);
+  });
+
+  console.log(`\n🖥️  Serving bruno-app production build from ${BRUNO_APP_DIST_DIR}`);
+} else {
+  console.log(`\n🖥️  No bruno-app build found at ${BRUNO_APP_DIST_DIR} — API/WS only, frontend hosted separately`);
+}
+
 // --- Start Server ---
 
 console.log('\n🚀 Starting Bruno Bridge Server...\n');
@@ -527,10 +588,10 @@ if (process.env.BRUNO_RPC_CONTRACT_DUMP === 'true') {
 }
 
 server.listen(PORT, HOST, () => {
-  console.log(`\n✅ Bruno Bridge Server running on http://${HOST}:${PORT}`);
-  console.log(`   WebSocket events on ws://${HOST}:${PORT}/ws/events`);
-  console.log(`   Health check: http://${HOST}:${PORT}/api/health`);
-  console.log(`   IPC channels: http://${HOST}:${PORT}/api/ipc/channels\n`);
+  console.log(`\n✅ Bruno Bridge Server running on http://${HOST}:${PORT}${BASE_PATH}`);
+  console.log(`   WebSocket events on ws://${HOST}:${PORT}${BASE_PATH}/ws/events`);
+  console.log(`   Health check: http://${HOST}:${PORT}${BASE_PATH}/api/health`);
+  console.log(`   IPC channels: http://${HOST}:${PORT}${BASE_PATH}/api/ipc/channels\n`);
 
   if (isAuthRequired()) {
     console.log('🔐 Authentication is REQUIRED (BRUNO_SERVER_REQUIRE_AUTH=true)');

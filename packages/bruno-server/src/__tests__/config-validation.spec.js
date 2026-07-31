@@ -73,6 +73,25 @@ describe('validateStartupConfig', () => {
     });
   });
 
+  describe('BRUNO_SERVER_BASE_PATH', () => {
+    it.each(['/bridge', '/bridge/v2', '/a-b_c', '/a/b/c'])('accepts "%s"', (value) => {
+      expect(validateStartupConfig({ BRUNO_SERVER_BASE_PATH: value })).toEqual([]);
+    });
+
+    it('accepts an empty string (root mount, same as unset)', () => {
+      expect(validateStartupConfig({ BRUNO_SERVER_BASE_PATH: '' })).toEqual([]);
+    });
+
+    it('is not validated when unset', () => {
+      expect(validateStartupConfig({})).toEqual([]);
+    });
+
+    it.each(['bridge', '/bridge/', '/bridge//v2', '/bri dge', '/bridge?', '//'])('rejects "%s"', (value) => {
+      const errors = validateStartupConfig({ BRUNO_SERVER_BASE_PATH: value });
+      expect(errors).toEqual([expect.stringContaining('BRUNO_SERVER_BASE_PATH')]);
+    });
+  });
+
   it('collects multiple errors across different vars at once', () => {
     const errors = validateStartupConfig({
       BRUNO_SERVER_PORT: '999999',
