@@ -4,6 +4,7 @@ const { JobType, getPool, destroyPool } = require('../pool');
 const { FileIndex } = require('./file-index');
 const { buildTree } = require('./tree-builder');
 const { defaultClassify, uidForSeed } = require('../../utils/mount');
+const { getCurrentSessionKey } = require('@usebruno/requests');
 
 // cold start only — collection-watcher handles live changes and writes through to the cache
 
@@ -72,13 +73,21 @@ class MountManager {
 
   async mount({ win, collectionPath, collectionUid, brunoConfig, emit }) {
     collectionPath = path.resolve(collectionPath);
+    const sessionKey = getCurrentSessionKey();
 
     if (this.#mounts.has(collectionUid)) {
-      // renderer reload — pull fresh state from cache and re-emit
+      // renderer reload, or a second Browser Bridge session opening the same
+      // collection (collectionUid is a hash of the path, so this collides
+      // whenever two sessions point at the same collection on the shared
+      // server filesystem -- Improvement.md P0.4). brunoConfig is
+      // deliberately NOT refreshed from the caller here: it's only ever
+      // authoritative from a disk read (#coldLoad) or an explicit remount(),
+      // so a differently-scoped caller reloading with a stale cached copy
+      // can't clobber another session's fresher config (last-mount-wins).
       const existing = this.#mounts.get(collectionUid);
       existing.win = win;
       existing.emit = emit;
-      existing.brunoConfig = brunoConfig || existing.brunoConfig;
+      existing.sessionKeys.add(sessionKey);
       existing.state = this.#getIndex().entries(existing.collectionPath);
       await this.#emitTree(collectionUid, existing);
       return existing.tempDirectoryPath;
@@ -93,7 +102,8 @@ class MountManager {
       tempDirectoryPath,
       brunoConfig,
       win,
-      emit
+      emit,
+      sessionKeys: new Set([sessionKey])
     };
     this.#mounts.set(collectionUid, entry);
 
@@ -138,6 +148,16 @@ class MountManager {
   async unmount(collectionUid) {
     const entry = this.#mounts.get(collectionUid);
     if (!entry) return;
+
+    // Collections can legitimately be open in multiple Browser Bridge
+    // sessions at once (same collectionUid, shared server filesystem), so
+    // only tear the mount and its file watcher down once every session that
+    // opened it has released it -- one session removing a collection from
+    // its own sidebar must not yank the watcher out from under another
+    // session's still-open tab (Improvement.md P0.4).
+    entry.sessionKeys.delete(getCurrentSessionKey());
+    if (entry.sessionKeys.size > 0) return;
+
     this.#mounts.delete(collectionUid);
     const collectionWatcher = require('../../app/collection-watcher');
     try {

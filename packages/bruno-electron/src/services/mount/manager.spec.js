@@ -43,6 +43,7 @@ jest.mock('../../cache/requestUids', () => ({
 }));
 
 const { MountManager } = require('./manager');
+const { runWithSessionKey } = require('@usebruno/requests');
 const collectionWatcher = require('../../app/collection-watcher');
 
 const makeEmit = () => ({ loading: jest.fn(), tree: jest.fn(), config: jest.fn() });
@@ -112,5 +113,66 @@ describe('MountManager.remount', () => {
 
     await expect(manager.remount({ collectionUid: 'col-1' })).rejects.toThrow('removeWatcher failed');
     expect(collectionWatcher.addWatcher).not.toHaveBeenCalled();
+  });
+});
+
+describe('MountManager session isolation (Improvement.md P0.4)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('does not tear down a collection while another session still has it mounted', async () => {
+    const manager = new MountManager();
+
+    await runWithSessionKey('session-A', () =>
+      mountCollection(manager, { collectionUid: 'col-1', brunoConfig: { format: 'bru' } })
+    );
+    await runWithSessionKey('session-B', () =>
+      mountCollection(manager, { collectionUid: 'col-1', brunoConfig: { format: 'bru' } })
+    );
+    jest.clearAllMocks();
+
+    await runWithSessionKey('session-A', () => manager.unmount('col-1'));
+    expect(collectionWatcher.removeWatcher).not.toHaveBeenCalled();
+
+    await runWithSessionKey('session-B', () => manager.unmount('col-1'));
+    expect(collectionWatcher.removeWatcher).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      'col-1'
+    );
+  });
+
+  it('a session reloading a collection already mounted by another session does not clobber its brunoConfig', async () => {
+    const manager = new MountManager();
+
+    await runWithSessionKey('session-A', () =>
+      mountCollection(manager, { collectionUid: 'col-1', brunoConfig: { format: 'bru' } })
+    );
+
+    // session-B "reloads" with a different, stale brunoConfig payload
+    await runWithSessionKey('session-B', () =>
+      mountCollection(manager, { collectionUid: 'col-1', brunoConfig: { format: 'yml' } })
+    );
+    jest.clearAllMocks();
+
+    // remount (e.g. triggered from session-A's flow) must still see session-A's
+    // original config, not session-B's stale reload payload
+    await manager.remount({ collectionUid: 'col-1' });
+    const addWatcherArgs = collectionWatcher.addWatcher.mock.calls[0];
+    expect(addWatcherArgs[3]).toEqual({ format: 'bru' });
+  });
+
+  it('unmount without any session context (desktop mode) tears down immediately, unchanged from prior behavior', async () => {
+    const manager = new MountManager();
+    await mountCollection(manager, { collectionUid: 'col-1' });
+    jest.clearAllMocks();
+
+    await manager.unmount('col-1');
+    expect(collectionWatcher.removeWatcher).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      'col-1'
+    );
   });
 });

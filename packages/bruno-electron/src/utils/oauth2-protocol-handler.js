@@ -1,54 +1,105 @@
 const { getParamFromUrl } = require('./common');
+const { getCurrentSessionKey } = require('@usebruno/requests');
 
-let oauth2AuthorizationRequest = null;
+// Keyed by the OAuth2 flow's `state` param (see oauth2.js's generateState()),
+// not by Browser Bridge session, because the protocol callback URL that
+// resolves a pending request carries only `state`, never a session
+// identifier (see handleOauth2ProtocolUrl below) -- state is already
+// generated to be unique per authorization attempt. Session scoping is
+// layered on top of that: registerOauth2AuthorizationRequest only cancels an
+// existing entry that belongs to the *same* session (getCurrentSessionKey(),
+// undefined outside a Browser Bridge dispatch e.g. desktop mode), so two
+// Browser Bridge sessions running concurrent OAuth2 flows no longer cancel
+// or observe each other's in-flight request.
+const pendingRequests = new Map();
 
 const registerOauth2AuthorizationRequest = (resolve, reject, debugInfo = null, expectedState = null) => {
-  // Cancel any existing pending request
-  if (oauth2AuthorizationRequest) {
-    oauth2AuthorizationRequest.reject(new Error('Authorization cancelled: new request started'));
+  const sessionKey = getCurrentSessionKey();
+
+  // Cancel this caller's own previous pending request, if any -- preserves
+  // the original "one flow at a time per caller" behavior without touching
+  // other sessions' in-flight requests.
+  for (const [key, entry] of pendingRequests) {
+    if (entry.sessionKey === sessionKey) {
+      pendingRequests.delete(key);
+      entry.reject(new Error('Authorization cancelled: new request started'));
+    }
   }
 
-  oauth2AuthorizationRequest = {
+  pendingRequests.set(expectedState, {
     resolve,
     reject,
     debugInfo,
     expectedState,
+    sessionKey,
     timestamp: Date.now()
-  };
+  });
 };
 
 const isOauth2AuthorizationRequestInProgress = () => {
-  return oauth2AuthorizationRequest !== null;
+  const sessionKey = getCurrentSessionKey();
+  for (const entry of pendingRequests.values()) {
+    if (entry.sessionKey === sessionKey) return true;
+  }
+  return false;
 };
 
-const resolveOauth2AuthorizationRequest = (data) => {
-  if (oauth2AuthorizationRequest) {
-    oauth2AuthorizationRequest.resolve(data);
-    oauth2AuthorizationRequest = null;
+const resolveOauth2AuthorizationRequest = (data, expectedState) => {
+  const entry = pendingRequests.get(expectedState);
+  if (entry) {
+    pendingRequests.delete(expectedState);
+    entry.resolve(data);
     return true;
   }
   return false;
 };
 
-const rejectOauth2AuthorizationRequest = (error) => {
-  if (oauth2AuthorizationRequest) {
-    oauth2AuthorizationRequest.reject(error);
-    oauth2AuthorizationRequest = null;
+const rejectOauth2AuthorizationRequest = (error, expectedState) => {
+  const entry = pendingRequests.get(expectedState);
+  if (entry) {
+    pendingRequests.delete(expectedState);
+    entry.reject(error);
     return true;
   }
   return false;
 };
 
 const cancelOAuth2AuthorizationRequest = () => {
-  return rejectOauth2AuthorizationRequest(new Error('Authorization cancelled by user'));
+  const sessionKey = getCurrentSessionKey();
+  for (const [key, entry] of pendingRequests) {
+    if (entry.sessionKey === sessionKey) {
+      pendingRequests.delete(key);
+      entry.reject(new Error('Authorization cancelled by user'));
+      return true;
+    }
+  }
+  return false;
 };
 
 const handleOauth2ProtocolUrl = (url) => {
   try {
     const urlObj = new URL(url);
+    const returnedState = getParamFromUrl(urlObj, 'state');
+
+    // This callback comes from an OS-level custom-protocol registration
+    // (see deeplink.js), never from a Browser-Bridge HTTP request, so there
+    // is no session context available to disambiguate which pending request
+    // it belongs to -- `state` is the only correlator. A callback whose
+    // state exactly matches a pending entry's is unambiguous. A callback
+    // with a missing/forged state is only safe to attribute to the single
+    // pending request when there IS only one (preserves the original
+    // single-session desktop behavior of surfacing a clear error instead of
+    // silently hanging); with multiple concurrent pending requests (only
+    // possible with concurrent Browser Bridge sessions) it's ambiguous which
+    // session's flow a bad callback was meant for, so it's dropped rather
+    // than guessed at.
+    let entry = pendingRequests.get(returnedState);
+    if (!entry && pendingRequests.size === 1) {
+      entry = pendingRequests.values().next().value;
+    }
 
     // Add callback URL details to debugInfo if available
-    if (oauth2AuthorizationRequest?.debugInfo) {
+    if (entry?.debugInfo) {
       const callbackRequest = {
         request: {
           url: url,
@@ -66,7 +117,7 @@ const handleOauth2ProtocolUrl = (url) => {
         fromCache: false,
         completed: true
       };
-      oauth2AuthorizationRequest.debugInfo.data.push(callbackRequest);
+      entry.debugInfo.data.push(callbackRequest);
     }
 
     // Check for errors in query params (authorization code flow) or hash (implicit flow)
@@ -74,25 +125,27 @@ const handleOauth2ProtocolUrl = (url) => {
     const errorDescription = getParamFromUrl(urlObj, 'error_description');
 
     if (error) {
+      if (!entry) return;
       const errorData = {
         message: 'Authorization Failed!',
         error,
         errorDescription
       };
-      rejectOauth2AuthorizationRequest(new Error(JSON.stringify(errorData)));
+      rejectOauth2AuthorizationRequest(new Error(JSON.stringify(errorData)), entry.expectedState);
       return;
     }
 
     // Validate the state parameter to protect against CSRF / authorization code
     // injection. State is always issued when a flow is initiated, so a missing
-    // expected or returned state means a forged/invalid callback — fail closed.
-    const expectedState = oauth2AuthorizationRequest?.expectedState;
-    const returnedState = getParamFromUrl(urlObj, 'state');
-
-    if (!expectedState || returnedState !== expectedState) {
-      rejectOauth2AuthorizationRequest(
-        new Error('OAuth2 state mismatch: the returned state does not match the issued state.')
-      );
+    // expected or returned state -- or one that doesn't match a request we're
+    // actually waiting on -- means a forged/invalid/stale callback — fail closed.
+    if (!entry || !entry.expectedState || entry.expectedState !== returnedState) {
+      if (entry) {
+        rejectOauth2AuthorizationRequest(
+          new Error('OAuth2 state mismatch: the returned state does not match the issued state.'),
+          entry.expectedState
+        );
+      }
       return;
     }
 
@@ -111,7 +164,7 @@ const handleOauth2ProtocolUrl = (url) => {
           state: hashParams.get('state'),
           scope: hashParams.get('scope')
         };
-        resolveOauth2AuthorizationRequest(implicitTokens);
+        resolveOauth2AuthorizationRequest(implicitTokens, entry.expectedState);
         return;
       }
     }
@@ -119,15 +172,14 @@ const handleOauth2ProtocolUrl = (url) => {
     // Check for authorization code in query params (authorization code flow)
     const code = urlObj.searchParams.get('code');
     if (code) {
-      resolveOauth2AuthorizationRequest(code);
+      resolveOauth2AuthorizationRequest(code, entry.expectedState);
       return;
     }
 
     // No code or access_token found - reject with error
-    rejectOauth2AuthorizationRequest(new Error('Invalid OAuth2 callback: missing code or access_token'));
+    rejectOauth2AuthorizationRequest(new Error('Invalid OAuth2 callback: missing code or access_token'), entry.expectedState);
   } catch (err) {
     console.error('Error handling protocol URL:', err);
-    rejectOauth2AuthorizationRequest(err);
   }
 };
 

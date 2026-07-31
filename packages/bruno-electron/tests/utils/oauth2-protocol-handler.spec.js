@@ -1,3 +1,4 @@
+const { runWithSessionKey } = require('@usebruno/requests');
 const {
   registerOauth2AuthorizationRequest,
   handleOauth2ProtocolUrl,
@@ -130,6 +131,131 @@ describe('handleOauth2ProtocolUrl - state validation', () => {
       expect(reject).toHaveBeenCalledWith(
         expect.objectContaining({ message: expect.stringContaining('Authorization Failed') })
       );
+    });
+  });
+});
+
+describe('OAuth2 pending-request isolation across Browser Bridge sessions', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('registering a request in one session does not cancel another session\'s pending request', () => {
+    const resolveA = jest.fn();
+    const rejectA = jest.fn();
+    const resolveB = jest.fn();
+    const rejectB = jest.fn();
+
+    runWithSessionKey('session-A', () => {
+      registerOauth2AuthorizationRequest(resolveA, rejectA, null, 'state-A');
+    });
+    runWithSessionKey('session-B', () => {
+      registerOauth2AuthorizationRequest(resolveB, rejectB, null, 'state-B');
+    });
+
+    expect(rejectA).not.toHaveBeenCalled();
+    expect(rejectB).not.toHaveBeenCalled();
+
+    // clean up
+    handleOauth2ProtocolUrl('bruno://app/oauth2/callback?code=code-A&state=state-A');
+    handleOauth2ProtocolUrl('bruno://app/oauth2/callback?code=code-B&state=state-B');
+    expect(resolveA).toHaveBeenCalledWith('code-A');
+    expect(resolveB).toHaveBeenCalledWith('code-B');
+  });
+
+  it('a second request in the SAME session still cancels that session\'s own previous pending request', () => {
+    const resolveFirst = jest.fn();
+    const rejectFirst = jest.fn();
+    const resolveSecond = jest.fn();
+    const rejectSecond = jest.fn();
+
+    runWithSessionKey('session-A', () => {
+      registerOauth2AuthorizationRequest(resolveFirst, rejectFirst, null, 'state-first');
+      registerOauth2AuthorizationRequest(resolveSecond, rejectSecond, null, 'state-second');
+    });
+
+    expect(rejectFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('new request started') })
+    );
+    expect(rejectSecond).not.toHaveBeenCalled();
+
+    handleOauth2ProtocolUrl('bruno://app/oauth2/callback?code=code-second&state=state-second');
+    expect(resolveSecond).toHaveBeenCalledWith('code-second');
+  });
+
+  it('cancelOAuth2AuthorizationRequest only cancels the calling session\'s own pending request', () => {
+    const resolveA = jest.fn();
+    const rejectA = jest.fn();
+    const resolveB = jest.fn();
+    const rejectB = jest.fn();
+
+    runWithSessionKey('session-A', () => {
+      registerOauth2AuthorizationRequest(resolveA, rejectA, null, 'state-A');
+    });
+    runWithSessionKey('session-B', () => {
+      registerOauth2AuthorizationRequest(resolveB, rejectB, null, 'state-B');
+    });
+
+    runWithSessionKey('session-A', () => {
+      cancelOAuth2AuthorizationRequest();
+    });
+
+    expect(rejectA).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('cancelled by user') })
+    );
+    expect(rejectB).not.toHaveBeenCalled();
+
+    // clean up B
+    runWithSessionKey('session-B', () => {
+      cancelOAuth2AuthorizationRequest();
+    });
+    expect(rejectB).toHaveBeenCalled();
+  });
+
+  it('isOauth2AuthorizationRequestInProgress is scoped to the calling session', () => {
+    const resolveA = jest.fn();
+    const rejectA = jest.fn();
+
+    runWithSessionKey('session-A', () => {
+      registerOauth2AuthorizationRequest(resolveA, rejectA, null, 'state-A');
+    });
+
+    runWithSessionKey('session-A', () => {
+      expect(isOauth2AuthorizationRequestInProgress()).toBe(true);
+    });
+    runWithSessionKey('session-B', () => {
+      expect(isOauth2AuthorizationRequestInProgress()).toBe(false);
+    });
+    expect(isOauth2AuthorizationRequestInProgress()).toBe(false); // no session context at all
+
+    runWithSessionKey('session-A', () => {
+      cancelOAuth2AuthorizationRequest();
+    });
+  });
+
+  it('handleOauth2ProtocolUrl resolves the correct session\'s request when multiple are pending concurrently', () => {
+    const resolveA = jest.fn();
+    const rejectA = jest.fn();
+    const resolveB = jest.fn();
+    const rejectB = jest.fn();
+
+    runWithSessionKey('session-A', () => {
+      registerOauth2AuthorizationRequest(resolveA, rejectA, null, 'state-A');
+    });
+    runWithSessionKey('session-B', () => {
+      registerOauth2AuthorizationRequest(resolveB, rejectB, null, 'state-B');
+    });
+
+    // Only B's callback arrives; A must remain untouched and still pending.
+    handleOauth2ProtocolUrl('bruno://app/oauth2/callback?code=code-B&state=state-B');
+
+    expect(resolveB).toHaveBeenCalledWith('code-B');
+    expect(resolveA).not.toHaveBeenCalled();
+    expect(rejectA).not.toHaveBeenCalled();
+
+    runWithSessionKey('session-A', () => {
+      expect(isOauth2AuthorizationRequestInProgress()).toBe(true);
+      cancelOAuth2AuthorizationRequest();
     });
   });
 });

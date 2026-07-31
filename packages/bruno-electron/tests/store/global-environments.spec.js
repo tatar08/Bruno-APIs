@@ -1,5 +1,6 @@
 const { globalEnvironmentsStore } = require('../../src/store/global-environments');
 const { encryptStringSafe } = require('../../src/utils/encryption');
+const { runWithSessionKey } = require('@usebruno/requests');
 
 // Previously, a bug caused environment variables to be saved without a type.
 // Since that issue is now fixed, this code ensures that anyone who imported
@@ -122,5 +123,66 @@ describe('global environment variable read-time dataType parsing', () => {
     };
     globalEnvironmentsStore.store.set('environments', [env]);
     expect(readVar().value).toBe(42);
+  });
+});
+
+describe('active global environment uid — session isolation (Improvement.md P0.4)', () => {
+  beforeEach(() => {
+    globalEnvironmentsStore.store.clear();
+  });
+
+  it('falls back to the single legacy field when there is no session context (desktop mode)', () => {
+    expect(globalEnvironmentsStore.getActiveGlobalEnvironmentUid()).toBeNull();
+    globalEnvironmentsStore.setActiveGlobalEnvironmentUid('env-desktop');
+    expect(globalEnvironmentsStore.getActiveGlobalEnvironmentUid()).toBe('env-desktop');
+    expect(globalEnvironmentsStore.store.get('activeGlobalEnvironmentUid')).toBe('env-desktop');
+  });
+
+  it('scopes the active uid per Browser Bridge session and does not leak across sessions', () => {
+    runWithSessionKey('session-A', () => {
+      globalEnvironmentsStore.setActiveGlobalEnvironmentUid('env-A');
+    });
+    runWithSessionKey('session-B', () => {
+      globalEnvironmentsStore.setActiveGlobalEnvironmentUid('env-B');
+    });
+
+    runWithSessionKey('session-A', () => {
+      expect(globalEnvironmentsStore.getActiveGlobalEnvironmentUid()).toBe('env-A');
+    });
+    runWithSessionKey('session-B', () => {
+      expect(globalEnvironmentsStore.getActiveGlobalEnvironmentUid()).toBe('env-B');
+    });
+
+    // the legacy flat field (desktop path) is untouched by session-scoped writes
+    expect(globalEnvironmentsStore.store.get('activeGlobalEnvironmentUid', null)).toBeNull();
+  });
+
+  it('a new session with no prior selection sees null, not another session\'s value', () => {
+    runWithSessionKey('session-A', () => {
+      globalEnvironmentsStore.setActiveGlobalEnvironmentUid('env-A');
+    });
+
+    runWithSessionKey('session-C', () => {
+      expect(globalEnvironmentsStore.getActiveGlobalEnvironmentUid()).toBeNull();
+    });
+  });
+
+  it('deleteGlobalEnvironment only clears the calling session\'s own active selection', () => {
+    globalEnvironmentsStore.addGlobalEnvironment({ uid: 'env-A', name: 'A', variables: [] });
+
+    runWithSessionKey('session-A', () => {
+      globalEnvironmentsStore.setActiveGlobalEnvironmentUid('env-A');
+    });
+    runWithSessionKey('session-B', () => {
+      globalEnvironmentsStore.setActiveGlobalEnvironmentUid('env-A');
+    });
+
+    runWithSessionKey('session-A', () => {
+      globalEnvironmentsStore.deleteGlobalEnvironment({ environmentUid: 'env-A' });
+      expect(globalEnvironmentsStore.getActiveGlobalEnvironmentUid()).toBeNull();
+    });
+    runWithSessionKey('session-B', () => {
+      expect(globalEnvironmentsStore.getActiveGlobalEnvironmentUid()).toBe('env-A');
+    });
   });
 });

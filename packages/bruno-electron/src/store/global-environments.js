@@ -4,6 +4,7 @@ const { parseValueByDataType, valueToString } = require('@usebruno/common/utils'
 const { encryptStringSafe, decryptStringSafe } = require('../utils/encryption');
 const { environmentSchema } = require('@usebruno/schema');
 const { posixifyPath } = require('../utils/filesystem');
+const { getCurrentSessionKey } = require('@usebruno/requests');
 
 class GlobalEnvironmentsStore {
   constructor() {
@@ -87,12 +88,32 @@ class GlobalEnvironmentsStore {
     return globalEnvironments;
   }
 
+  // This is the fallback used when no workspace is active yet (e.g. before a
+  // Browser Bridge session has opened/selected one) -- see
+  // getActiveGlobalEnvironmentUidForWorkspace for the (already session-safe,
+  // since it's keyed by workspace) modern path. Without session scoping here,
+  // two concurrent Browser Bridge sessions with no active workspace would
+  // share and overwrite the same single active-environment selection
+  // (Improvement.md P0.4). In desktop/no-auth mode getCurrentSessionKey() is
+  // always undefined, so this collapses back to the original single
+  // electron-store field -- unchanged behavior for that case.
   getActiveGlobalEnvironmentUid() {
-    return this.store.get('activeGlobalEnvironmentUid', null);
+    const sessionKey = getCurrentSessionKey();
+    if (!sessionKey) {
+      return this.store.get('activeGlobalEnvironmentUid', null);
+    }
+    const mapping = this.store.get('activeGlobalEnvironmentUidBySession', {});
+    return sessionKey in mapping ? mapping[sessionKey] : null;
   }
 
   setActiveGlobalEnvironmentUid(uid) {
-    return this.store.set('activeGlobalEnvironmentUid', uid);
+    const sessionKey = getCurrentSessionKey();
+    if (!sessionKey) {
+      return this.store.set('activeGlobalEnvironmentUid', uid);
+    }
+    const mapping = this.store.get('activeGlobalEnvironmentUidBySession', {});
+    mapping[sessionKey] = uid || null;
+    this.store.set('activeGlobalEnvironmentUidBySession', mapping);
   }
 
   getActiveGlobalEnvironmentUidForWorkspace(workspacePath) {

@@ -10,7 +10,7 @@ const authorizeUserInSystemBrowser = ({ authorizeUrl, callbackUrl, grantType = '
 
     // Set timeout for the request (5 minutes)
     const timeout = setTimeout(() => {
-      rejectOauth2AuthorizationRequest(new Error('Authorization timeout'));
+      rejectOauth2AuthorizationRequest(new Error('Authorization timeout'), expectedState);
     }, 5 * 60 * 1000);
 
     // Wrap resolve/reject to clear timeout and add debugInfo
@@ -55,7 +55,7 @@ const authorizeUserInSystemBrowser = ({ authorizeUrl, callbackUrl, grantType = '
 
     // Open system browser
     shell.openExternal(modifiedAuthorizeUrl).catch((error) => {
-      rejectOauth2AuthorizationRequest(error);
+      rejectOauth2AuthorizationRequest(error, expectedState);
     });
   });
 };

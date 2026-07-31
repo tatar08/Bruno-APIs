@@ -156,19 +156,23 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
    ข้างหลัง load balancer ตัวจำกัดนี้จะนับแยกกันต่อ instance ไม่ได้รวมกัน (ตอนนี้ยังไม่มี pattern
    deploy แบบ multi-instance ในเอกสารไหนเลย จึงยังไม่ใช่ปัญหาจริงในทางปฏิบัติ)
 5. **session-scoped isolation ยังไม่ครอบคลุมทุก resource type** — ตอนนี้มี event routing, terminal,
-   filesystem watcher, HTTP cookie jar, และ WebSocket/gRPC connection (boundary 4 หกแถวบน) บวก
-   resource limit ต่อ session/รวมทั้ง server (แถวสุดท้าย) แต่ยังไม่มีสำหรับ 4 จุด active state ที่รุนแรง
-   น้อยกว่า: OAuth2 pending-request ที่ยัง unscoped, `MountManager` แบบ last-mount-wins, legacy
-   active-global-environment ที่ไม่ผูก session, และ last-opened-workspace/collection list ที่มีผลต่อ
-   default landing view ของ session อื่น — ไม่ leak ข้อมูลข้าม session โดยตรงเหมือนที่แก้ไปแล้วด้านบน
-   เป็นแค่ shared-state/UX ambiguity ระดับต่ำกว่า ยังไม่ implement (**secret/credential ต่อ session
-   ตรวจสอบแล้วไม่ใช่ gap** — `EnvironmentSecretsStore`/`Oauth2Store` scope ตาม collection โดยตั้งใจ
-   ไม่ใช่ตาม session เพราะต้องแชร์กันได้ระหว่างหลาย session ที่ collaborate บน collection เดียวกัน;
-   **"per-user" resource limit ตามที่ระบุใน `Improvement.md` เดิมกลายเป็น per-session** เพราะสถาปัตยกรรม
-   นี้ไม่มี user identity จริง มีแค่ anonymous session จาก bootstrap token เดียวที่ตั้งใจให้ reuse ได้ —
-   ดู `find bug and Improvement.md` increment ที่หกและเจ็ด; **gRPC connection ownership ยัง live-verify
-   แบบ end-to-end ไม่ได้** เพราะต้องมี `.proto`/gRPC server จริงมาทดสอบ ใช้ unit test + code review
-   แทนสำหรับตอนนี้ — ดู increment ที่เจ็ด)
+   filesystem watcher, HTTP cookie jar, WebSocket/gRPC connection (boundary 4 หกแถวบน), resource
+   limit ต่อ session/รวมทั้ง server (แถวสุดท้าย), และ (increment ที่แปด, เสร็จแล้ว) 4 จุด active state
+   ที่เคยยังไม่ implement: OAuth2 pending-request (scope ด้วย `state` param + `sessionKey` คู่กัน),
+   `MountManager` (ref-counted `sessionKeys: Set` ต่อ mount แทน last-mount-wins), legacy
+   active-global-environment (`activeGlobalEnvironmentUidBySession` map), และ
+   last-opened-workspace/collection list (`...BySession` map ทั้งคู่) — ทุกจุด fallback เป็นพฤติกรรม
+   เดิม 100% เมื่อไม่มี session context (desktop/no-auth mode) ดู `find bug and Improvement.md`
+   increment ที่แปด สำหรับรายละเอียด (**secret/credential ต่อ session ตรวจสอบแล้วไม่ใช่ gap** —
+   `EnvironmentSecretsStore`/`Oauth2Store` scope ตาม collection โดยตั้งใจ ไม่ใช่ตาม session เพราะต้อง
+   แชร์กันได้ระหว่างหลาย session ที่ collaborate บน collection เดียวกัน; **"per-user" resource limit
+   ตามที่ระบุใน `Improvement.md` เดิมกลายเป็น per-session** เพราะสถาปัตยกรรมนี้ไม่มี user identity จริง
+   มีแค่ anonymous session จาก bootstrap token เดียวที่ตั้งใจให้ reuse ได้ — ดู `find bug and
+   Improvement.md` increment ที่หกและเจ็ด; **gRPC connection ownership ยัง live-verify แบบ
+   end-to-end ไม่ได้** เพราะต้องมี `.proto`/gRPC server จริงมาทดสอบ ใช้ unit test + code review แทน
+   สำหรับตอนนี้ — ดู increment ที่เจ็ด; ที่เหลือที่ตั้งใจไม่แตะใน increment ที่แปด: `default-workspace.js`'s
+   physical directory creation (product-level decision แยกต่างหาก) และ onboarding-promise singleton
+   ใน `preferences.js` (severity ต่ำกว่ามาก, follow-up แยก))
 
 ## 6. คำแนะนำการ deploy (ไม่ใช่ default behavior — เป็น operator responsibility)
 
