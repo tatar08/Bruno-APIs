@@ -3,6 +3,9 @@
 > เอกสารวิเคราะห์ ณ วันที่ 20 กรกฎาคม 2026  
 > ขอบเขต: Bruno Desktop, Browser UI, Bruno Bridge Server และ shared packages ใน repository นี้
 
+> **สถานะการทำงาน (อัปเดตล่าสุด):** ✅ = เสร็จแล้ว, 🟡 = เสร็จบางส่วน (ดูรายละเอียดว่าเหลืออะไรใต้หัวข้อนั้น), ไม่มีสัญลักษณ์ = ยังไม่เริ่ม  
+> รายละเอียดการ implement/verify แต่ละอย่างอยู่ใน `find bug and Improvement.md` (หัวข้อ 4.1 เป็นต้นไป)
+
 ## 1. Executive Summary
 
 Browser version ในปัจจุบันมี functional parity กับ Desktop ใน flow หลักแล้ว แต่ architecture ยังอยู่ในช่วง compatibility bridge: ฝั่ง server จำลอง Electron, intercept `require('electron')` และ expose IPC ผ่าน HTTP/WebSocket โดยตรง วิธีนี้เหมาะกับการพิสูจน์แนวคิดและทำ parity ระยะแรก แต่ยังไม่เหมาะกับ production, remote access หรือ multi-user usage
@@ -74,20 +77,20 @@ Browser version ในปัจจุบันมี functional parity กับ
 
 ## P0 — ต้องทำก่อน Production/Remote Access (0–6 สัปดาห์)
 
-### P0.1 Secure Bridge Bootstrap and Authentication
+### P0.1 Secure Bridge Bootstrap and Authentication ✅ เสร็จแล้ว (opt-in — ปิดเป็นค่าเริ่มต้น, เปิดด้วย `BRUNO_SERVER_REQUIRE_AUTH=true`)
 
 **เป้าหมาย:** มีเพียง Browser instance ที่ผู้ใช้อนุญาตเท่านั้นที่เรียก Bridge ได้
 
 งานที่ควรทำ:
 
-- bind `127.0.0.1`/`::1` เป็นค่าเริ่มต้น และต้อง opt-in ชัดเจนสำหรับ LAN mode
-- สร้าง one-time bootstrap token ตอน start server
-- แลก bootstrap token เป็น short-lived session
-- ใช้ `HttpOnly`, `Secure`, `SameSite=Strict` cookie หรือ Authorization token ที่ไม่ถูกเก็บใน URL/log
-- validate `Origin` ทั้ง HTTP และ WebSocket ด้วย exact allowlist
-- เพิ่ม CSRF protection หากใช้ cookie session
-- rotate/revoke session และปิด WebSocket ทันทีเมื่อ logout/หมดอายุ
-- redact token, cookie, Authorization และ secret values จาก log
+- ✅ bind `127.0.0.1`/`::1` เป็นค่าเริ่มต้น และต้อง opt-in ชัดเจนสำหรับ LAN mode
+- ✅ สร้าง one-time bootstrap token ตอน start server
+- ✅ แลก bootstrap token เป็น short-lived session
+- ✅ ใช้ `HttpOnly`, `Secure`, `SameSite=Strict` cookie หรือ Authorization token ที่ไม่ถูกเก็บใน URL/log
+- ✅ validate `Origin` ทั้ง HTTP และ WebSocket ด้วย exact allowlist
+- ✅ เพิ่ม CSRF protection หากใช้ cookie session
+- ✅ rotate/revoke session และปิด WebSocket ทันทีเมื่อ logout/หมดอายุ
+- 🟡 redact token, cookie, Authorization และ secret values จาก log — bootstrap token ปริ้นท์ครั้งเดียวตอน start เท่านั้น (ไม่ log ซ้ำ) แต่ยังไม่มี blanket log-redaction layer ทั่วทั้ง server
 
 **Acceptance criteria:**
 
@@ -97,11 +100,11 @@ Browser version ในปัจจุบันมี functional parity กับ
 - token ไม่ปรากฏใน application log, browser history หรือ query string
 - automated tests ครอบคลุม auth bypass และ cross-site WebSocket attempt
 
-### P0.2 Channel Policy and Capability Authorization
+### P0.2 Channel Policy and Capability Authorization 🟡 เสร็จบางส่วน
 
 **เป้าหมาย:** การเชื่อมต่อกับ Bridge ไม่เท่ากับมีสิทธิ์เรียกทุก IPC
 
-แบ่ง channel เป็น capability เช่น:
+แบ่ง channel เป็น capability เช่น (✅ ทำแล้ว — 13 capability ครอบทุก channel จริงผ่าน `security/channel-capabilities.js`, ไม่ตรง 1:1 กับชื่อตัวอย่างด้านล่างเป๊ะแต่ครอบความหมายเดียวกัน):
 
 - `collections:read`, `collections:write`
 - `network:send`
@@ -112,54 +115,58 @@ Browser version ในปัจจุบันมี functional parity กับ
 
 ข้อเสนอ:
 
-- allowlist เฉพาะ channel ที่ Browser รองรับอย่างตั้งใจ
-- ปิด Terminal, arbitrary filesystem write และ destructive Git actions ตามค่าเริ่มต้น
-- เพิ่ม confirmation/policy สำหรับ action เสี่ยงสูง
-- validate input/output ทุก channel ด้วย schema
-- จำกัด payload เป็นราย channel แทน global `100mb`
-- เพิ่ม rate limit, concurrency limit และ execution timeout
+- ✅ allowlist เฉพาะ channel ที่ Browser รองรับอย่างตั้งใจ (unknown channel → 404)
+- ✅ ปิด Terminal, arbitrary filesystem write และ destructive Git actions ตามค่าเริ่มต้น (`privileged-channels.js`)
+- 🟡 เพิ่ม confirmation/policy สำหรับ action เสี่ยงสูง — ยังไม่ทำ ต้องถามผู้ใช้ก่อน (breaking UX change)
+- 🟡 validate input/output ทุก channel ด้วย schema — มี extension point (`CHANNEL_SCHEMAS`) และลงทะเบียนแล้วเฉพาะกลุ่มเสี่ยงสูง (terminal + git-mutate) ยังไม่ครบทั้ง ~203 handler
+- ✅ จำกัด payload เป็นราย channel แทน global `100mb` (ราย capability, global ลดจาก 100mb → 25mb)
+- ✅ เพิ่ม rate limit, concurrency limit และ execution timeout (เปิดเป็นค่าเริ่มต้น)
 
-**Acceptance criteria:** unknown channel เป็น `404`, known-but-forbidden เป็น `403`, invalid payload เป็น `400` และ privileged channels ใช้งานไม่ได้จนกว่าจะ grant capability
+**Acceptance criteria:** unknown channel เป็น `404` ✅, known-but-forbidden เป็น `403` ✅, invalid payload เป็น `400` ✅ (บางส่วน — ตาม schema ที่ลงทะเบียนแล้ว) และ privileged channels ใช้งานไม่ได้จนกว่าจะ grant capability 🟡 (ปิดตามค่าเริ่มต้นแล้ว แต่ยังไม่มี grant-flow UX แยก)
 
-### P0.3 Filesystem Sandbox
+### P0.3 Filesystem Sandbox 🟡 เสร็จบางส่วน (coarse safety net, opt-in)
 
 **เป้าหมาย:** Browser เข้าถึงได้เฉพาะ roots ที่ผู้ใช้อนุญาต
 
-- เพิ่ม `allowedRoots` configuration
-- resolve path ด้วย `realpath` ก่อน authorize
-- ป้องกัน `..`, symlink escape, UNC/network path ที่ไม่ได้อนุญาต และ case-insensitive bypass บน Windows
-- แยก read/write permission ต่อ root
-- ให้ผู้ใช้ revoke root ได้
-- บันทึก audit event โดยไม่ log secret/file content
-- upload ต้องตรวจ size, extension, magic bytes และ filename normalization
+- ✅ เพิ่ม `allowedRoots` configuration (`BRUNO_SERVER_ALLOWED_ROOTS`, opt-in — ปิดเป็นค่าเริ่มต้น)
+- ✅ resolve path ด้วย `realpath` ก่อน authorize
+- ✅ ป้องกัน `..`, symlink escape — มี unit test ครอบทั้งคู่; UNC/network path และ case-insensitive bypass บน Windows ยังไม่ได้ทดสอบเฉพาะเจาะจง
+- แยก read/write permission ต่อ root — ยังไม่ทำ (ตอนนี้ allow/deny รวมทั้ง root ไม่แยก read/write)
+- ให้ผู้ใช้ revoke root ได้ — ยังไม่ทำ (ตั้งค่าผ่าน env var ตอน start เท่านั้น ไม่มี runtime UI)
+- บันทึก audit event โดยไม่ log secret/file content — ยังไม่ทำ
+- upload ต้องตรวจ size, extension, magic bytes และ filename normalization — ยังไม่ทำ
 
-**Acceptance criteria:** ทุก filesystem handler ผ่าน policy layer เดียว และ test traversal/symlink/Windows path edge cases ครบ
+**ข้อจำกัดสำคัญ**: ตัว scanner เป็น generic เดาจาก "string ที่หน้าตาเหมือน absolute path" ไม่รู้ semantic รายช่อง — เป็น **safety net เสริม ไม่ใช่ per-channel validation ที่สมบูรณ์** (มีแค่ 5/~85+ handler ที่รับ path ที่เคย validate เองมาก่อนหน้านี้) มี extension point (`CHANNEL_PATH_EXTRACTORS`) ให้เพิ่มความแม่นยำทีละ channel ได้ในอนาคต
 
-### P0.4 Per-Session Isolation
+**Acceptance criteria:** ทุก filesystem handler ผ่าน policy layer เดียว 🟡 (ผ่าน chokepoint เดียวจริง แต่เป็น generic scan ไม่ใช่ per-channel) และ test traversal/symlink/Windows path edge cases ครบ 🟡 (traversal+symlink มี, Windows-specific ยังไม่มี)
+
+### P0.4 Per-Session Isolation ✅ เสร็จแล้ว (ทำงานเมื่อเปิด P0.1 auth เท่านั้น — ไม่เปิด auth = session เดียว ไม่มีอะไรให้ isolate)
 
 **เป้าหมาย:** หลาย Browser tabs/users ไม่เห็น event, active workspace, terminal หรือ secret ของกันและกัน
 
-- สร้าง `SessionContext` ต่อ authenticated client
-- map HTTP request และ WebSocket connection ด้วย session ID เดียวกัน
-- route `webContents.send()` ไปยัง session owner แทน global broadcast
-- isolate terminal processes, cancel tokens, active environment และ temporary collections
-- reference-count shared filesystem watchers และ cleanup เมื่อ session ปิด
-- จำกัดจำนวน sessions/terminals/watchers ต่อ user
+- ✅ สร้าง `SessionContext` ต่อ authenticated client (`AsyncLocalStorage`-based, ทั้ง `bruno-server` และ `bruno-requests`)
+- ✅ map HTTP request และ WebSocket connection ด้วย session ID เดียวกัน
+- ✅ route `webContents.send()` ไปยัง session owner แทน global broadcast
+- ✅ isolate terminal processes, cancel tokens (WS/gRPC connection ownership), active environment (legacy global-env uid) และ temporary collections/mount state, cookie jar
+- ✅ reference-count shared filesystem watchers และ cleanup เมื่อ session ปิด
+- ✅ จำกัดจำนวน sessions/terminals/watchers ต่อ session (ผ่าน `resource-limits.js`, ปรับได้ผ่าน env var — "ต่อ user" ปรับเป็น "ต่อ session" เพราะสถาปัตยกรรมนี้ไม่มี user จริง มีแต่ anonymous session)
 
-**Acceptance criteria:** integration test สอง browser contexts ต้องไม่รับ event หรือ state ของอีก context
+**ที่เหลือ (severity ต่ำ, บันทึกเป็น follow-up ไม่ใช่ตัดทิ้ง)**: onboarding flow (`hasLaunchedBefore` flag) ยังเป็น shared singleton ระดับ server ไม่ผูก session — only fires ตอน session แรก boot เท่านั้น ผลกระทบต่ำกว่าจุดอื่นที่แก้ไปแล้วมาก
 
-### P0.5 Typed RPC Contract Instead of Raw IPC Proxy
+**Acceptance criteria:** integration test สอง browser contexts ต้องไม่รับ event หรือ state ของอีก context ✅ (unit + live E2E ยืนยันแล้วสำหรับ cookie, WS/gRPC connection, terminal, watcher — active-state 4 จุดสุดท้ายยืนยันด้วย unit test + code review ไม่มี live E2E เพิ่ม)
+
+### P0.5 Typed RPC Contract Instead of Raw IPC Proxy 🟡 เสร็จบางส่วน
 
 **เป้าหมาย:** ป้องกัน channel drift และลด runtime-only bugs
 
-สร้าง package เช่น `packages/bruno-rpc-contract` ที่ประกอบด้วย:
+สร้าง package เช่น `packages/bruno-rpc-contract` ที่ประกอบด้วย: (✅ package นี้สร้างแล้วจริง — `@usebruno/rpc-contract`)
 
-- channel names แบบ typed constants
-- request/response schemas
-- event schemas
-- error envelope มาตรฐาน
-- capability metadata
-- generated Browser client และ Electron adapter
+- ✅ channel names แบบ typed constants (`CHANNELS`/`ALL_CHANNELS`, generate จาก 229 channel จริง)
+- request/response schemas — ยังไม่ทำ (ต้อง verify signature จริงของ ~203 handler ก่อน)
+- event schemas — ยังไม่ทำ
+- ✅ error envelope มาตรฐาน (`ERROR_CODES` + `createErrorEnvelope()`, wired เข้า `ipc-proxy.js` แบบ additive)
+- ✅ capability metadata (ย้าย capability taxonomy จาก P0.2 มาเป็น canonical ที่นี่)
+- generated Browser client และ Electron adapter — ยังไม่ทำ, renderer ยังเรียกด้วย raw channel string เหมือนเดิม (เป็น plain JS เกือบทั้งหมด ยังไม่มี TS convention ให้ leverage)
 
 กำหนด error format:
 
@@ -173,9 +180,9 @@ Browser version ในปัจจุบันมี functional parity กับ
 }
 ```
 
-**Acceptance criteria:** CI fail เมื่อ Desktop handler, Browser route หรือ renderer caller ไม่ตรง contract และไม่มี string channel ที่สำคัญกระจายโดยไม่มี type checking
+**Acceptance criteria:** CI fail เมื่อ Desktop handler, Browser route หรือ renderer caller ไม่ตรง contract และไม่มี string channel ที่สำคัญกระจายโดยไม่มี type checking — 🟡 มี audit script รันได้จริงและ live-verify แล้วว่า detect drift ถูกต้อง (`npm run audit:parity`, มี `--write` heal) แต่ยังไม่ผูกเข้า CI merge gate เพราะ **repo นี้ไม่มี CI pipeline เลย** (ไม่มี `.github/workflows`/`.gitlab-ci`/ฯลฯ)
 
-### P0.6 Browser Parity CI
+### P0.6 Browser Parity CI ✅ เสร็จแล้ว
 
 เพิ่ม Playwright project `browser-bridge` ที่ start:
 
@@ -183,22 +190,22 @@ Browser version ในปัจจุบันมี functional parity กับ
 2. `bruno-app`
 3. isolated temporary user-data/workspace
 
-Minimum test matrix:
+🟡 **สโคปที่ทำจริงตอนนี้เป็น smoke suite ระดับ boot + API surface + security defaults เท่านั้น (3 spec file, 9/9 test ผ่าน)** — Minimum test matrix เต็มด้านล่างส่วนใหญ่ยังไม่ครอบคลุม เพราะยังต้องพึ่ง Electron e2e suite เดิมสำหรับ UI-driven flow (component เดียวกัน ต่างแค่ transport layer):
 
-- Windows, macOS, Linux
-- Node 24 LTS เป็นหลัก; Node 22 ระหว่าง migration
-- create/open/reload collection
-- request send/cancel
-- WebSocket/gRPC/SSE
-- environments/secrets
-- workspace snapshot restore
-- file import/export
-- OAuth callback
-- reconnect หลัง restart Bridge
-- two-session isolation
-- security negative tests
+- Windows, macOS, Linux — ยังไม่ทำ (รันเฉพาะ platform ปัจจุบัน)
+- Node 24 LTS เป็นหลัก; Node 22 ระหว่าง migration — ยังไม่ทำ
+- create/open/reload collection — ยังไม่ทำ (UI-driven, ยังไม่ครอบ)
+- request send/cancel — ยังไม่ทำ (UI-driven, ยังไม่ครอบ)
+- WebSocket/gRPC/SSE — ยังไม่ทำ (UI-driven, ยังไม่ครอบ)
+- environments/secrets — ยังไม่ทำ (UI-driven, ยังไม่ครอบ)
+- workspace snapshot restore — ยังไม่ทำ (UI-driven, ยังไม่ครอบ)
+- file import/export — ยังไม่ทำ (UI-driven, ยังไม่ครอบ)
+- OAuth callback — ยังไม่ทำ (UI-driven, ยังไม่ครอบ)
+- reconnect หลัง restart Bridge — ยังไม่ทำ (UI-driven, ยังไม่ครอบ)
+- two-session isolation — ยังไม่ทำ ใน Playwright (มี live-verification แบบ manual script แล้วสำหรับหลาย resource type ใน P0.4 แต่ไม่ใช่ automated Playwright suite)
+- ✅ security negative tests — `security-defaults.spec.ts` ครอบ origin allowlist, privileged-channel block, auth-off default, sandbox-off default
 
-เพิ่ม static parity audit ที่เปรียบเทียบ Electron handlers กับ RPC contract ทุก PR
+เพิ่ม static parity audit ที่เปรียบเทียบ Electron handlers กับ RPC contract ทุก PR — ✅ script มีแล้ว (`scripts/audit-parity.js`, ดู P0.5) แต่ 🟡 ยังไม่ผูกเข้า "ทุก PR" เพราะไม่มี CI pipeline
 
 ---
 
@@ -218,30 +225,30 @@ Minimum test matrix:
 
 API ควรใช้ opaque file handles แทนส่ง absolute path กลับ renderer ทุกครั้ง
 
-### P1.2 Connection and Recovery UX
+### P1.2 Connection and Recovery UX 🟡 เสร็จบางส่วน
 
-- connection indicator: Connecting / Online / Degraded / Offline
-- exponential backoff พร้อม jitter และ max delay
-- heartbeat/ping-pong และ stale connection detection
-- bounded outbound queue พร้อม deduplication
-- request ID, timeout และ `AbortController` cancellation
-- idempotency key สำหรับ create/save ที่ retry ได้
-- event sequence number และ resync หลัง reconnect
-- offline read-only cache สำหรับ UI state ล่าสุด
+- ✅ connection indicator: Connecting / Online / Degraded / Offline
+- ✅ exponential backoff พร้อม jitter และ max delay
+- ✅ heartbeat/ping-pong และ stale connection detection
+- ✅ bounded outbound queue พร้อม deduplication
+- ✅ request ID, timeout และ `AbortController` cancellation
+- ยังไม่ทำ — idempotency key สำหรับ create/save ที่ retry ได้ (ต้องไล่ดูทีละ handler ว่า retry-safe จริงไหม เป็น product-scope decision ต่อ endpoint)
+- ยังไม่ทำ — event sequence number และ resync หลัง reconnect (architecture decision ใหญ่กว่า 1 increment: event log/buffer design, TTL, memory budget)
+- ยังไม่ทำ — offline read-only cache สำหรับ UI state ล่าสุด (product decision: storage scope + invalidation policy)
 
 ไม่ควร retry destructive action อัตโนมัติหากไม่มี idempotency guarantee
 
-### P1.3 Production Browser Packaging
+### P1.3 Production Browser Packaging 🟡 เสร็จบางส่วน
 
-- ให้ Bridge serve production static assets ชุดเดียวกับ API
-- runtime config endpoint แทน compile-time/hardcoded port
-- รองรับ reverse proxy base path
-- HTTPS/WSS สำหรับ non-loopback mode
-- Docker image แบบ non-root, read-only filesystem และ mount allowed roots แบบ explicit
-- `/health/live`, `/health/ready`, build info และ dependency readiness
-- graceful shutdown ที่ปิด watchers, terminals, sockets และ pending requests
-- configuration validation ตอน start; invalid config ต้อง fail fast
-- SBOM, dependency scanning, signed images/artifacts และ provenance
+- ยังไม่ทำ — ให้ Bridge serve production static assets ชุดเดียวกับ API (ต้องแก้ rsbuild config + runtime config mechanism ก่อน)
+- ยังไม่ทำ — runtime config endpoint แทน compile-time/hardcoded port (`window.__BRUNO_SERVER_PORT__` เป็น dead code ปัจจุบัน ไม่มีจุดไหน set ค่าจริง)
+- ยังไม่ทำ — รองรับ reverse proxy base path (ต้องแก้ hardcoded `/api/...`/`/ws/events` หลายจุดใน `ipc-transport.js`)
+- ยังไม่ทำ — HTTPS/WSS สำหรับ non-loopback mode (deployment-topology decision ที่ควรถามผู้ใช้ก่อน)
+- ยังไม่ทำ — Docker image แบบ non-root, read-only filesystem และ mount allowed roots แบบ explicit (repo นี้ยังไม่มี Dockerfile เลย)
+- ✅ `/health/live`, `/health/ready`, build info และ dependency readiness
+- ✅ graceful shutdown ที่ปิด watchers, terminals, sockets และ pending requests (มี ordering fix ยืนยันแล้วว่าไม่ hang รอ timeout)
+- ✅ configuration validation ตอน start; invalid config ต้อง fail fast
+- ยังไม่ทำ — SBOM, dependency scanning, signed images/artifacts และ provenance (ต้องมี CI pipeline ก่อน ซึ่ง repo นี้ยังไม่มี)
 
 ### P1.4 Real Secret Storage
 
