@@ -131,8 +131,8 @@ Browser version ในปัจจุบันมี functional parity กับ
 - ✅ เพิ่ม `allowedRoots` configuration (`BRUNO_SERVER_ALLOWED_ROOTS`, opt-in — ปิดเป็นค่าเริ่มต้น)
 - ✅ resolve path ด้วย `realpath` ก่อน authorize
 - ✅ ป้องกัน `..`, symlink escape — มี unit test ครอบทั้งคู่; UNC/network path และ case-insensitive bypass บน Windows ยังไม่ได้ทดสอบเฉพาะเจาะจง
-- แยก read/write permission ต่อ root — ยังไม่ทำ (ตอนนี้ allow/deny รวมทั้ง root ไม่แยก read/write)
-- ให้ผู้ใช้ revoke root ได้ — ยังไม่ทำ (ตั้งค่าผ่าน env var ตอน start เท่านั้น ไม่มี runtime UI)
+- ✅ แยก read/write permission ต่อ root — root ต่อท้ายด้วย `:ro` (เช่น `BRUNO_SERVER_ALLOWED_ROOTS=/rw-root,/reference-root:ro`) ถูก enforce เป็น read-only; fail-safe ต่อ channel ที่ยังไม่ตรวจสอบ (มี allowlist มือ 8 channel ที่ยืนยันว่าอ่านอย่างเดียวจาก `filesystem.js`, channel อื่นถือเป็น write แล้วบล็อกกับ root ที่เป็น ro ไปก่อน) — error code แยก `PATH_READ_ONLY_ROOT`
+- ให้ผู้ใช้ revoke root ได้ — ยังไม่ทำ (ตั้งค่าผ่าน env var ตอน start เท่านั้น ไม่มี runtime UI/API — เป็น product/UX decision)
 - ✅ บันทึก audit event โดยไม่ log secret/file content — `security/audit-log.js` log เฉพาะ channel/denied-path/session/requestId ตอน sandbox ปฏิเสธ (403) ไม่แตะ argument หรือ file content
 - upload ต้องตรวจ size, extension, magic bytes และ filename normalization — ยังไม่ทำ (ยังไม่มี upload flow จริงในระบบจนกว่าจะทำ P1.1 file explorer)
 

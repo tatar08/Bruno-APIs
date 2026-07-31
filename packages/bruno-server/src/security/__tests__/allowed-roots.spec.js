@@ -108,6 +108,66 @@ describe('allowed-roots filesystem sandbox', () => {
     });
   });
 
+  describe('read-only root (`:ro` suffix)', () => {
+    let sandbox;
+    let readOnlyRoot;
+
+    beforeAll(() => {
+      readOnlyRoot = path.join(tmpDir, 'read-only-root');
+      fs.mkdirSync(readOnlyRoot, { recursive: true });
+    });
+
+    afterAll(() => {
+      fs.rmSync(readOnlyRoot, { recursive: true, force: true });
+    });
+
+    beforeEach(() => {
+      process.env.BRUNO_SERVER_ALLOWED_ROOTS = `${allowedRoot},${readOnlyRoot}:ro`;
+      sandbox = loadModule();
+    });
+
+    it('allows a read-only-safe channel to read from the read-only root', () => {
+      const p = path.join(readOnlyRoot, 'dataset.json');
+      expect(sandbox.isPathAllowed(p, 'renderer:load-runner-dataset')).toBe(true);
+      expect(sandbox.findDisallowedPath('renderer:load-runner-dataset', [p])).toBeNull();
+    });
+
+    it('rejects a non-allowlisted channel touching the read-only root', () => {
+      const p = path.join(readOnlyRoot, 'dataset.json');
+      expect(sandbox.isPathAllowed(p, 'renderer:save-file')).toBe(false);
+      expect(sandbox.findDisallowedPath('renderer:save-file', [p])).toBe(p);
+    });
+
+    it('reports the read-only-root reason distinctly from outside-root', () => {
+      const insideReadOnly = path.join(readOnlyRoot, 'dataset.json');
+      const outside = outsideDir;
+
+      expect(sandbox.findPathPolicyViolation('renderer:save-file', [insideReadOnly])).toEqual({
+        path: insideReadOnly,
+        reason: 'read-only-root'
+      });
+      expect(sandbox.findPathPolicyViolation('renderer:save-file', [outside])).toEqual({
+        path: outside,
+        reason: 'outside-root'
+      });
+    });
+
+    it('still allows a write-shaped channel against the non-read-only root', () => {
+      const p = path.join(allowedRoot, 'requests', 'foo.bru');
+      expect(sandbox.isPathAllowed(p, 'renderer:save-file')).toBe(true);
+    });
+
+    it('isReadOnlySafeChannel reflects the manually-verified allowlist', () => {
+      expect(sandbox.isReadOnlySafeChannel('renderer:load-runner-dataset')).toBe(true);
+      expect(sandbox.isReadOnlySafeChannel('renderer:save-file')).toBe(false);
+    });
+
+    it('omitting the channel argument treats the call as unsafe against a read-only root', () => {
+      const p = path.join(readOnlyRoot, 'dataset.json');
+      expect(sandbox.isPathAllowed(p)).toBe(false);
+    });
+  });
+
   describe('findPathsInValue', () => {
     it('extracts absolute-path-shaped strings from nested arrays and objects, ignoring non-paths', () => {
       const { findPathsInValue } = loadModule();

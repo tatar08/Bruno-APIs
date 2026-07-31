@@ -24,6 +24,20 @@
  * CHANNEL_PATH_EXTRACTORS: `(args) => string[]` returning exactly the
  * path-bearing arguments for that channel. Channels without a registered
  * extractor fall back to the generic recursive scan.
+ *
+ * Per-root read-only mode: a root can be suffixed with `:ro` in
+ * BRUNO_SERVER_ALLOWED_ROOTS (e.g. `/srv/reference-collections:ro`) to
+ * allow reads from it while blocking writes. Because this module cannot
+ * reliably tell which argument of an arbitrary channel is "the write
+ * target" (same limitation as the rest of this file), the read/write
+ * split is deliberately **fail-safe, not fail-open**: only channels in
+ * READ_ONLY_SAFE_CHANNELS below (manually verified against their
+ * bruno-electron handler source to confirm they never write to disk) are
+ * allowed to touch a read-only root. Every other channel — including any
+ * future/unaudited one — is treated as a write and rejected against a
+ * read-only root by default. Getting this list wrong in the "channel
+ * omitted" direction only costs a false-positive rejection, never a
+ * silent write through what was configured as read-only.
  */
 
 const fs = require('fs');
@@ -33,15 +47,36 @@ const MAX_SCAN_DEPTH = 3;
 
 const ABSOLUTE_PATH_RE = /^(\/|[a-zA-Z]:[\\/]|\\\\)/;
 
+// Verified against packages/bruno-electron/src/ipc/filesystem.js: every
+// handler in that file only stats/reads/lists/resolves paths, none of them
+// write. Kept intentionally small and hand-verified rather than inferred
+// from channel name patterns (see module doc comment above).
+const READ_ONLY_SAFE_CHANNELS = new Set([
+  'renderer:browse-directory',
+  'renderer:browse-files',
+  'renderer:browse-pac-file',
+  'renderer:load-runner-dataset',
+  'renderer:exists-sync',
+  'renderer:resolve-path',
+  'renderer:is-directory',
+  'renderer:find-unique-folder-name'
+]);
+
+const isReadOnlySafeChannel = (channel) => READ_ONLY_SAFE_CHANNELS.has(channel);
+
 const parseAllowedRoots = () => {
   const configured = process.env.BRUNO_SERVER_ALLOWED_ROOTS;
   if (!configured) return null;
 
   return configured
     .split(',')
-    .map((root) => root.trim())
+    .map((entry) => entry.trim())
     .filter(Boolean)
-    .map((root) => realpathBestEffort(path.resolve(root)));
+    .map((entry) => {
+      const readOnly = entry.toLowerCase().endsWith(':ro');
+      const rawPath = readOnly ? entry.slice(0, -3) : entry;
+      return { path: realpathBestEffort(path.resolve(rawPath)), readOnly };
+    });
 };
 
 const allowedRoots = parseAllowedRoots();
@@ -81,15 +116,42 @@ function resolveForContainmentCheck(candidatePath) {
   }
 }
 
-function isUnderRoot(resolvedPath, root) {
-  const relative = path.relative(root, resolvedPath);
+function isUnderRoot(resolvedPath, rootPath) {
+  const relative = path.relative(rootPath, resolvedPath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function isPathAllowed(candidatePath) {
-  if (!isFilesystemSandboxEnabled()) return true;
+/**
+ * Finds the allowed root (if any) containing resolvedPath. Prefers a
+ * read-write match over a read-only one when a path happens to fall under
+ * more than one configured root, so a channel isn't spuriously blocked by
+ * a read-only root if a read-write root also covers it.
+ */
+function findContainingRoot(resolvedPath) {
+  let readOnlyMatch = null;
+  for (const root of allowedRoots) {
+    if (isUnderRoot(resolvedPath, root.path)) {
+      if (!root.readOnly) return root;
+      readOnlyMatch = root;
+    }
+  }
+  return readOnlyMatch;
+}
+
+/**
+ * @returns {'outside-root' | 'read-only-root' | null} null means allowed.
+ */
+function checkPathPolicy(candidatePath, channel) {
+  if (!isFilesystemSandboxEnabled()) return null;
   const resolved = resolveForContainmentCheck(candidatePath);
-  return allowedRoots.some((root) => isUnderRoot(resolved, root));
+  const root = findContainingRoot(resolved);
+  if (!root) return 'outside-root';
+  if (root.readOnly && !isReadOnlySafeChannel(channel)) return 'read-only-root';
+  return null;
+}
+
+function isPathAllowed(candidatePath, channel) {
+  return checkPathPolicy(candidatePath, channel) === null;
 }
 
 /**
@@ -130,13 +192,23 @@ function extractCandidatePaths(channel, args) {
 /**
  * @returns {string | null} the first disallowed candidate path, or null if
  * every candidate path found in `args` is inside an allowed root (or the
- * sandbox is disabled).
+ * sandbox is disabled). Kept string-returning for backward compatibility
+ * with existing callers/tests; use findPathPolicyViolation for the reason.
  */
 function findDisallowedPath(channel, args) {
+  const violation = findPathPolicyViolation(channel, args);
+  return violation ? violation.path : null;
+}
+
+/**
+ * @returns {{ path: string, reason: 'outside-root' | 'read-only-root' } | null}
+ */
+function findPathPolicyViolation(channel, args) {
   if (!isFilesystemSandboxEnabled()) return null;
   const candidates = extractCandidatePaths(channel, args);
   for (const candidate of candidates) {
-    if (!isPathAllowed(candidate)) return candidate;
+    const reason = checkPathPolicy(candidate, channel);
+    if (reason) return { path: candidate, reason };
   }
   return null;
 }
@@ -145,6 +217,8 @@ module.exports = {
   isFilesystemSandboxEnabled,
   isPathAllowed,
   findDisallowedPath,
+  findPathPolicyViolation,
+  isReadOnlySafeChannel,
   // exported for testing
   resolveForContainmentCheck,
   findPathsInValue

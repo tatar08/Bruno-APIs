@@ -8,7 +8,7 @@
 
 const express = require('express');
 const { isPrivilegedChannel, PRIVILEGED_CHANNELS_ENABLED } = require('../security/privileged-channels');
-const { findDisallowedPath } = require('../security/allowed-roots');
+const { findPathPolicyViolation } = require('../security/allowed-roots');
 const { logSandboxDenial } = require('../security/audit-log');
 const {
   checkRateLimit,
@@ -84,12 +84,18 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
       return res.status(400).json({ code: ERROR_CODES.INVALID_ARGS, error: argsError });
     }
 
-    const disallowedPath = findDisallowedPath(channel, args);
-    if (disallowedPath) {
-      logSandboxDenial({ channel, path: disallowedPath, sessionId: req.brunoSessionId, requestId });
+    const pathViolation = findPathPolicyViolation(channel, args);
+    if (pathViolation) {
+      logSandboxDenial({ channel, path: pathViolation.path, sessionId: req.brunoSessionId, requestId });
+      if (pathViolation.reason === 'read-only-root') {
+        return res.status(403).json({
+          code: ERROR_CODES.PATH_READ_ONLY_ROOT,
+          error: `Channel "${channel}" cannot write to "${pathViolation.path}": its containing root is configured read-only (BRUNO_SERVER_ALLOWED_ROOTS).`
+        });
+      }
       return res.status(403).json({
         code: ERROR_CODES.PATH_OUTSIDE_ALLOWED_ROOT,
-        error: `Path "${disallowedPath}" is outside the allowed roots configured for this Bridge (BRUNO_SERVER_ALLOWED_ROOTS).`
+        error: `Path "${pathViolation.path}" is outside the allowed roots configured for this Bridge (BRUNO_SERVER_ALLOWED_ROOTS).`
       });
     }
 
