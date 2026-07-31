@@ -536,6 +536,33 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P1.6 Runtime and Dependency Modernization (ต่อ) — step 2 (Node 24 LTS baseline) เสร็จแล้ว
+
+ผู้ใช้ยืนยันให้เริ่ม step 2 หลังจาก increment ก่อนหน้าถามไว้ชัดเจนว่าต้องการให้เริ่มหรือไม่ — เลือกทำเฉพาะ step 2 (Node baseline bump) ไม่ใช่ step 3-6 (Electron/React/Express) เพราะ step 2 เป็น major bump ที่ verify ได้ครบวงจรจริงในสภาพแวดล้อมนี้ (unit test suite ทั้งหมด + Docker container live boot) ต่างจาก Electron ที่กระทบ native module/desktop behavior ในแบบที่ sandboxed Linux CLI environment นี้ verify ไม่ได้เต็มที่
+
+**เหตุผลที่มั่นใจว่าปลอดภัย ก่อนเริ่มแก้ไขจริง**:
+- Environment ที่ session นี้รันอยู่ใช้ Node v24.15.0 อยู่แล้วจริง (`node -v`) แปลว่างานตรวจสอบ/รัน test suite ทั้งหมดในทุก increment ก่อนหน้านี้ของ session รันผ่าน Node 24 มาตลอดโดยไม่รู้ตัว เป็นหลักฐาน empirical ว่า codebase เข้ากันได้กับ Node 24 อยู่แล้ว
+- dependency ตัวเดียวใน repo ที่เป็น native/compiled-adjacent คือ `@lydell/node-pty` (ใช้ใน `bruno-electron/src/ipc/terminal.js` สำหรับ terminal feature) ติดตั้งผ่าน prebuilt platform package (`@lydell/node-pty-linux-x64`) ไม่ต้อง compile เอง — ทดสอบ live โดย require ตรง ๆ แล้ว spawn PTY session จริง เขียนคำสั่ง `echo hi_from_pty` แล้วอ่าน output กลับมาถูกต้อง ยืนยันว่าใช้งานได้จริงบน Node 24.15.0
+
+**การเปลี่ยนแปลงจริง**:
+- Root `package.json` — เพิ่ม `"engines": { "node": ">=24" }`
+- `packages/bruno-server/Dockerfile` — ทั้งสอง `FROM` stage (`deps`, `runtime`) เปลี่ยนจาก `node:22-slim` เป็น `node:24-slim`
+- `packages/bruno-cli/docker/images/debian/Dockerfile` → `node:24-slim`, `packages/bruno-cli/docker/images/alpine/Dockerfile` → `node:24-alpine` พร้อมอัปเดต 3 docker README ที่เกี่ยวข้อง (`docker/README.md`, `docker/images/debian/README.md`, `docker/images/alpine/README.md`) ให้ตรงกับ base image ใหม่
+- `Installation.md` — อัปเดตทุกจุดที่อ้างอิง Node 22.x เป็น 24.x ทั้งสองภาษา (Thai/English): system requirement, verify version output ตัวอย่าง, macOS Homebrew/nvm instructions, Linux nvm instructions, และ troubleshooting section ("ติดตั้ง dependencies ไม่ผ่าน"/"Dependency Installation Fails")
+- ไม่แตะ 18 ไฟล์ `docs/contributing/contributing_*.md` ที่มีอ้างอิง Node 22 บางไฟล์ — เป็น pre-existing community translation ของ upstream `usebruno/bruno` project ไม่เกี่ยวกับ roadmap นี้ และแก้เองโดยไม่ผ่าน translator เจ้าของภาษาเสี่ยงทำให้ไฟล์แปลไม่ตรงกับต้นฉบับในจุดอื่นที่ไม่เกี่ยวกับ Node version
+
+**บั๊กที่เจอระหว่างทาง (ไม่เกี่ยวกับ Node 24 โดยตรง แต่ block การ verify)**: รัน `npm test --workspaces --if-present` ครั้งแรกพบ `bruno-electron` หายไปจาก output ทั้ง workspace, สืบพบว่า `packages/bruno-electron/package.json` ใช้ `"test": "node --experimental-vm-modules $(npx which jest)"` โดยไม่ quote — เพราะ path ของ repo บนเครื่องนี้มีช่องว่าง (`/home/tar-ai-lab/Projects/Bruno APIs`) shell จึง word-split ผลลัพธ์ของ `$(npx which jest)` ที่ colon หลัง "Bruno" ทำให้ error `Cannot find module '/home/tar-ai-lab/Projects/Bruno'` — เป็นบั๊กที่มีอยู่ก่อนแล้วไม่เกี่ยวกับ Node version (จะพังเหมือนกันบน Node 22 ถ้า path มีช่องว่าง) แค่เพิ่งโผล่ตอนนี้เพราะ environment นี้ clone ไว้ที่ path ที่มีช่องว่างพอดี — แก้โดย quote substitution (`"$(npx which jest)"`) ใน 4 ไฟล์ที่มี pattern เดียวกัน: `bruno-electron`, `bruno-cli`, `bruno-converters`, `bruno-js`
+
+**Live verification**:
+- `npm test --workspace=packages/bruno-electron` หลังแก้: 47 test suite, 682 test (skip 1) ผ่านทั้งหมด; `bruno-cli` 17 suite/181 test ผ่าน; `bruno-converters` 74/75 suite (1 skip เดิม), 1132/1136 test (4 skip เดิม) ผ่าน; `bruno-js` 22 suite/598 test ผ่าน
+- `npm test --workspaces --if-present` รวมทั้ง repo: exit code 0 ครบทั้ง 13 workspace package ที่มี test script (bruno-app 76 suite, bruno-electron 47, bruno-cli 17, bruno-common 13, bruno-converters 74/75, bruno-schema 5, bruno-query 1, bruno-js 22, bruno-lang 32, bruno-toml 1, bruno-requests 22, bruno-filestore 17, bruno-server 17, bruno-rpc-contract 3)
+- `docker build -f packages/bruno-server/Dockerfile -t bruno-bridge:node24-test .` สำเร็จทุก stage (67/67 step) บน `node:24-slim` base
+- รัน container จริงในโหมด `--read-only --tmpfs /tmp -v <volume>:/home/node/.config`: `docker ps` แสดง `healthy` หลัง grace period, `curl /health/live` และ `/health/ready` ตอบ `{"nodeVersion":"v24.18.1", ...}` ยืนยันว่า runtime จริงคือ Node 24, `docker exec ... whoami` ยืนยันรันเป็น `node` (non-root), WebSocket client จริงเชื่อมต่อ `ws://127.0.0.1:4001/ws/events` เปิด-ปิดสำเร็จ — ลบ container/volume/image ทดสอบหลัง verify เสร็จ
+
+**ยังไม่ทำ (ตั้งใจเว้นไว้)**: "ทดสอบ 26 แบบ allowed-to-fail" ตามที่ roadmap ระบุ — ยังทำไม่ได้เพราะ repo นี้ไม่มี CI pipeline เลย (ตามที่ P0.5/P1.3 note ไว้ก่อนหน้า) การรัน "allowed-to-fail matrix job" ต้องมี CI มารองรับก่อนถึงจะมีที่ให้ job แบบนี้อยู่ — เป็น blocked-by-missing-CI ไม่ใช่ตั้งใจข้าม
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

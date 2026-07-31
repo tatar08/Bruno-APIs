@@ -11,7 +11,7 @@
 # workspace's package.json to let `npm ci` resolve correctly against the
 # single root package-lock.json (npm workspaces requirement).
 
-FROM node:22-slim AS deps
+FROM node:24-slim AS deps
 
 WORKDIR /usebruno
 
@@ -73,7 +73,7 @@ RUN npm run build --workspace=packages/bruno-schema-types \
     && npm run build --workspace=packages/bruno-app
 
 # --- Runtime stage: minimal image with just what bruno-server needs to run ---
-FROM node:22-slim AS runtime
+FROM node:24-slim AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/usebruno/bruno"
 LABEL org.opencontainers.image.description="Bruno Bridge Server - browser-accessible API surface for Bruno collections"

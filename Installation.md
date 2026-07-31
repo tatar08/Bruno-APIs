@@ -30,7 +30,7 @@ This guide explains how to install and run Bruno from source in two distinct mod
 ## 2. ความต้องการของระบบ
 
 - Git
-- Node.js **22.x** หรือ Node.js LTS รุ่นล่าสุดที่เข้ากันได้
+- Node.js **24.x** หรือ Node.js LTS รุ่นล่าสุดที่เข้ากันได้
 - npm ซึ่งติดมากับ Node.js
 - สิทธิ์อ่าน/เขียนในโฟลเดอร์ source และโฟลเดอร์ collection
 - สำหรับการ build Desktop อาจต้องมี native build tools ของแต่ละระบบ
@@ -43,7 +43,7 @@ npm --version
 git --version
 ```
 
-ควรเห็น Node.js เป็น `v22.x.x` หากใช้ Node เวอร์ชันอื่นแล้วพบปัญหา native module ให้เปลี่ยนเป็น Node 22 และติดตั้ง dependencies ใหม่
+ควรเห็น Node.js เป็น `v24.x.x` หากใช้ Node เวอร์ชันอื่นแล้วพบปัญหา native module ให้เปลี่ยนเป็น Node 24 และติดตั้ง dependencies ใหม่
 
 ## 3. เตรียมเครื่องตามระบบปฏิบัติการ
 
@@ -71,14 +71,14 @@ git --version
 ถ้ามี Homebrew:
 
 ```bash
-brew install git node@22
+brew install git node@24
 ```
 
 หรือใช้ nvm:
 
 ```bash
-nvm install 22
-nvm use 22
+nvm install 24
+nvm use 24
 ```
 
 ติดตั้ง compiler tools สำหรับ native modules:
@@ -102,11 +102,11 @@ Fedora/RHEL:
 sudo dnf install -y git gcc-c++ make python3 pkgconf-pkg-config
 ```
 
-ติดตั้ง Node.js 22 ด้วย package manager ที่เชื่อถือได้หรือ nvm:
+ติดตั้ง Node.js 24 ด้วย package manager ที่เชื่อถือได้หรือ nvm:
 
 ```bash
-nvm install 22
-nvm use 22
+nvm install 24
+nvm use 24
 ```
 
 ## 4. ดาวน์โหลด source และติดตั้ง dependencies
@@ -487,7 +487,7 @@ lsof -i :4000
 
 ### ติดตั้ง dependencies ไม่ผ่าน
 
-ตรวจว่าใช้ Node 22 แล้วรัน:
+ตรวจว่าใช้ Node 24 แล้วรัน:
 
 ```text
 npm run setup
@@ -521,7 +521,7 @@ npm run setup
 ## 2. System Requirements
 
 - Git
-- Node.js **22.x**, or a compatible current LTS release
+- Node.js **24.x**, or a compatible current LTS release
 - npm, included with Node.js
 - Read/write access to the source, collection, and workspace directories
 - Platform-native build tools when building the Desktop application
@@ -534,7 +534,7 @@ npm --version
 git --version
 ```
 
-Node should normally report `v22.x.x`. If native modules fail under another Node release, switch to Node 22 and reinstall the dependencies.
+Node should normally report `v24.x.x`. If native modules fail under another Node release, switch to Node 24 and reinstall the dependencies.
 
 ## 3. Platform Preparation
 
@@ -562,14 +562,14 @@ If a native module must be compiled, install Visual Studio Build Tools with the 
 With Homebrew:
 
 ```bash
-brew install git node@22
+brew install git node@24
 ```
 
 Or with nvm:
 
 ```bash
-nvm install 22
-nvm use 22
+nvm install 24
+nvm use 24
 ```
 
 Install native compiler tools:
@@ -593,11 +593,11 @@ Fedora/RHEL:
 sudo dnf install -y git gcc-c++ make python3 pkgconf-pkg-config
 ```
 
-Install Node.js 22 using a trusted package source or nvm:
+Install Node.js 24 using a trusted package source or nvm:
 
 ```bash
-nvm install 22
-nvm use 22
+nvm install 24
+nvm use 24
 ```
 
 ## 4. Get the Source and Install Dependencies
@@ -978,7 +978,7 @@ Verify the owning process before stopping it. The Web UI can select another free
 
 ### Dependency Installation Fails
 
-Confirm that Node 22 is active, then run:
+Confirm that Node 24 is active, then run:
 
 ```text
 npm run setup
