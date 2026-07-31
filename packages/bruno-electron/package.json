@@ -21,7 +21,9 @@
     "dist:rpm": "electron-builder --linux rpm --config electron-builder-config.js",
     "dist:snap": "electron-builder --linux snap --config electron-builder-config.js",
     "pack": "electron-builder --dir",
+    "pretest": "node -e \"require('electron')\"",
     "test": "node --experimental-vm-modules \"$(npx which jest)\"",
+    "pretest:ci": "node -e \"require('electron')\"",
     "test:ci": "node --experimental-vm-modules ../../node_modules/jest/bin/jest.js"
   },
   "jest": {
@@ -87,7 +89,7 @@
     "dmg-license": "^1.0.11"
   },
   "devDependencies": {
-    "electron": "~42.8.0",
+    "electron": "~43.2.0",
     "electron-builder": "^24.13.3",
     "electron-devtools-installer": "^4.0.0"
   }
