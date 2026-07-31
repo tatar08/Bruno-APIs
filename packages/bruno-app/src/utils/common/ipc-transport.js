@@ -86,6 +86,35 @@ function forgetBridgeAuth() {
 }
 
 /**
+ * Connection & Recovery UX (Improvement.md P1.2) — connection-quality state
+ * exposed by BrowserTransport, for a UI indicator to render.
+ *   CONNECTING — actively attempting the WebSocket handshake (initial or retry)
+ *   ONLINE     — connected and the application-level heartbeat is healthy
+ *   DEGRADED   — connected but at least one heartbeat pong is overdue; the
+ *                socket may be silently dead (routers/proxies can hold a TCP
+ *                connection open long after the peer is gone)
+ *   OFFLINE    — disconnected, waiting for the next backoff-scheduled retry
+ */
+export const CONNECTION_STATE = {
+  CONNECTING: 'connecting',
+  ONLINE: 'online',
+  DEGRADED: 'degraded',
+  OFFLINE: 'offline'
+};
+
+// Reconnect backoff: exponential with a cap, doubling per attempt.
+export const RECONNECT_BASE_DELAY_MS = 1000;
+export const RECONNECT_MAX_DELAY_MS = 30000;
+
+// Application-level heartbeat: the browser's native WebSocket API never
+// surfaces protocol-level ping/pong frames to JS (they're answered
+// automatically below the JS layer), so staleness detection needs its own
+// ping/pong message pair — see the `type: 'ping'`/`'pong'` handling below and
+// the matching reply in bruno-server's event-bridge.js.
+export const HEARTBEAT_INTERVAL_MS = 15000;
+export const HEARTBEAT_MAX_MISSED = 2;
+
+/**
  * Electron Transport — delegates directly to window.ipcRenderer
  * (the existing preload.js bridge)
  */
@@ -113,6 +142,18 @@ class ElectronTransport {
   openExternal(url) {
     return window.ipcRenderer.openExternal(url);
   }
+
+  // Electron's IPC is a direct in-process channel with no network hop, so
+  // there's nothing to degrade — always report ONLINE for API parity with
+  // BrowserTransport (Improvement.md P1.2 connection indicator).
+  getConnectionState() {
+    return CONNECTION_STATE.ONLINE;
+  }
+
+  onConnectionStateChange(handler) {
+    handler(CONNECTION_STATE.ONLINE);
+    return () => {};
+  }
 }
 
 /**
@@ -124,13 +165,23 @@ class BrowserTransport {
     this._ws = null;
     this._listeners = new Map(); // channel -> Set<handler>
     this._wsReady = false;
-    this._wsQueue = []; // messages queued before WS is ready
+    // channel -> 'subscribe' | 'unsubscribe', flushed once the WS reconnects.
+    // A Map (rather than an array of raw messages) naturally dedupes and
+    // bounds the queue: repeatedly toggling the same channel while offline
+    // just overwrites its pending action instead of piling up messages, and
+    // the size is capped by the number of distinct channels ever toggled —
+    // a small, fixed set of IPC event names, not user/request-driven.
+    this._wsQueue = new Map();
     this._reconnectAttempts = 0;
     // Keep retrying like Electron's persistent main-process connection. The
     // bridge may be restarted independently during local development.
     this._maxReconnectAttempts = Number.POSITIVE_INFINITY;
-    this._reconnectDelay = 1000;
     this._zoomPercentage = 100;
+    this._connectionState = CONNECTION_STATE.CONNECTING;
+    this._connectionStateListeners = new Set();
+    this._heartbeatInterval = null;
+    this._awaitingPong = false;
+    this._missedHeartbeats = 0;
     this._connectWebSocket();
   }
 
@@ -138,13 +189,43 @@ class BrowserTransport {
     return false;
   }
 
+  getConnectionState() {
+    return this._connectionState;
+  }
+
+  /**
+   * Subscribes to connection-state changes (Improvement.md P1.2), e.g. for a
+   * Connecting/Online/Degraded/Offline UI indicator. The handler is called
+   * immediately with the current state, then again on every transition.
+   * Returns an unsubscribe function.
+   */
+  onConnectionStateChange(handler) {
+    this._connectionStateListeners.add(handler);
+    handler(this._connectionState);
+    return () => this._connectionStateListeners.delete(handler);
+  }
+
+  _setConnectionState(state) {
+    if (this._connectionState === state) return;
+    this._connectionState = state;
+    this._connectionStateListeners.forEach((handler) => {
+      try {
+        handler(state);
+      } catch (err) {
+        console.error('[BrowserTransport] Error in connection state handler:', err);
+      }
+    });
+  }
+
   _connectWebSocket() {
+    this._setConnectionState(CONNECTION_STATE.CONNECTING);
     try {
       this._ws = new WebSocket(`${WS_URL}/ws/events`);
 
       this._ws.onopen = () => {
         this._wsReady = true;
         this._reconnectAttempts = 0;
+        this._setConnectionState(CONNECTION_STATE.ONLINE);
         console.log('[BrowserTransport] WebSocket connected');
 
         // A reconnect creates a new server-side client, so restore every
@@ -155,37 +236,50 @@ class BrowserTransport {
           this._ws.send(JSON.stringify({ type: 'subscribe', channel }));
         }
 
-        // Flush queued messages
-        while (this._wsQueue.length > 0) {
-          const msg = this._wsQueue.shift();
-          this._ws.send(msg);
+        // Flush the queued subscribe/unsubscribe actions accumulated while offline
+        for (const [channel, action] of this._wsQueue) {
+          this._ws.send(JSON.stringify({ type: action, channel }));
         }
+        this._wsQueue.clear();
+
+        this._startHeartbeat();
       };
 
       this._ws.onmessage = (event) => {
+        let parsed;
         try {
-          const { channel, data } = JSON.parse(event.data);
-          const handlers = this._listeners.get(channel);
-          if (handlers) {
-            handlers.forEach((handler) => {
-              try {
-                if (Array.isArray(data)) {
-                  handler(...data);
-                } else {
-                  handler(data);
-                }
-              } catch (err) {
-                console.error(`[BrowserTransport] Error in handler for "${channel}":`, err);
-              }
-            });
-          }
+          parsed = JSON.parse(event.data);
         } catch (err) {
           console.error('[BrowserTransport] Failed to parse WebSocket message:', err);
+          return;
+        }
+
+        if (parsed.type === 'pong') {
+          this._handlePong();
+          return;
+        }
+
+        const { channel, data } = parsed;
+        const handlers = this._listeners.get(channel);
+        if (handlers) {
+          handlers.forEach((handler) => {
+            try {
+              if (Array.isArray(data)) {
+                handler(...data);
+              } else {
+                handler(data);
+              }
+            } catch (err) {
+              console.error(`[BrowserTransport] Error in handler for "${channel}":`, err);
+            }
+          });
         }
       };
 
       this._ws.onclose = () => {
         this._wsReady = false;
+        this._stopHeartbeat();
+        this._setConnectionState(CONNECTION_STATE.OFFLINE);
         console.warn('[BrowserTransport] WebSocket disconnected');
         this._attemptReconnect();
       };
@@ -195,7 +289,59 @@ class BrowserTransport {
       };
     } catch (err) {
       console.error('[BrowserTransport] Failed to create WebSocket:', err);
+      this._setConnectionState(CONNECTION_STATE.OFFLINE);
       this._attemptReconnect();
+    }
+  }
+
+  /**
+   * Application-level heartbeat (Improvement.md P1.2). The browser's native
+   * WebSocket API never surfaces protocol ping/pong frames to JS, so this
+   * sends its own `{type: 'ping'}` message every HEARTBEAT_INTERVAL_MS and
+   * expects event-bridge.js to reply with `{type: 'pong'}`. Missing one
+   * pong marks the connection DEGRADED (still usable, but a proxy/router may
+   * be silently holding a dead socket open); missing HEARTBEAT_MAX_MISSED in
+   * a row forces a close, which triggers the normal reconnect flow.
+   */
+  _startHeartbeat() {
+    this._stopHeartbeat();
+    this._awaitingPong = false;
+    this._missedHeartbeats = 0;
+    this._heartbeatInterval = setInterval(() => {
+      if (this._awaitingPong) {
+        this._missedHeartbeats++;
+        console.warn(`[BrowserTransport] Missed heartbeat pong (${this._missedHeartbeats})`);
+        if (this._missedHeartbeats >= HEARTBEAT_MAX_MISSED) {
+          console.error('[BrowserTransport] Connection appears stale, forcing reconnect');
+          this._ws?.close();
+          return;
+        }
+        this._setConnectionState(CONNECTION_STATE.DEGRADED);
+      }
+
+      if (this._wsReady && this._ws) {
+        this._awaitingPong = true;
+        try {
+          this._ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+        } catch (err) {
+          // A genuinely dead socket will fire onclose/onerror on its own.
+        }
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  _stopHeartbeat() {
+    if (this._heartbeatInterval) {
+      clearInterval(this._heartbeatInterval);
+      this._heartbeatInterval = null;
+    }
+  }
+
+  _handlePong() {
+    this._awaitingPong = false;
+    if (this._missedHeartbeats > 0) {
+      this._missedHeartbeats = 0;
+      if (this._wsReady) this._setConnectionState(CONNECTION_STATE.ONLINE);
     }
   }
 
@@ -205,7 +351,13 @@ class BrowserTransport {
       return;
     }
     this._reconnectAttempts++;
-    const delay = this._reconnectDelay * Math.min(this._reconnectAttempts, 5);
+    const exponentialDelay = Math.min(
+      RECONNECT_MAX_DELAY_MS,
+      RECONNECT_BASE_DELAY_MS * Math.pow(2, this._reconnectAttempts - 1)
+    );
+    // Half jitter: never collapses to ~0 delay, but still prevents every tab
+    // from retrying in lockstep after a shared bridge-server restart.
+    const delay = Math.round(exponentialDelay / 2 + Math.random() * (exponentialDelay / 2));
     console.log(`[BrowserTransport] Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts})`);
     setTimeout(() => this._connectWebSocket(), delay);
   }
@@ -356,11 +508,10 @@ class BrowserTransport {
     this._listeners.get(channel).add(handler);
 
     // Tell the server we want events for this channel
-    const subscribeMsg = JSON.stringify({ type: 'subscribe', channel });
-    if (this._wsReady) {
-      this._ws.send(subscribeMsg);
+    if (this._wsReady && this._ws) {
+      this._ws.send(JSON.stringify({ type: 'subscribe', channel }));
     } else {
-      this._wsQueue.push(subscribeMsg);
+      this._wsQueue.set(channel, 'subscribe');
     }
 
     // Return unsubscribe function (matches Electron API)
@@ -371,9 +522,10 @@ class BrowserTransport {
         if (handlers.size === 0) {
           this._listeners.delete(channel);
           // Unsubscribe from server
-          const unsubMsg = JSON.stringify({ type: 'unsubscribe', channel });
           if (this._wsReady && this._ws) {
-            this._ws.send(unsubMsg);
+            this._ws.send(JSON.stringify({ type: 'unsubscribe', channel }));
+          } else {
+            this._wsQueue.set(channel, 'unsubscribe');
           }
         }
       }
@@ -387,9 +539,10 @@ class BrowserTransport {
     }
 
     this._listeners.delete(channel);
-    const unsubMsg = JSON.stringify({ type: 'unsubscribe', channel });
     if (this._wsReady && this._ws) {
-      this._ws.send(unsubMsg);
+      this._ws.send(JSON.stringify({ type: 'unsubscribe', channel }));
+    } else {
+      this._wsQueue.set(channel, 'unsubscribe');
     }
   }
 

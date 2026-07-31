@@ -9,6 +9,7 @@ import Cookies from 'components/Cookies';
 import Notifications from 'components/Notifications';
 import Portal from 'components/Portal';
 import ThemeDropdown from './ThemeDropdown';
+import ConnectionIndicator from './ConnectionIndicator';
 import { openConsole } from 'providers/ReduxStore/slices/logs';
 import { addTab } from 'providers/ReduxStore/slices/tabs';
 import { useApp } from 'providers/App';
@@ -75,6 +76,8 @@ const StatusBar = () => {
       <div className="status-bar">
         <div className="status-bar-section">
           <div className="status-bar-group">
+            <ConnectionIndicator />
+
             <ToolHint text="Preferences" toolhintId="Preferences" place="top-start" offset={10}>
               <button
                 className="status-bar-button preferences-button"

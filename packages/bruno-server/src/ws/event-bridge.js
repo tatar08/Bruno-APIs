@@ -77,6 +77,13 @@ class EventBridge {
             this._subscriptions.get(ws)?.add(msg.channel);
           } else if (msg.type === 'unsubscribe' && msg.channel) {
             this._subscriptions.get(ws)?.delete(msg.channel);
+          } else if (msg.type === 'ping') {
+            // Application-level heartbeat (Improvement.md P1.2): the browser
+            // client can't observe protocol-level ping/pong frames, so it
+            // sends its own and expects this reply to detect a stale socket.
+            if (ws.readyState === 1 /* WebSocket.OPEN */) {
+              ws.send(JSON.stringify({ type: 'pong', ts: msg.ts }));
+            }
           }
         } catch (err) {
           // Ignore malformed messages

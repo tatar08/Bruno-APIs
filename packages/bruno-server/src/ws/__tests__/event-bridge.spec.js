@@ -5,6 +5,7 @@ const { EventBridge } = require('../event-bridge');
 function makeMockClient({ sessionId = null, readyState = 1 } = {}) {
   const ws = new EventEmitter();
   ws.send = jest.fn();
+  ws.close = jest.fn();
   ws.readyState = readyState;
   ws._sessionId = sessionId;
   return ws;
@@ -80,6 +81,53 @@ describe('EventBridge', () => {
 
       bridge.sendToSession('session-a', 'terminal:data', 'hello');
       expect(a.send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('application-level heartbeat ping/pong (Improvement.md P1.2)', () => {
+    let bridge;
+    let server;
+
+    beforeEach(() => {
+      server = new http.Server();
+      bridge = new EventBridge();
+      bridge.attach(server);
+    });
+
+    afterEach(() => {
+      bridge._wss.close();
+    });
+
+    it('replies with a pong echoing the same ts when a client sends a ping', () => {
+      const ws = makeMockClient();
+      bridge._wss.emit('connection', ws, { headers: {} });
+
+      ws.emit('message', Buffer.from(JSON.stringify({ type: 'ping', ts: 12345 })));
+
+      expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'pong', ts: 12345 }));
+    });
+
+    it('does not reply to a ping from a client that is not OPEN', () => {
+      const ws = makeMockClient({ readyState: 3 /* CLOSED */ });
+      bridge._wss.emit('connection', ws, { headers: {} });
+
+      ws.emit('message', Buffer.from(JSON.stringify({ type: 'ping', ts: 1 })));
+
+      expect(ws.send).not.toHaveBeenCalled();
+    });
+
+    it('a pong reply does not count against the client message rate limit', () => {
+      const ws = makeMockClient();
+      bridge._wss.emit('connection', ws, { headers: {} });
+
+      for (let i = 0; i < 60; i++) {
+        ws.emit('message', Buffer.from(JSON.stringify({ type: 'ping', ts: i })));
+      }
+
+      // The rate limiter only counts inbound client messages, so 60 pings
+      // (over the 50-message MESSAGE_RATE_LIMIT) still trips the same close
+      // path as any other message type -- pong replies aren't a bypass.
+      expect(ws.close).toHaveBeenCalledWith(1008, 'Rate limit exceeded');
     });
   });
 
