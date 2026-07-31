@@ -306,8 +306,19 @@ const getOAuth2AuthorizationCode = (request, codeChallenge, collectionUid) => {
   return new Promise(async (resolve, reject) => {
     const { oauth2 } = request;
     const { callbackUrl, clientId, authorizationUrl, scope, state, pkce, accessTokenUrl, additionalParameters } = oauth2;
-    const useSystemBrowser = preferencesUtil.shouldUseSystemBrowser();
-    const effectiveCallbackUrl = callbackUrl && callbackUrl.length ? callbackUrl : BRUNO_OAUTH2_CALLBACK_URL;
+    const { app } = require('electron');
+    // Running under the Browser Bridge (bruno-server): the embedded-window
+    // strategy can't work there (BrowserWindow isn't constructable under
+    // the electron shim), and any user-configured callbackUrl is ignored in
+    // favor of the Bridge's own fixed loopback endpoint — IdPs must have
+    // that exact URL registered as their redirect URI (Improvement.md P1.5).
+    const isBrowserBridge = !!app.browserBridge;
+    const useSystemBrowser = isBrowserBridge || preferencesUtil.shouldUseSystemBrowser();
+    const effectiveCallbackUrl = isBrowserBridge
+      ? app.browserBridge.oauth2CallbackUrl
+      : callbackUrl && callbackUrl.length
+        ? callbackUrl
+        : BRUNO_OAUTH2_CALLBACK_URL;
     // Always append a cryptographically random nonce to the user-configured state
     // (or generate a fully random one when none is set). The state is validated when
     // the callback is received to prevent authorization code injection / CSRF.
@@ -794,6 +805,21 @@ const getOAuth2TokenUsingImplicitGrant = async ({ request, collectionUid, forceF
   if (!effectiveCallbackUrl) {
     return {
       error: 'Callback URL is required for OAuth2 implicit flow',
+      credentials: null,
+      url: authorizationUrl,
+      credentialsId
+    };
+  }
+
+  const { app } = require('electron');
+  if (app.browserBridge) {
+    // Implicit grant returns the access token in the callback URL's hash
+    // fragment, which browsers never send to a server — there is no way
+    // for the Bridge's HTTP loopback callback to observe it, unlike the
+    // authorization_code flow. OAuth 2.1 also deprecates implicit grant
+    // outright, so this is rejected rather than worked around.
+    return {
+      error: 'OAuth2 implicit grant is not supported when running through the Bruno Bridge (browser access token fragments never reach a server). Use the authorization_code grant with PKCE instead.',
       credentials: null,
       url: authorizationUrl,
       credentialsId

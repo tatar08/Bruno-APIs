@@ -1,6 +1,8 @@
 const { runWithSessionKey } = require('@usebruno/requests');
 const {
   registerOauth2AuthorizationRequest,
+  resolveOauth2AuthorizationRequest,
+  rejectOauth2AuthorizationRequest,
   handleOauth2ProtocolUrl,
   cancelOAuth2AuthorizationRequest,
   isOauth2AuthorizationRequestInProgress
@@ -132,6 +134,56 @@ describe('handleOauth2ProtocolUrl - state validation', () => {
         expect.objectContaining({ message: expect.stringContaining('Authorization Failed') })
       );
     });
+  });
+});
+
+describe('resolveOauth2AuthorizationRequest / rejectOauth2AuthorizationRequest (used directly by the Browser Bridge loopback HTTP callback route)', () => {
+  let resolve;
+  let reject;
+
+  beforeEach(() => {
+    resolve = jest.fn();
+    reject = jest.fn();
+  });
+
+  afterEach(() => {
+    if (isOauth2AuthorizationRequestInProgress()) {
+      cancelOAuth2AuthorizationRequest();
+    }
+    jest.clearAllMocks();
+  });
+
+  it('resolveOauth2AuthorizationRequest resolves the matching pending request and reports success', () => {
+    registerOauth2AuthorizationRequest(resolve, reject, null, 'expected-state');
+
+    const result = resolveOauth2AuthorizationRequest('auth-code-123', 'expected-state');
+
+    expect(result).toBe(true);
+    expect(resolve).toHaveBeenCalledWith('auth-code-123');
+  });
+
+  it('resolveOauth2AuthorizationRequest reports failure for a state with no pending request', () => {
+    const result = resolveOauth2AuthorizationRequest('auth-code-123', 'no-such-state');
+
+    expect(result).toBe(false);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('rejectOauth2AuthorizationRequest rejects the matching pending request and reports success', () => {
+    registerOauth2AuthorizationRequest(resolve, reject, null, 'expected-state');
+
+    const result = rejectOauth2AuthorizationRequest(new Error('denied'), 'expected-state');
+
+    expect(result).toBe(true);
+    expect(reject).toHaveBeenCalledWith(expect.objectContaining({ message: 'denied' }));
+  });
+
+  it('resolving a request consumes it, so a second resolve/reject for the same state reports failure', () => {
+    registerOauth2AuthorizationRequest(resolve, reject, null, 'expected-state');
+
+    expect(resolveOauth2AuthorizationRequest('code-1', 'expected-state')).toBe(true);
+    expect(resolveOauth2AuthorizationRequest('code-2', 'expected-state')).toBe(false);
+    expect(resolve).toHaveBeenCalledTimes(1);
   });
 });
 

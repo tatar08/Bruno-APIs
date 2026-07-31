@@ -96,6 +96,7 @@ event หรือควบคุม resource (เช่น terminal process) �
 | bootstrap token หลุดผ่าน log/history แล้วถูกใช้ซ้ำ (ไม่ใช่ single-use) | **ยังไม่ mitigate — accepted risk ดูข้อ 5** | — |
 | client ยิง `POST /api/auth/session` (token exchange) รัวๆ ไม่จำกัด — ไม่ใช่ปัญหาเรื่อง brute-force (token สุ่ม 256 บิต เดาไม่ได้อยู่แล้ว) แต่เป็น availability/DoS: แต่ละ attempt เสีย CPU/response cycle ฟรีไม่จำกัดจำนวน | rate limit เฉพาะ endpoint นี้ แยกจาก IPC rate limit เดิม (คีย์ด้วย IP เพราะยังไม่มี session ตอนเรียก), ดีฟอลต์ 10 ครั้ง/5 นาที ปรับได้ผ่าน `BRUNO_SERVER_AUTH_RATE_LIMIT`/`BRUNO_SERVER_AUTH_RATE_WINDOW_MS` | `security/auth-rate-limit.js` |
 | client เรียก `GET`/`DELETE /api/admin/allowed-roots` เพื่ออ่าน/แก้ filesystem sandbox config ระหว่างรัน (attack surface ใหม่ — ก่อนหน้านี้ config นี้อ่านจาก env var ตอน start เท่านั้น ไม่มี endpoint ให้ mutate ได้เลย) | mount หลัง `requireAuth` เหมือน `/api/ipc` ทุกประการ (ต้องมี session + CSRF header ถ้าเปิด auth); ออกแบบเป็น **revoke-only** โดยตั้งใจ — เรียกได้แค่ narrow allowed roots ให้แคบลง (ไม่มี un-revoke, ไม่มี add-root ผ่าน API) ทางเดียวที่จะขยายสิทธิ์กลับคือแก้ env var แล้ว restart process เอง ดังนั้นแม้ endpoint นี้ถูกเรียกโดยไม่ได้ตั้งใจหรือถูกละเมิด ผลลัพธ์แย่สุดคือ access แคบลง ไม่ใช่กว้างขึ้น; ทุกครั้งที่ revoke สำเร็จ log audit event ผูกกับ session | `routes/admin.js`, `security/allowed-roots.js`, `security/audit-log.js` |
+| `GET /api/oauth2/callback` เป็น endpoint ใหม่ที่**ไม่ผ่าน `requireAuth`** เลย (จำเป็น — IdP redirect ไม่มี session cookie/CSRF token ให้แนบอยู่แล้ว, เหมือน desktop's custom-protocol handler เดิมทุกประการ) — client ใดๆ ที่เดา/รู้ `state` ที่ถูกต้องของ flow ที่กำลัง pending อยู่จะ resolve/reject แทนผู้ใช้จริงได้ | ป้องกันด้วย `state` unguessability เท่านั้น (128-bit random ผ่าน `generateState()`, เหมือน desktop เดิมทุกประการ ไม่ใช่ของใหม่); callback ที่ `state` ไม่ตรงกับ pending request ใดเลยถูกปฏิเสธ (fail closed, ไม่เดาว่าเป็นของ flow ไหน); ทุก resolve/reject log แค่ state + outcome (ไม่ log `code`); rate limit แยกต่างหาก (30 req/นาที/IP ดีฟอลต์); response HTML เป็น static ล้วนไม่ echo query param ดิบกลับเลยแม้แต่ตัวเดียว กัน XSS จาก input ที่ unauthenticated | `routes/oauth2.js`, `bruno-electron/src/utils/oauth2-protocol-handler.js`, `security/audit-log.js` |
 | request/response ถูกดักฟังบนเครือข่าย (MITM) | **ไม่มี TLS ในตัว — accepted risk ดูข้อ 5** | — |
 | client ยิง IPC รัวๆ จนตัด availability ของผู้ใช้อื่น/handler ค้าง | per-client rate limit (200 req/10s), concurrency limit (40 in-flight), handler timeout (30s) — ปรับได้ผ่าน env var | `security/ipc-limits.js` |
 | WebSocket client ส่ง frame ใหญ่/ถี่ผิดปกติ, connection ค้างไม่ปิด | `maxPayload` 64KB, message rate limit (50 msg/10s ต่อ connection), ping/pong heartbeat 30s ตัด connection ที่ไม่ตอบ | `ws/event-bridge.js` |
@@ -177,6 +178,21 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
    physical directory creation (product-level decision แยกต่างหาก) และ onboarding-promise singleton
    ใน `preferences.js` — **ตัดสินใจแล้ว (ไม่ใช่ gap)**: onboarding นับต่อ server process ตามเดิมโดยตั้งใจ
    เพื่อให้ตรงกับโมเดล multi-session ที่ใช้ Bridge เดียวร่วมกัน)
+6. **OAuth2 implicit grant ใช้ผ่าน Bridge ไม่ได้เลย** — ถูก reject อย่างชัดเจนตั้งแต่ต้น
+   (`getOAuth2TokenUsingImplicitGrant`) เพราะ access token ของ implicit grant ส่งกลับมาใน URL hash
+   fragment ซึ่ง browser **ไม่ส่งไปที่ server เลยตามสเปก** — ไม่มีทาง technical ให้ loopback callback
+   route ฝั่ง server สังเกตเห็นค่านี้ได้จริง จึงไม่ใช่ gap ที่ควรพยายามแก้ แต่เป็นข้อจำกัดโดยธรรมชาติของ
+   สถาปัตยกรรม server-side callback (ตรงกับที่ OAuth 2.1 เองก็ deprecate implicit grant อยู่แล้ว
+   ผู้ใช้ collection ที่ยังใช้ implicit grant ต้องย้ายไป authorization_code + PKCE ถ้าจะใช้ผ่าน Bridge)
+   — **ตัดสินใจแล้ว ไม่ใช่ของที่ลืมทำ**
+7. **custom `state` ที่ผู้ใช้ตั้งเองใน OAuth2 config อาจเดาง่าย/สั้นกว่า random default** —
+   `generateState()` ใช้ `state` ที่ผู้ใช้ตั้งไว้ตรงๆถ้ามีค่า (ไม่ผสม random เพิ่ม) เดิมทีมีอยู่แล้วบน
+   desktop (ไม่ใช่ regression จากการย้ายมา Bridge) แต่ผลกระทบสูงขึ้นเมื่อผ่าน Bridge เพราะ
+   `/api/oauth2/callback` (boundary 1 ข้างบน) เป็น endpoint HTTP ที่เข้าถึงได้จากใครก็ตามที่คุยกับ
+   port ของ Bridge ได้ (ถ้า host ไม่ใช่ loopback) ต่างจาก custom-protocol callback ของ desktop ที่จำกัด
+   อยู่แค่ในเครื่องเดียวกันโดยธรรมชาติ — ผู้ใช้ที่ตั้ง `state` เองควรเลือกค่าที่คาดเดายากพอ ยังไม่มี
+   validation บังคับความยาว/entropy ขั้นต่ำของ custom state ใน increment นี้ — **inherited risk ที่รับรู้
+   แล้ว ไม่ใช่ของใหม่ที่สร้างขึ้นจากงานนี้**
 
 ## 6. คำแนะนำการ deploy (ไม่ใช่ default behavior — เป็น operator responsibility)
 

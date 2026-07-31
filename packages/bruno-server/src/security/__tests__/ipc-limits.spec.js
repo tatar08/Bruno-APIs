@@ -4,7 +4,13 @@
  * with small, deterministic limits instead of the production defaults.
  */
 const loadModule = (env) => {
-  const keys = ['BRUNO_SERVER_IPC_RATE_LIMIT', 'BRUNO_SERVER_IPC_RATE_WINDOW_MS', 'BRUNO_SERVER_IPC_MAX_CONCURRENT', 'BRUNO_SERVER_IPC_TIMEOUT_MS'];
+  const keys = [
+    'BRUNO_SERVER_IPC_RATE_LIMIT',
+    'BRUNO_SERVER_IPC_RATE_WINDOW_MS',
+    'BRUNO_SERVER_IPC_MAX_CONCURRENT',
+    'BRUNO_SERVER_IPC_TIMEOUT_MS',
+    'BRUNO_SERVER_IPC_OAUTH2_TIMEOUT_MS'
+  ];
   const original = {};
   keys.forEach((key) => { original[key] = process.env[key]; });
   Object.assign(process.env, env);
@@ -96,6 +102,29 @@ describe('IPC call limits', () => {
       const { withTimeout } = loadModule({ BRUNO_SERVER_IPC_TIMEOUT_MS: '200' });
 
       await expect(withTimeout(Promise.reject(new Error('boom')), 'some:channel')).rejects.toThrow('boom');
+    });
+
+    it('gives renderer:fetch-oauth2-credentials a longer timeout than the channel default, so an interactive OAuth2 flow held open past the default IPC timeout still survives', async () => {
+      const { withTimeout } = loadModule({ BRUNO_SERVER_IPC_TIMEOUT_MS: '20', BRUNO_SERVER_IPC_OAUTH2_TIMEOUT_MS: '200' });
+      const settlesAfterDefaultTimeout = new Promise((resolve) => setTimeout(() => resolve('ok'), 60));
+
+      await expect(withTimeout(settlesAfterDefaultTimeout, 'renderer:fetch-oauth2-credentials')).resolves.toBe('ok');
+    });
+
+    it('still applies the short default timeout to every other channel, including similarly-named oauth2 ones', async () => {
+      const { withTimeout, IpcTimeoutError } = loadModule({ BRUNO_SERVER_IPC_TIMEOUT_MS: '20', BRUNO_SERVER_IPC_OAUTH2_TIMEOUT_MS: '200' });
+      const neverSettles = new Promise(() => {});
+
+      await expect(withTimeout(neverSettles, 'renderer:refresh-oauth2-credentials')).rejects.toBeInstanceOf(IpcTimeoutError);
+    });
+  });
+
+  describe('getTimeoutForChannel', () => {
+    it('returns the default timeout for an unlisted channel and the override for the long-running one', () => {
+      const { getTimeoutForChannel } = loadModule({ BRUNO_SERVER_IPC_TIMEOUT_MS: '30000', BRUNO_SERVER_IPC_OAUTH2_TIMEOUT_MS: '310000' });
+
+      expect(getTimeoutForChannel('renderer:save-file')).toBe(30000);
+      expect(getTimeoutForChannel('renderer:fetch-oauth2-credentials')).toBe(310000);
     });
   });
 });

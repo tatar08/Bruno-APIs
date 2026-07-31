@@ -17,6 +17,23 @@ const RATE_WINDOW_MS = Number(process.env.BRUNO_SERVER_IPC_RATE_WINDOW_MS) || 10
 const MAX_CONCURRENT = Number(process.env.BRUNO_SERVER_IPC_MAX_CONCURRENT) || 40;
 const TIMEOUT_MS = Number(process.env.BRUNO_SERVER_IPC_TIMEOUT_MS) || 30000;
 
+// A hand-picked exception list (same idea as READ_ONLY_SAFE_CHANNELS in
+// allowed-roots.js) for the one channel that legitimately blocks far longer
+// than any other: renderer:fetch-oauth2-credentials holds the HTTP request
+// open while the user completes login/consent at the IdP in their browser
+// (see authorize-user-in-system-browser.js's own 5-minute internal
+// timeout). Deliberately not a generic per-request override — that would
+// let any caller opt out of the timeout that exists to bound hung/slow
+// handlers — just this single known-interactive channel getting a longer
+// bound than the default.
+const LONG_RUNNING_CHANNEL_TIMEOUTS_MS = {
+  'renderer:fetch-oauth2-credentials': Number(process.env.BRUNO_SERVER_IPC_OAUTH2_TIMEOUT_MS) || 5 * 60 * 1000 + 10000
+};
+
+function getTimeoutForChannel(channel) {
+  return LONG_RUNNING_CHANNEL_TIMEOUTS_MS[channel] || TIMEOUT_MS;
+}
+
 /**
  * A sliding-window rate limiter keyed by an arbitrary client key. Factored
  * out so other endpoints with different limits (e.g. auth-rate-limit.js)
@@ -66,14 +83,14 @@ function releaseConcurrencySlot(clientKey) {
 
 class IpcTimeoutError extends Error {
   constructor(channel) {
-    super(`Channel "${channel}" did not respond within ${TIMEOUT_MS}ms`);
+    super(`Channel "${channel}" did not respond within ${getTimeoutForChannel(channel)}ms`);
     this.name = 'IpcTimeoutError';
   }
 }
 
 function withTimeout(promise, channel) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new IpcTimeoutError(channel)), TIMEOUT_MS);
+    const timer = setTimeout(() => reject(new IpcTimeoutError(channel)), getTimeoutForChannel(channel));
     timer.unref?.();
 
     promise.then(
@@ -96,8 +113,10 @@ module.exports = {
   withTimeout,
   IpcTimeoutError,
   createSlidingWindowLimiter,
+  getTimeoutForChannel,
   RATE_LIMIT,
   RATE_WINDOW_MS,
   MAX_CONCURRENT,
-  TIMEOUT_MS
+  TIMEOUT_MS,
+  LONG_RUNNING_CHANNEL_TIMEOUTS_MS
 };

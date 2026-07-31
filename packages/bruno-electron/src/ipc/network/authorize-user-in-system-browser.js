@@ -1,4 +1,4 @@
-const { shell } = require('electron');
+const { shell, app, BrowserWindow } = require('electron');
 const { registerOauth2AuthorizationRequest, rejectOauth2AuthorizationRequest } = require('../../utils/oauth2-protocol-handler');
 
 const authorizeUserInSystemBrowser = ({ authorizeUrl, callbackUrl, grantType = 'authorization_code', expectedState = null }) => {
@@ -52,6 +52,22 @@ const authorizeUserInSystemBrowser = ({ authorizeUrl, callbackUrl, grantType = '
     };
 
     registerOauth2AuthorizationRequest(wrappedResolve, wrappedReject, debugInfo, expectedState);
+
+    // Under the Browser Bridge, shell.openExternal is a no-op that only
+    // logs server-side — there's no local OS to hand a URL to. Instead push
+    // the authorize URL to the originating browser tab over the same WS
+    // channel used for every other server->client event; the request stays
+    // pending (see the 5-minute timeout above) until the Bridge's loopback
+    // callback route resolves/rejects it.
+    if (app.browserBridge) {
+      const [mainWindow] = BrowserWindow.getAllWindows();
+      if (!mainWindow) {
+        rejectOauth2AuthorizationRequest(new Error('No active browser session to deliver the OAuth2 authorization URL to'), expectedState);
+        return;
+      }
+      mainWindow.webContents.send('oauth2:authorization-required', { authorizeUrl: modifiedAuthorizeUrl, expectedState });
+      return;
+    }
 
     // Open system browser
     shell.openExternal(modifiedAuthorizeUrl).catch((error) => {

@@ -18,4 +18,11 @@ function logRootRevoked({ path, sessionId }) {
   console.warn(`[FilesystemSandbox] Root revoked — ${parts.join(' ')}`);
 }
 
-module.exports = { logSandboxDenial, logRootRevoked };
+// OAuth2 loopback callback (Improvement.md P1.5). Only `state` and the
+// outcome are logged — never the authorization `code`, which is a
+// single-use secret that grants the ability to complete the token exchange.
+function logOauth2Callback({ state, outcome }) {
+  console.warn(`[OAuth2Callback] ${outcome} — state="${state}"`);
+}
+
+module.exports = { logSandboxDenial, logRootRevoked, logOauth2Callback };

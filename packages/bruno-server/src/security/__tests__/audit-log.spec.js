@@ -1,4 +1,4 @@
-const { logSandboxDenial } = require('../audit-log');
+const { logSandboxDenial, logOauth2Callback } = require('../audit-log');
 
 describe('audit-log (Improvement.md P0.3 — filesystem sandbox audit events)', () => {
   let warnSpy;
@@ -35,5 +35,34 @@ describe('audit-log (Improvement.md P0.3 — filesystem sandbox audit events)', 
     const [line] = warnSpy.mock.calls[0];
     expect(line).not.toContain('session=');
     expect(line).not.toContain('requestId=');
+  });
+});
+
+describe('logOauth2Callback (Improvement.md P1.5 — OAuth2 loopback callback)', () => {
+  let warnSpy;
+
+  beforeEach(() => {
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('logs the state and outcome, never a code/token value', () => {
+    logOauth2Callback({ state: 'abc123', outcome: 'resolved' });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const [line] = warnSpy.mock.calls[0];
+    expect(line).toContain('[OAuth2Callback] resolved');
+    expect(line).toContain('state="abc123"');
+  });
+
+  it('logs rejection outcomes distinctly from resolution', () => {
+    logOauth2Callback({ state: 'xyz789', outcome: 'rejected: no matching pending request' });
+
+    const [line] = warnSpy.mock.calls[0];
+    expect(line).toContain('rejected: no matching pending request');
+    expect(line).toContain('state="xyz789"');
   });
 });

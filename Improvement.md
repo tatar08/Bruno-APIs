@@ -259,15 +259,16 @@ API ควรใช้ opaque file handles แทนส่ง absolute path ก�
 - support rotation, lock/unlock, backup policy และ secret redaction
 - ห้ามใช้ Base64 เป็น encryption fallback
 
-### P1.5 Browser-Compatible OAuth 2.1 Flow
+### P1.5 Browser-Compatible OAuth 2.1 Flow 🟡 backend/API เสร็จแล้ว (UI ยังไม่ทำ — ตามการตัดสินใจ scope)
 
-- loopback callback endpoint ที่ Bridge
-- PKCE และ state validation
-- exact redirect URI registry
-- callback routing กลับ session ที่เริ่ม flow
-- timeout/cancel และ popup-blocked fallback
-- redact authorization code/token จาก logs
-- test parallel OAuth flows จากสอง sessions
+- ✅ loopback callback endpoint ที่ Bridge — `GET /api/oauth2/callback` (`routes/oauth2.js`), ไม่ผ่าน `requireAuth` เพราะ IdP redirect ไม่มี session cookie/CSRF token อยู่แล้ว (เหมือน desktop custom-protocol handler เดิม)
+- ✅ PKCE และ state validation — PKCE (S256) มีอยู่แล้วใน `oauth2.js`; state validation ทำผ่าน `oauth2-protocol-handler.js`'s `pendingRequests` Map (keyed by state) เหมือน desktop เดิม, route ใหม่เรียก `resolveOauth2AuthorizationRequest`/`rejectOauth2AuthorizationRequest` โดยตรง
+- ✅ exact redirect URI registry — `app.browserBridge.oauth2CallbackUrl` (คำนวณจาก `BRUNO_SERVER_HOST`/`PORT`, override ได้ผ่าน `BRUNO_SERVER_OAUTH2_CALLBACK_URL`) ถูกบังคับใช้เป็น `redirect_uri` เสมอเมื่อรันผ่าน Bridge — ไม่สนใจ `callbackUrl` ที่ผู้ใช้ตั้งไว้ (breaking change เทียบกับ desktop โดยตั้งใจ ตามที่ตัดสินใจไว้)
+- ✅ callback routing กลับ session ที่เริ่ม flow — ไม่ต้องเขียน routing code ใหม่เลย: ขาไป (`oauth2:authorization-required` event) ใช้ WindowShim's session-vs-broadcast routing ที่มีอยู่แล้ว (AsyncLocalStorage); ขากลับใช้กลไก HTTP request/response ธรรมดา — `POST /api/ipc/renderer:fetch-oauth2-credentials` เดิมค้าง pending อยู่จนกว่า callback route จะ resolve มัน แล้ว response ก็กลับไปหา browser tab เดิมเอง
+- 🟡 timeout/cancel — timeout (5 นาที) และ cancel (`renderer:cancel-oauth2-authorization-request`) มีอยู่แล้วและใช้งานได้ผ่าน Bridge โดยไม่ต้องแก้; นอกจากนี้แก้ IPC proxy's global 30s timeout ที่จะ kill flow นี้ก่อนเวลาด้วย per-channel timeout override ใหม่ (`ipc-limits.js`'s `LONG_RUNNING_CHANNEL_TIMEOUTS_MS`, override ได้ผ่าน `BRUNO_SERVER_IPC_OAUTH2_TIMEOUT_MS`) — **popup-blocked fallback UI ยังไม่ทำ** เพราะ scope นี้เป็น backend/API only ตามการตัดสินใจ
+- ✅ redact authorization code/token จาก logs — `logOauth2Callback({state, outcome})` ใน `audit-log.js` log เฉพาะ state + outcome เท่านั้น ไม่เคย log `code`
+- ✅ test parallel OAuth flows จากสอง sessions — mechanism เดิม (`pendingRequests` keyed by state, isolation ต่อ session) มี test coverage อยู่แล้วใน `oauth2-protocol-handler.spec.js`; เพิ่ม test ใหม่สำหรับ `resolveOauth2AuthorizationRequest`/`rejectOauth2AuthorizationRequest` ที่ route ใหม่เรียกใช้โดยตรง
+- **out of scope ในรอบนี้ (ตัดสินใจแล้ว)**: implicit grant ถูก reject อย่างชัดเจนเมื่อรันผ่าน Bridge (`getOAuth2TokenUsingImplicitGrant`) เพราะ browser ไม่ส่ง URL hash fragment ไปที่ server ได้ — ไม่มีทางแก้ทาง technical, และ OAuth 2.1 เองก็ deprecate implicit grant อยู่แล้ว; frontend popup UI (เปิด popup, จัดการ popup-blocked, ปิด popup อัตโนมัติหลัง callback) เป็น follow-up แยกต่างหาก
 
 ### P1.6 Runtime and Dependency Modernization
 

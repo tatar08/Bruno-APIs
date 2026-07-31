@@ -30,6 +30,7 @@ const { HandlerRegistry } = require('./handler-registry');
 const { createIpcProxyRouter } = require('./routes/ipc-proxy');
 const { createAuthRouter } = require('./routes/auth');
 const { createAdminRouter } = require('./routes/admin');
+const { createOauth2CallbackRouter } = require('./routes/oauth2');
 const { isOriginAllowed } = require('./security/origin-policy');
 const { isAuthRequired, requireAuth, bootstrapToken } = require('./security/auth');
 const { validateStartupConfig } = require('./config-validation');
@@ -50,6 +51,17 @@ const PORT = process.env.BRUNO_SERVER_PORT || 4000;
 // without an explicit opt-in. Set BRUNO_SERVER_HOST=0.0.0.0 to allow that.
 const HOST = process.env.BRUNO_SERVER_HOST || '127.0.0.1';
 const JSON_BODY_LIMIT = process.env.BRUNO_SERVER_JSON_LIMIT || '25mb';
+
+// Fixed OAuth2 loopback callback the Bridge forces as the redirect_uri for
+// every OAuth2 request it proxies (Improvement.md P1.5). Overridable for
+// deployments that sit behind a reverse proxy/different public origin than
+// HOST:PORT; otherwise computed from the same values the server itself
+// binds to. oauth2.js/authorize-user-in-system-browser.js key their
+// Bridge-vs-desktop branching on `!!app.browserBridge` alone (not on
+// whether auth is enabled), since redirect-URI forcing and the
+// window.webContents.send() delivery path both apply either way.
+const OAUTH2_CALLBACK_URL =
+  process.env.BRUNO_SERVER_OAUTH2_CALLBACK_URL || `http://${HOST}:${PORT}/api/oauth2/callback`;
 
 // --- Initialize core components ---
 
@@ -135,7 +147,13 @@ const electronShim = {
     setPath: () => {},
     commandLine: { appendSwitch: () => {} },
     focus: () => {},
-    addRecentDocument: () => {}
+    addRecentDocument: () => {},
+    // Presence of this property (not its value) is how bruno-electron code
+    // detects it's running under the Browser Bridge rather than desktop
+    // Electron — see oauth2.js and authorize-user-in-system-browser.js.
+    browserBridge: {
+      oauth2CallbackUrl: OAUTH2_CALLBACK_URL
+    }
   },
   dialog: require('./adapters/dialog-shim'),
   shell: {
@@ -426,6 +444,9 @@ const registerHandlers = () => {
 app.use('/api/auth', createAuthRouter(handlerRegistry, windowShim, createFakeEvent, getCollectionWatcher));
 app.use('/api/ipc', requireAuth, createIpcProxyRouter(handlerRegistry, windowShim, createFakeEvent));
 app.use('/api/admin', requireAuth, createAdminRouter());
+// Not behind requireAuth — see routes/oauth2.js's header comment for why an
+// IdP redirect can never carry a Bridge session cookie/CSRF token.
+app.use('/api/oauth2', createOauth2CallbackRouter());
 
 // Health check
 app.get('/api/health', (req, res) => {

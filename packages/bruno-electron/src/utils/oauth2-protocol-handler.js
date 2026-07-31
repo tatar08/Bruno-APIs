@@ -185,6 +185,7 @@ const handleOauth2ProtocolUrl = (url) => {
 
 module.exports = {
   registerOauth2AuthorizationRequest,
+  resolveOauth2AuthorizationRequest,
   rejectOauth2AuthorizationRequest,
   cancelOAuth2AuthorizationRequest,
   isOauth2AuthorizationRequestInProgress,
