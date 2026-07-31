@@ -130,7 +130,7 @@ Browser version ในปัจจุบันมี functional parity กับ
 
 - ✅ เพิ่ม `allowedRoots` configuration (`BRUNO_SERVER_ALLOWED_ROOTS`, opt-in — ปิดเป็นค่าเริ่มต้น)
 - ✅ resolve path ด้วย `realpath` ก่อน authorize
-- ✅ ป้องกัน `..`, symlink escape — มี unit test ครอบทั้งคู่; UNC/network path และ case-insensitive bypass บน Windows ยังไม่ได้ทดสอบเฉพาะเจาะจง
+- ✅ ป้องกัน `..`, symlink escape — มี unit test ครอบทั้งคู่; 🟡 UNC/drive-relative path บน Windows ตอนนี้ถูก scanner จับเป็น candidate แล้ว (แก้ `ABSOLUTE_PATH_RE` ให้ครอบ `C:foo` แบบ drive-relative ที่เดิมหลุด scan ไปเลย นอกเหนือจาก `C:\foo`/`C:/foo`/UNC `\\server\share` ที่ครอบอยู่แล้ว) มี unit test ระดับ string-matching ครบ; case-insensitive bypass พึ่งพา `fs.realpathSync` ให้ normalize casing ทั้งสองฝั่งก่อนเทียบ (มี comment อธิบาย mechanism ไว้ใน `isUnderRoot()`) แต่ยังไม่เคยรันยืนยันจริงบน Windows host เพราะไม่มี Windows box ใน environment นี้
 - ✅ แยก read/write permission ต่อ root — root ต่อท้ายด้วย `:ro` (เช่น `BRUNO_SERVER_ALLOWED_ROOTS=/rw-root,/reference-root:ro`) ถูก enforce เป็น read-only; fail-safe ต่อ channel ที่ยังไม่ตรวจสอบ (มี allowlist มือ 8 channel ที่ยืนยันว่าอ่านอย่างเดียวจาก `filesystem.js`, channel อื่นถือเป็น write แล้วบล็อกกับ root ที่เป็น ro ไปก่อน) — error code แยก `PATH_READ_ONLY_ROOT`
 - ✅ ให้ผู้ใช้ revoke root ได้ — runtime admin API (`GET`/`DELETE /api/admin/allowed-roots`), mount หลัง `requireAuth` เหมือน `/api/ipc`; revoke-only (narrow เท่านั้น ไม่มี un-revoke/add), เก็บ state ใน memory ที่ reset กลับเป็นค่า env var ตอน restart; log ผ่าน `logRootRevoked`
 - ✅ บันทึก audit event โดยไม่ log secret/file content — `security/audit-log.js` log เฉพาะ channel/denied-path/session/requestId ตอน sandbox ปฏิเสธ (403) ไม่แตะ argument หรือ file content
@@ -138,7 +138,7 @@ Browser version ในปัจจุบันมี functional parity กับ
 
 **ข้อจำกัดสำคัญ**: ตัว scanner เป็น generic เดาจาก "string ที่หน้าตาเหมือน absolute path" ไม่รู้ semantic รายช่อง — เป็น **safety net เสริม ไม่ใช่ per-channel validation ที่สมบูรณ์** (มีแค่ 5/~85+ handler ที่รับ path ที่เคย validate เองมาก่อนหน้านี้) มี extension point (`CHANNEL_PATH_EXTRACTORS`) ให้เพิ่มความแม่นยำทีละ channel ได้ในอนาคต
 
-**Acceptance criteria:** ทุก filesystem handler ผ่าน policy layer เดียว 🟡 (ผ่าน chokepoint เดียวจริง แต่เป็น generic scan ไม่ใช่ per-channel) และ test traversal/symlink/Windows path edge cases ครบ 🟡 (traversal+symlink มี, Windows-specific ยังไม่มี)
+**Acceptance criteria:** ทุก filesystem handler ผ่าน policy layer เดียว 🟡 (ผ่าน chokepoint เดียวจริง แต่เป็น generic scan ไม่ใช่ per-channel) และ test traversal/symlink/Windows path edge cases ครบ 🟡 (traversal+symlink มี live test จริงบน Linux, Windows path-shape detection มี unit test ระดับ string-matching แล้ว แต่ยังไม่มี live test บน Windows host จริง)
 
 ### P0.4 Per-Session Isolation ✅ เสร็จแล้ว (ทำงานเมื่อเปิด P0.1 auth เท่านั้น — ไม่เปิด auth = session เดียว ไม่มีอะไรให้ isolate)
 

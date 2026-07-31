@@ -226,5 +226,30 @@ describe('allowed-roots filesystem sandbox', () => {
       ];
       expect(findPathsInValue(value)).toEqual(['/abs/one', '/abs/two', '/abs/three']);
     });
+
+    // Windows path shapes (Improvement.md P0.3 gap: "UNC/network path และ
+    // case-insensitive bypass บน Windows ยังไม่ได้ทดสอบเฉพาะเจาะจง"). These
+    // exercise only the pure string-matching logic — there is no Windows
+    // host in this environment to verify actual fs/realpath behavior against,
+    // see the case-insensitivity note on isUnderRoot() in allowed-roots.js.
+    it('flags Windows drive-absolute paths (backslash and forward-slash forms)', () => {
+      const { findPathsInValue } = loadModule();
+      expect(findPathsInValue(['C:\\Users\\foo\\collection.bru'])).toEqual(['C:\\Users\\foo\\collection.bru']);
+      expect(findPathsInValue(['C:/Users/foo/collection.bru'])).toEqual(['C:/Users/foo/collection.bru']);
+    });
+
+    it('flags Windows UNC and extended-length paths', () => {
+      const { findPathsInValue } = loadModule();
+      expect(findPathsInValue(['\\\\server\\share\\collection.bru'])).toEqual(['\\\\server\\share\\collection.bru']);
+      expect(findPathsInValue(['\\\\?\\C:\\Users\\foo\\collection.bru'])).toEqual(['\\\\?\\C:\\Users\\foo\\collection.bru']);
+    });
+
+    it('flags Windows drive-relative paths (no separator after the colon)', () => {
+      const { findPathsInValue } = loadModule();
+      // `C:foo` resolves against drive C's current directory on Windows —
+      // easy to miss visually since it doesn't "look" absolute, but it can
+      // still resolve outside an allowed root just like the other forms.
+      expect(findPathsInValue(['C:foo\\..\\..\\secret'])).toEqual(['C:foo\\..\\..\\secret']);
+    });
   });
 });

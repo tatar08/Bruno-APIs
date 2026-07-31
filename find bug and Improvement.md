@@ -508,6 +508,21 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P0.3 Filesystem Sandbox (ต่อ) — Windows path-shape gap ใน scanner
+
+สำรวจต่อจาก P0.2 increment ก่อนหน้า — item ที่เหลือของ P0.3 ที่ระบุไว้ชัดใน roadmap คือ "UNC/network path และ case-insensitive bypass บน Windows ยังไม่ได้ทดสอบเฉพาะเจาะจง" อ่านโค้ด `security/allowed-roots.js` (`ABSOLUTE_PATH_RE`, ตัว regex ที่ใช้ตัดสินว่า string หน้าตาเหมือน absolute path หรือไม่ก่อนจะเข้า containment check) พบช่องโหว่จริง ไม่ใช่แค่ "ยังไม่ได้เทส" เฉย ๆ:
+
+**บั๊กที่พบ**: `ABSOLUTE_PATH_RE` เดิม (`/^(\/|[a-zA-Z]:[\\/]|\\\\)/`) จับได้แค่ Windows drive-absolute path ที่มี separator ต่อจาก colon ทันที (`C:\foo`, `C:/foo`) และ UNC path (`\\server\share`) แต่ Windows ยังมีรูปแบบ **drive-relative path** (`C:foo` — ไม่มี separator หลัง colon) ที่ resolve โดยอิงกับ current directory ของ drive นั้น (Node's `path.win32.resolve()` รองรับ behavior นี้ตรงตาม native Windows API) — regex เดิมไม่ match รูปแบบนี้เลย แปลว่า string ที่หน้าตาแบบ `C:foo\..\..\secret` จะไม่ถูกจับเป็น candidate ตั้งแต่ต้น (`findPathsInValue` ข้ามไปเฉย ๆ) เท่ากับหลุด sandbox check ทั้งหมดบน Windows deployment โดยไม่ต้องพึ่ง `..` traversal หรือ symlink escape เลยด้วยซ้ำ — เป็นช่องโหว่ที่ตรงข้ามกับ design philosophy ที่ comment เดิมของไฟล์เขียนไว้เอง (favor over-matching/false-positive มากกว่า under-matching/silent bypass)
+
+**การแก้ไข** (`packages/bruno-server/src/security/allowed-roots.js`):
+- แก้ `ABSOLUTE_PATH_RE` เป็น `/^(\/|[a-zA-Z]:|\\\\)/` — เอา requirement ที่ต้องมี separator ต่อจาก drive-letter colon ออก ทำให้ครอบ `C:foo` (drive-relative) ด้วย นอกเหนือจาก `C:\foo`/`C:/foo`/UNC/extended-length (`\\?\C:\foo`) ที่ครอบอยู่แล้ว — เพิ่ม comment อธิบาย 4 รูปแบบ path ที่ regex ต้องครอบและเหตุผลที่ drive-relative form มองข้ามง่าย
+- เพิ่ม comment อธิบาย mechanism ของ case-insensitive bypass protection ที่ `isUnderRoot()` — `parseAllowedRoots()` ตอน start และ `resolveForContainmentCheck()` ต่อ candidate ทั้งคู่ผ่าน `fs.realpathSync()` ก่อนเทียบ string ซึ่ง realpath จะ normalize เป็น casing จริงบน disk ให้เอง เทียบกันได้ถูกต้องแม้ filesystem เป็น case-insensitive (Windows/macOS default) — ระบุตรง ๆ ในเอกสารว่า mechanism นี้อ้างอิง Node.js `fs.realpathSync()` behavior ที่มีเอกสารรองรับ ไม่ใช่ live-verified เพราะไม่มี Windows host ใน environment นี้ให้ทดสอบจริง (ตั้งใจไม่เคลมเกินสิ่งที่ตรวจสอบได้จริง)
+- **Unit tests**: `security/__tests__/allowed-roots.spec.js` เพิ่ม 3 เคสใหม่ใน `findPathsInValue` describe block — drive-absolute (`C:\foo`, `C:/foo`), UNC/extended-length (`\\server\share`, `\\?\C:\foo`), และ drive-relative (`C:foo\..\..\secret`) ยืนยันว่าทุกรูปแบบถูกจับเป็น candidate แล้ว — เทสระดับ string-matching ล้วน (ไม่พึ่ง Windows filesystem จริง) suite รวมทั้งแพ็กเกจตอนนี้ 243/243 ผ่าน (เพิ่มจาก 240/240)
+
+**ยังไม่ทำ (ตั้งใจเว้นไว้)**: live verification บน Windows host จริงยังไม่มี เพราะไม่มี Windows box ใน environment นี้ — สิ่งที่ยืนยันได้ตอนนี้จำกัดอยู่ที่ระดับ string-matching logic (regex + `path` module behavior ที่ไม่ผูกกับ OS จริง) ไม่ใช่ end-to-end behavior ผ่าน `fs.realpathSync()`/`ipc-proxy.js` บน Windows จริง — ถ้าต้องการ confidence เต็มร้อยต้องรัน full test suite นี้บน Windows CI runner จริงอีกรอบ (ตอนนี้ repo ไม่มี CI pipeline เลย ดู P0.5/P1.3 note เรื่องนี้ด้วย)
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

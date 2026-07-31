@@ -50,7 +50,17 @@ const path = require('path');
 
 const MAX_SCAN_DEPTH = 3;
 
-const ABSOLUTE_PATH_RE = /^(\/|[a-zA-Z]:[\\/]|\\\\)/;
+// Matches POSIX absolute paths (`/foo`), Windows drive-absolute paths
+// (`C:\foo`, `C:/foo`), Windows UNC/extended-length paths (`\\server\share`,
+// `\\?\C:\foo`), and Windows drive-*relative* paths (`C:foo`, no separator
+// after the colon — resolves against that drive's current directory, which
+// Node's path.win32.resolve() honors same as native Windows APIs do). The
+// drive-relative form is easy to miss because it looks unlike a "real" path
+// at a glance, but it is exactly as capable of escaping an allowed root as
+// the other forms once resolved, so it must be flagged as a candidate too —
+// consistent with this scanner's documented bias toward over-matching
+// (false-positive rejection) over under-matching (silent bypass).
+const ABSOLUTE_PATH_RE = /^(\/|[a-zA-Z]:|\\\\)/;
 
 // Verified against packages/bruno-electron/src/ipc/filesystem.js: every
 // handler in that file only stats/reads/lists/resolves paths, none of them
@@ -151,6 +161,17 @@ function resolveForContainmentCheck(candidatePath) {
   }
 }
 
+// Note on case-insensitive filesystems (Windows/macOS default, NTFS/APFS):
+// this containment check is a plain case-sensitive string comparison, which
+// would be bypassable on its own (e.g. root `C:\Users\foo\Collections` vs.
+// candidate `C:\USERS\foo\collections\..\secret`). It is safe in practice
+// only because both sides are realpath'd first — parseAllowedRoots() at
+// startup and resolveForContainmentCheck() per candidate above — and
+// fs.realpathSync() queries the OS for the canonical on-disk casing of an
+// existing path, normalizing both sides to the same casing before this
+// comparison ever runs. This has not been exercised on an actual Windows
+// host (no such box in this environment); it relies on documented Node.js
+// fs.realpathSync() behavior rather than a live-verified test.
 function isUnderRoot(resolvedPath, rootPath) {
   const relative = path.relative(rootPath, resolvedPath);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
