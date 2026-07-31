@@ -74,5 +74,50 @@ describe('channel-policy', () => {
       expect(validateArgs('terminal:list-sessions', [])).toBeNull();
       expect(validateArgs('terminal:list-sessions', ['unexpected'])).toMatch(/expects 0 argument/);
     });
+
+    it('validates renderer:delete-item (pathname, type, collectionPathname)', () => {
+      expect(validateArgs('renderer:delete-item', ['/c/req.bru', 'http-request', '/c'])).toBeNull();
+      expect(validateArgs('renderer:delete-item', ['/c/req.bru', 'http-request'])).toMatch(/expects 3 argument/);
+      expect(validateArgs('renderer:delete-item', ['/c/req.bru', 123, '/c'])).toMatch(
+        /argument 1 must be of type string, got number/
+      );
+    });
+
+    it('validates renderer:delete-environment (collectionPathname, environmentName)', () => {
+      expect(validateArgs('renderer:delete-environment', ['/c', 'Production'])).toBeNull();
+      expect(validateArgs('renderer:delete-environment', ['/c'])).toMatch(/expects 2 argument/);
+    });
+
+    it('validates renderer:delete-dotenv-file (collectionPathname, optional filename)', () => {
+      expect(validateArgs('renderer:delete-dotenv-file', ['/c'])).toBeNull();
+      expect(validateArgs('renderer:delete-dotenv-file', ['/c', '.env.local'])).toBeNull();
+      expect(validateArgs('renderer:delete-dotenv-file', [])).toMatch(/expects 1-2 argument/);
+      expect(validateArgs('renderer:delete-dotenv-file', ['/c', 123])).toMatch(
+        /argument 1 must be of type string, got number/
+      );
+    });
+
+    it('validates renderer:delete-transient-requests (filePaths[], tempDirectory)', () => {
+      expect(validateArgs('renderer:delete-transient-requests', [['/tmp/a.bru'], '/tmp/bruno-tmp'])).toBeNull();
+      expect(validateArgs('renderer:delete-transient-requests', [['/tmp/a.bru']])).toMatch(/expects 2 argument/);
+      expect(validateArgs('renderer:delete-transient-requests', ['/tmp/a.bru', '/tmp/bruno-tmp'])).toMatch(
+        /argument 0 must be of type array, got string/
+      );
+    });
+
+    it('validates renderer:remove-collection (collectionPath, collectionUid, workspacePath)', () => {
+      expect(validateArgs('renderer:remove-collection', ['/c', 'uid-1', 'ws-1'])).toBeNull();
+      expect(validateArgs('renderer:remove-collection', ['/c', 'uid-1'])).toMatch(/expects 3 argument/);
+    });
+
+    it('validates renderer:delete-cookies-for-domain (domain)', () => {
+      expect(validateArgs('renderer:delete-cookies-for-domain', ['example.com'])).toBeNull();
+      expect(validateArgs('renderer:delete-cookies-for-domain', [])).toMatch(/expects 1 argument/);
+    });
+
+    it('validates renderer:delete-cookie (domain, path, cookieKey)', () => {
+      expect(validateArgs('renderer:delete-cookie', ['example.com', '/', 'session'])).toBeNull();
+      expect(validateArgs('renderer:delete-cookie', ['example.com', '/'])).toMatch(/expects 3 argument/);
+    });
   });
 });

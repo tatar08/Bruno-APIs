@@ -40,7 +40,20 @@ const CHANNEL_SCHEMAS = {
   'terminal:input': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
   'terminal:resize': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'object'] },
   'terminal:kill': { minArgs: 1, maxArgs: 1, argTypes: ['string'] },
-  'terminal:list-sessions': { minArgs: 0, maxArgs: 0, argTypes: [] }
+  'terminal:list-sessions': { minArgs: 0, maxArgs: 0, argTypes: [] },
+
+  // Irreversible deletion channels (ipc/collection.js) — same "outsized
+  // consequences" criterion as the git/terminal schemas above. Signatures
+  // verified against both the ipcMain.handle() destructuring in
+  // bruno-electron/src/ipc/collection.js and the actual ipcRenderer.invoke()
+  // call sites in bruno-app (ReduxStore/slices/{app,collections}/actions.js).
+  'renderer:delete-item': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
+  'renderer:delete-environment': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:delete-dotenv-file': { minArgs: 1, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:delete-transient-requests': { minArgs: 2, maxArgs: 2, argTypes: ['array', 'string'] },
+  'renderer:remove-collection': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
+  'renderer:delete-cookies-for-domain': { minArgs: 1, maxArgs: 1, argTypes: ['string'] },
+  'renderer:delete-cookie': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] }
 };
 
 /**

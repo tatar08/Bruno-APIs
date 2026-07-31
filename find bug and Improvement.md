@@ -487,6 +487,27 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P0.2 Channel Policy (ต่อ) — เพิ่ม `CHANNEL_SCHEMAS` ครอบกลุ่ม destructive collection-delete
+
+สำรวจ roadmap ที่เหลือทั้งหมดอีกครั้งหลัง Docker image (P1.3) เสร็จ — เหลือแต่ item ที่ต้องถามผู้ใช้ก่อน (P1.1 file explorer UI, P1.2 ที่เหลือ, P1.5 OAuth popup UI ที่ตัดสินใจ scope ไว้แล้วว่า out-of-scope, P1.6 major-version dependency bump ที่ roadmap เขียนเตือนไว้เองว่าห้ามรวมกันเป็น PR เดียวและมีความเสี่ยง regression สูง) หรือ greenfield feature หลายเดือน (P2.x/P3.x) — กลับมาดู `channel-policy.js` อีกรอบพบว่า comment บนสุดของไฟล์ระบุชัดว่า "authoring schema ให้ครบทั้ง ~203 channel ในครั้งเดียวมีความเสี่ยง false-positive 400 สูงกว่าจะช่วยจับบั๊กจริง" — ตั้งใจให้เป็น extension point ที่เพิ่มทีละกลุ่มความเสี่ยงสูงพร้อม verify signature จริงก่อนเสมอ (แบบเดียวกับที่ terminal + git-mutate ทำไปแล้วใน increment ก่อนหน้า) จึงเลือกทำต่อในรูปแบบเดียวกัน แทนที่จะพยายามครอบทุก handler ในรอบเดียว
+
+**เกณฑ์เลือกกลุ่มถัดไป**: ใช้เกณฑ์เดียวกับที่ comment ในไฟล์ระบุไว้ — "ผลลัพธ์ผิดพลาดจาก shape ที่ผิดมี consequence สูง" ตรวจสอบแล้วว่า capability `git` (จาก `ipc/git.js`) มีแค่ channel เดียว (`renderer:clone-git-repository`) และถูกครอบไปแล้ว 100% ตั้งแต่ increment ก่อน, capability `terminal` (จาก `ipc/terminal.js`) มี 5 channel ครบทั้งหมดถูกครอบไปแล้วเช่นกัน — สองกลุ่มที่ comment เดิมอ้างถึงเสร็จสมบูรณ์แล้วจริง จึงเลือกกลุ่มถัดไปที่เข้าเกณฑ์เดียวกัน: **channel ที่ลบข้อมูลแบบย้อนกลับไม่ได้** (`ipc/collection.js`, capability `collections`) เพราะ argument shape ผิดอาจนำไปสู่การลบไฟล์/environment/cookie ผิดตัว
+
+**การเปลี่ยนแปลงจริง** (`packages/bruno-server/src/security/channel-policy.js`):
+- เพิ่ม 7 schema ใหม่ใน `CHANNEL_SCHEMAS` — signature ตรวจสอบสองชั้น: (1) อ่าน destructuring ของ `ipcMain.handle()` ใน `bruno-electron/src/ipc/collection.js` ตรง ๆ (2) grep call site จริงของ `ipcRenderer.invoke(...)` ใน `bruno-app/src/providers/ReduxStore/slices/{app,collections}/actions.js` เพื่อยืนยันจำนวน/ลำดับ argument ที่ใช้งานจริงตรงกับ schema ที่เขียน (ไม่ได้เขียนจาก signature อย่างเดียวเหมือนเดา):
+  - `renderer:delete-item` (pathname, type, collectionPathname) — 3 string บังคับ
+  - `renderer:delete-environment` (collectionPathname, environmentName) — 2 string บังคับ
+  - `renderer:delete-dotenv-file` (collectionPathname, filename?) — filename มีค่า default `.env` ใน handler เอง จึงอนุญาต 1-2 argument
+  - `renderer:delete-transient-requests` (filePaths[], tempDirectory) — array + string
+  - `renderer:remove-collection` (collectionPath, collectionUid, workspacePath) — 3 string บังคับ (call site จริงส่งครบ 3 เสมอ)
+  - `renderer:delete-cookies-for-domain` (domain) — 1 string บังคับ
+  - `renderer:delete-cookie` (domain, path, cookieKey) — 3 string บังคับ
+- **Unit tests**: `security/__tests__/channel-policy.spec.js` เพิ่ม 7 เคสใหม่ (valid shape ผ่าน, arg count ผิดโดน 400, arg type ผิดโดน 400) — suite รวมทั้งแพ็กเกจตอนนี้ 240/240 ผ่าน (เพิ่มจาก 233/233 ก่อนหน้า)
+
+**ยังไม่ทำ (ตั้งใจเว้นไว้เหมือนเดิม)**: schema ครบทั้ง ~203 handler ยังไม่ทำด้วยเหตุผลเดิม — ตอนนี้ครอบไปแล้ว 15 channel (git-mutate 3 + terminal 5 + collection-delete 7) กลุ่มที่เหลือ (เช่น rename/move item, save-file, import/export collection) ยังไม่ตรวจ signature จึงยังไม่ใส่ schema ให้ เพื่อไม่ให้เสี่ยง false-positive 400 กับ flow จริงที่ยังไม่ได้ verify
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี
