@@ -6,6 +6,60 @@ const { resolveGrpcProxyConfig } = require('./grpc-event-handlers');
 
 const emptyInterpolationOptions = {};
 
+describe('closeAllConnections (Improvement.md P1.3 graceful shutdown)', () => {
+  const mockOnSpy = jest.fn();
+
+  jest.mock('electron', () => ({
+    ipcMain: { handle: jest.fn(), on: jest.fn() },
+    app: { on: (...args) => mockOnSpy(...args), getPath: () => '/tmp', getVersion: () => '0.0.0' }
+  }));
+
+  const mockClearAllConnections = jest.fn();
+  jest.mock('@usebruno/requests', () => ({
+    ...jest.requireActual('@usebruno/requests'),
+    GrpcClient: jest.fn().mockImplementation(() => ({ clearAllConnections: mockClearAllConnections }))
+  }));
+
+  beforeEach(() => {
+    jest.resetModules();
+    mockOnSpy.mockClear();
+    mockClearAllConnections.mockClear();
+  });
+
+  it('is a safe no-op before any window has registered handlers (grpcClient never created)', () => {
+    const { closeAllConnections } = require('./grpc-event-handlers');
+    expect(() => closeAllConnections()).not.toThrow();
+  });
+
+  it('clears connections on the grpcClient created by registerGrpcEventHandlers, read via closure', () => {
+    const registerGrpcEventHandlers = require('./grpc-event-handlers');
+    const { closeAllConnections } = registerGrpcEventHandlers;
+    const window = { isDestroyed: () => false, webContents: { send: jest.fn(), isDestroyed: () => false } };
+
+    registerGrpcEventHandlers(window);
+    closeAllConnections();
+
+    expect(mockClearAllConnections).toHaveBeenCalledTimes(1);
+  });
+
+  it('is also wired up to Electron\'s window-all-closed event', () => {
+    require('./grpc-event-handlers');
+    expect(mockOnSpy).toHaveBeenCalledWith('window-all-closed', expect.any(Function));
+  });
+
+  it('tolerates clearAllConnections throwing', () => {
+    mockClearAllConnections.mockImplementationOnce(() => {
+      throw new Error('boom');
+    });
+    const registerGrpcEventHandlers = require('./grpc-event-handlers');
+    const { closeAllConnections } = registerGrpcEventHandlers;
+    const window = { isDestroyed: () => false, webContents: { send: jest.fn(), isDestroyed: () => false } };
+
+    registerGrpcEventHandlers(window);
+    expect(() => closeAllConnections()).not.toThrow();
+  });
+});
+
 describe('resolveGrpcProxyConfig', () => {
   describe('proxyMode "off"', () => {
     it('should return null proxyUrl', async () => {

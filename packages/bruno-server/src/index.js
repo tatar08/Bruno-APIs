@@ -31,6 +31,18 @@ const { createIpcProxyRouter } = require('./routes/ipc-proxy');
 const { createAuthRouter } = require('./routes/auth');
 const { isOriginAllowed } = require('./security/origin-policy');
 const { isAuthRequired, requireAuth, bootstrapToken } = require('./security/auth');
+const { validateStartupConfig } = require('./config-validation');
+const { getBuildInfo } = require('./health');
+
+// Fail fast on invalid config rather than letting a typo'd env var silently
+// fall back to its default deep inside some other module (Improvement.md P1.3).
+const startupConfigErrors = validateStartupConfig();
+if (startupConfigErrors.length > 0) {
+  console.error('\n❌ Invalid Bruno Bridge Server configuration:\n');
+  startupConfigErrors.forEach((message) => console.error(`   - ${message}`));
+  console.error('');
+  process.exit(1);
+}
 
 const PORT = process.env.BRUNO_SERVER_PORT || 4000;
 // Loopback by default so the Bridge isn't reachable from the LAN/internet
@@ -58,6 +70,16 @@ const handlerRegistry = new HandlerRegistry();
 // route registration (createAuthRouter, below) happens before that.
 let collectionWatcher = null;
 const getCollectionWatcher = () => collectionWatcher;
+
+// Captured for graceful shutdown (Improvement.md P1.3) — the modules that
+// create these normally rely on Electron-only lifecycle hooks
+// ('window-all-closed') to tear them down, which never fire under the
+// Bridge's electron shim (see registerHandlers() below and the shutdown()
+// handler near the bottom of this file).
+let workspaceWatcher = null;
+let terminalManager = null;
+let wsEventHandlers = null;
+let grpcEventHandlers = null;
 
 // --- Middleware ---
 
@@ -230,6 +252,11 @@ const registerHandlers = () => {
     // Network handlers (HTTP requests, gRPC, WebSocket)
     const registerNetworkIpc = require(path.join(electronSrcPath, 'ipc/network'));
     registerNetworkIpc(windowShim);
+    // Same resolved absolute path as what ipc/network/index.js required
+    // internally, so require() hits Node's module cache and returns the
+    // exact same module objects (with wsClient/grpcClient already created).
+    wsEventHandlers = require(path.join(electronSrcPath, 'ipc/network/ws-event-handlers'));
+    grpcEventHandlers = require(path.join(electronSrcPath, 'ipc/network/grpc-event-handlers'));
     console.log('  ✅ Network handlers registered');
   } catch (err) {
     console.warn('  ⚠️  Failed to load network handlers:', err.message);
@@ -251,7 +278,7 @@ const registerHandlers = () => {
     // Workspace handlers
     const registerWorkspaceIpc = require(path.join(electronSrcPath, 'ipc/workspace'));
     const WorkspaceWatcher = require(path.join(electronSrcPath, 'app/workspace-watcher'));
-    const workspaceWatcher = new WorkspaceWatcher();
+    workspaceWatcher = new WorkspaceWatcher();
     registerWorkspaceIpc(windowShim, workspaceWatcher);
     console.log('  ✅ Workspace handlers registered');
   } catch (err) {
@@ -337,7 +364,7 @@ const registerHandlers = () => {
   try {
     // TerminalManager registers its IPC handlers in the constructor.
     const TerminalManager = require(path.join(electronSrcPath, 'ipc/terminal'));
-    new TerminalManager();
+    terminalManager = new TerminalManager();
     console.log('  ✅ Terminal handlers registered');
   } catch (err) {
     console.warn('  ⚠️  Failed to load Terminal handlers:', err.message);
@@ -408,6 +435,35 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Liveness: the process is up and handling requests. Deliberately checks
+// nothing about downstream state — a liveness probe should only fail when
+// the process itself is deadlocked/crashed, not because of a transient
+// dependency issue (that's what readiness is for).
+app.get('/health/live', (req, res) => {
+  res.json({ status: 'ok', ...getBuildInfo() });
+});
+
+// Readiness: the server has finished starting up and its core dependencies
+// are in place. Individual handler-module load failures during
+// registerHandlers() are already tolerated as non-fatal (logged, not
+// thrown) so the server keeps serving everything else — readiness mirrors
+// that same tolerance rather than flipping the whole server unready over
+// one degraded module.
+app.get('/health/ready', (req, res) => {
+  const dependencies = {
+    httpServer: server.listening,
+    ipcHandlers: handlerRegistry.getChannels().length > 0,
+    collectionWatcher: collectionWatcher !== null
+  };
+  const ready = Object.values(dependencies).every(Boolean);
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ok' : 'not_ready',
+    ...getBuildInfo(),
+    channels: handlerRegistry.getChannels().length,
+    dependencies
+  });
+});
+
 // --- Start Server ---
 
 console.log('\n🚀 Starting Bruno Bridge Server...\n');
@@ -449,16 +505,77 @@ server.listen(PORT, HOST, () => {
   }
 });
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n🛑 Shutting down Bruno Bridge Server...');
-  server.close(() => {
-    process.exit(0);
-  });
-});
+// Graceful shutdown (Improvement.md P1.3): stop accepting new connections,
+// then tear down every resource the Bridge may be holding on behalf of
+// connected sessions — terminals, WS/gRPC connections, filesystem watchers,
+// and the event-bridge WebSocket server — before exiting. A hard timeout
+// guards against any single step hanging forever.
+const SHUTDOWN_TIMEOUT_MS = 10000;
+let isShuttingDown = false;
 
-process.on('SIGTERM', () => {
-  server.close(() => {
-    process.exit(0);
-  });
-});
+const shutdown = async (signal) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`\n🛑 Received ${signal}, shutting down Bruno Bridge Server gracefully...`);
+
+  const forceExitTimer = setTimeout(() => {
+    console.error('⚠️  Graceful shutdown timed out, forcing exit');
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS);
+  forceExitTimer.unref?.();
+
+  // server.close() synchronously stops accepting new connections but its
+  // callback only fires once every connection on the underlying HTTP server
+  // has ended — including the long-lived upgraded sockets that WS clients
+  // hold open indefinitely. Kick it off now (so no new work comes in) but
+  // don't await it until after eventBridge.close() has terminated those WS
+  // sockets below, or a single connected browser tab would hang this whole
+  // function until the timeout.
+  const httpClosed = new Promise((resolve) => server.close(resolve));
+
+  try {
+    terminalManager?.killAll();
+    console.log('  ✅ Terminals closed');
+  } catch (err) {
+    console.error('  ⚠️  Error closing terminals:', err.message);
+  }
+
+  try {
+    wsEventHandlers?.closeAllConnections?.();
+    grpcEventHandlers?.closeAllConnections?.();
+    console.log('  ✅ WebSocket/gRPC connections closed');
+  } catch (err) {
+    console.error('  ⚠️  Error closing WebSocket/gRPC connections:', err.message);
+  }
+
+  try {
+    await Promise.allSettled([
+      collectionWatcher?.closeAllWatchers?.(),
+      workspaceWatcher?.closeAllWatchers?.()
+    ]);
+    console.log('  ✅ Filesystem watchers closed');
+  } catch (err) {
+    console.error('  ⚠️  Error closing filesystem watchers:', err.message);
+  }
+
+  try {
+    await eventBridge.close();
+    console.log('  ✅ Event bridge closed');
+  } catch (err) {
+    console.error('  ⚠️  Error closing event bridge:', err.message);
+  }
+
+  try {
+    await httpClosed;
+    console.log('  ✅ HTTP server closed (no new connections accepted)');
+  } catch (err) {
+    console.error('  ⚠️  Error closing HTTP server:', err.message);
+  }
+
+  clearTimeout(forceExitTimer);
+  console.log('👋 Shutdown complete');
+  process.exit(0);
+};
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

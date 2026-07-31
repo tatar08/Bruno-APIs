@@ -472,8 +472,25 @@ const registerWsEventHandlers = (window) => {
   });
 };
 
+/**
+ * Closes every active WebSocket connection. Reads `wsClient` at call time
+ * (closure over the module-level binding, not the value captured in the
+ * `module.exports` object below) so it works correctly even though
+ * `wsClient` is only assigned once `registerWsEventHandlers()` runs.
+ */
+const closeAllConnections = () => {
+  if (wsClient && typeof wsClient.clearAllConnections === 'function') {
+    try {
+      wsClient.clearAllConnections();
+    } catch (error) {
+      console.error('Error clearing WebSocket connections:', error);
+    }
+  }
+};
+
 module.exports = {
   registerWsEventHandlers,
   wsClient,
-  prepareWsRequest
+  prepareWsRequest,
+  closeAllConnections
 };

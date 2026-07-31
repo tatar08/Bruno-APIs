@@ -128,4 +128,61 @@ describe('EventBridge', () => {
       expect(bridge._subscriptions.has(ws)).toBe(false);
     });
   });
+
+  describe('close (Improvement.md P1.3 graceful shutdown)', () => {
+    it('is a no-op when attach() was never called', async () => {
+      const bridge = new EventBridge();
+      await expect(bridge.close()).resolves.toBeUndefined();
+    });
+
+    it('terminates all connected clients and clears tracking state', async () => {
+      const server = new http.Server();
+      const bridge = new EventBridge();
+      bridge.attach(server);
+
+      const a = new EventEmitter();
+      a.send = jest.fn();
+      a.terminate = jest.fn();
+      const b = new EventEmitter();
+      b.send = jest.fn();
+      b.terminate = jest.fn();
+
+      bridge._wss.emit('connection', a, { headers: {} });
+      bridge._wss.emit('connection', b, { headers: {} });
+      expect(bridge._clients.size).toBe(2);
+
+      await bridge.close();
+
+      expect(a.terminate).toHaveBeenCalledTimes(1);
+      expect(b.terminate).toHaveBeenCalledTimes(1);
+      expect(bridge._clients.size).toBe(0);
+      expect(bridge._subscriptions.size).toBe(0);
+    });
+
+    it('stops the heartbeat interval', async () => {
+      const server = new http.Server();
+      const bridge = new EventBridge();
+      bridge.attach(server);
+      expect(bridge._heartbeatInterval).not.toBeNull();
+
+      await bridge.close();
+
+      expect(bridge._heartbeatInterval).toBeNull();
+    });
+
+    it('tolerates a client whose terminate() throws', async () => {
+      const server = new http.Server();
+      const bridge = new EventBridge();
+      bridge.attach(server);
+
+      const a = new EventEmitter();
+      a.send = jest.fn();
+      a.terminate = jest.fn(() => {
+        throw new Error('boom');
+      });
+      bridge._wss.emit('connection', a, { headers: {} });
+
+      await expect(bridge.close()).resolves.toBeUndefined();
+    });
+  });
 });

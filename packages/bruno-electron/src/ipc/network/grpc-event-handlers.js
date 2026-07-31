@@ -498,18 +498,27 @@ const registerGrpcEventHandlers = (window) => {
   });
 };
 
+/**
+ * Closes every active gRPC connection. Exported so callers outside the
+ * Electron 'window-all-closed' lifecycle (e.g. the Browser Bridge server's
+ * graceful shutdown, which never fires that Electron-only event) can invoke
+ * the same cleanup.
+ */
+const closeAllConnections = () => {
+  if (grpcClient && typeof grpcClient.clearAllConnections === 'function') {
+    try {
+      grpcClient.clearAllConnections();
+    } catch (error) {
+      console.error('Error clearing gRPC connections:', error);
+    }
+  }
+};
+
 // Clean up gRPC connections when all windows are closed
 if (app && typeof app.on === 'function') {
-  app.on('window-all-closed', () => {
-    if (grpcClient && typeof grpcClient.clearAllConnections === 'function') {
-      try {
-        grpcClient.clearAllConnections();
-      } catch (error) {
-        console.error('Error clearing gRPC connections:', error);
-      }
-    }
-  });
+  app.on('window-all-closed', closeAllConnections);
 }
 
 module.exports = registerGrpcEventHandlers;
 module.exports.resolveGrpcProxyConfig = resolveGrpcProxyConfig;
+module.exports.closeAllConnections = closeAllConnections;

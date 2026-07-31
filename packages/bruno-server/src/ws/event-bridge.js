@@ -163,6 +163,31 @@ class EventBridge {
   get clientCount() {
     return this._clients.size;
   }
+
+  /**
+   * Graceful shutdown (Improvement.md P1.3): terminate every connected
+   * client, stop the heartbeat, and close the underlying WebSocketServer.
+   * Safe to call even if attach() was never invoked.
+   */
+  close() {
+    if (this._heartbeatInterval) {
+      clearInterval(this._heartbeatInterval);
+      this._heartbeatInterval = null;
+    }
+
+    for (const ws of this._clients) {
+      try {
+        ws.terminate();
+      } catch (err) {
+        // Best-effort — the process is shutting down regardless.
+      }
+    }
+    this._clients.clear();
+    this._subscriptions.clear();
+
+    if (!this._wss) return Promise.resolve();
+    return new Promise((resolve) => this._wss.close(() => resolve()));
+  }
 }
 
 module.exports = { EventBridge };
