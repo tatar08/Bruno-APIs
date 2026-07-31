@@ -9,6 +9,7 @@ const { runSingleRequest } = require('../runner/run-single-request');
 const { getEnvVars } = require('../utils/bru');
 const { parseEnvironmentJson } = require('../utils/environment');
 const { isRequestTagsIncluded } = require('@usebruno/common');
+const { parseRunnerDataset } = require('@usebruno/common').utils;
 const makeJUnitOutput = require('../reporters/junit');
 const makeHtmlOutput = require('../reporters/html');
 const { getOptions } = require('../utils/bru');
@@ -48,7 +49,7 @@ const printGenericTable = (headers, rows, title) => {
   console.log(table.toString());
 };
 
-const printRunSummary = (results) => {
+const printRunSummary = (results, iterationCount) => {
   const summary = getRunnerSummary(results);
 
   const duration = Math.round(
@@ -77,6 +78,10 @@ const printRunSummary = (results) => {
     ['Assertions', assertions],
     ['Duration (ms)', duration]
   ];
+
+  if (iterationCount > 1) {
+    rows.splice(1, 0, ['Iterations', iterationCount]);
+  }
 
   printGenericTable(headers, rows, '📊 Execution Summary');
 
@@ -212,6 +217,10 @@ const builder = async (yargs) => {
       type: 'number',
       description: 'Delay between each requests (in miliseconds)'
     })
+    .option('dataset', {
+      type: 'string',
+      description: 'Path to a dataset file (.json or .csv) to run the collection once per row'
+    })
     .option('tags', {
       type: 'string',
       description: 'Tags to include in the run'
@@ -269,6 +278,7 @@ const builder = async (yargs) => {
     )
     .example('$0 run --client-cert-config client-cert-config.json', 'Run a request with Client certificate configurations')
     .example('$0 run folder --delay delayInMs', 'Run a folder with given miliseconds delay between each requests.')
+    .example('$0 run folder --dataset data.csv', 'Run a folder once per row of data.csv, exposing each row\'s columns as runtime variables')
     .example('$0 run --noproxy', 'Run requests with system proxy disabled')
     .example(
       '$0 run folder --tags=hello,world --exclude-tags=skip',
@@ -315,6 +325,7 @@ const handler = async function (argv) {
       noproxy,
       cacheSslSession,
       delay,
+      dataset: datasetPath,
       tags: includeTags,
       excludeTags,
       verbose
@@ -358,7 +369,8 @@ const handler = async function (argv) {
       }
     }
 
-    const runtimeVariables = {};
+    const baseRuntimeVariables = {};
+    let runtimeVariables = baseRuntimeVariables;
     let envVars = {};
     let envFileDescriptor = null;
     let globalEnvFileDescriptor = null;
@@ -683,157 +695,207 @@ const handler = async function (argv) {
       });
     };
 
-    let currentRequestIndex = 0;
-    let nJumps = 0; // count the number of jumps to avoid infinite loops
-    let bailInfo = null; // populated only if --bail triggers
-    while (currentRequestIndex < requestItems.length) {
-      const requestItem = cloneDeep(requestItems[currentRequestIndex]);
-      const { name, pathname } = requestItem;
-
-      const start = process.hrtime();
-      const result = await runSingleRequest(
-        requestItem,
-        collectionPath,
-        runtimeVariables,
-        envVars,
-        processEnvVars,
-        brunoConfig,
-        collectionRoot,
-        runtime,
-        collection,
-        runSingleRequestByPathname,
-        globalEnvVars,
-        persistPaths
-      );
-
-      const isLastRun = currentRequestIndex === requestItems.length - 1;
-      const isValidDelay = !Number.isNaN(delay) && delay > 0;
-      if (isValidDelay && !isLastRun) {
-        console.log(chalk.yellow(`Waiting for ${delay}ms or ${(delay / 1000).toFixed(3)}s before next request.`));
-        await new Promise((resolve) => setTimeout(resolve, delay));
+    let datasetRows = null;
+    let datasetInfo = null;
+    if (datasetPath) {
+      const resolvedDatasetPath = path.resolve(collectionPath, datasetPath);
+      const datasetExists = await exists(resolvedDatasetPath);
+      if (!datasetExists) {
+        console.error(chalk.red(`Dataset file "${datasetPath}" does not exist.`));
+        process.exit(constants.EXIT_STATUS.ERROR_FILE_NOT_FOUND);
       }
 
-      if (Number.isNaN(delay) && !isLastRun) {
-        console.log(chalk.red(`Ignoring delay because it's not a valid number.`));
+      const MAX_DATASET_BYTES = 10 * 1024 * 1024;
+      const datasetStats = fs.statSync(resolvedDatasetPath);
+      if (datasetStats.size > MAX_DATASET_BYTES) {
+        console.error(chalk.red(`Dataset file "${datasetPath}" cannot be larger than 10 MB.`));
+        process.exit(constants.EXIT_STATUS.ERROR_INVALID_FILE);
       }
 
-      results.push({
-        ...result,
-        runDuration: process.hrtime(start)[0] + process.hrtime(start)[1] / 1e9,
-        suitename: stripExtension(pathname),
-        name,
-        path: result.test?.filename || path.relative(collectionPath, pathname)
-      });
-
-      sanitizeResultsForReporter(results, {
-        skipAllHeaders: reporterSkipAllHeaders,
-        skipHeaders: reporterSkipHeaders,
-        skipRequestBody: reporterSkipRequestBody || reporterSkipBody,
-        skipResponseBody: reporterSkipResponseBody || reporterSkipBody
-      });
-
-      // bail if option is set and there is a failure
-      if (bail) {
-        const requestFailure = result?.error && !result?.skipped;
-        const testFailure = result?.testResults?.find((iter) => iter.status === 'fail');
-        const assertionFailure = result?.assertionResults?.find((iter) => iter.status === 'fail');
-        const preRequestTestFailure = result?.preRequestTestResults?.find((iter) => iter.status === 'fail');
-        const postResponseTestFailure = result?.postResponseTestResults?.find((iter) => iter.status === 'fail');
-        if (requestFailure || testFailure || assertionFailure || preRequestTestFailure || postResponseTestFailure) {
-          // Pick the most specific reason for the user-facing message
-          let bailReason;
-          if (requestFailure) bailReason = 'request failure';
-          else if (assertionFailure) bailReason = 'assertion failure';
-          else if (preRequestTestFailure) bailReason = 'pre-request test failure';
-          else if (postResponseTestFailure) bailReason = 'post-response test failure';
-          else bailReason = 'test failure';
-
-          const remainingItems = requestItems.slice(currentRequestIndex + 1);
-
-          // Synthesize "Skipped (Bail)" placeholder results for the requests that never
-          // ran due to bail. These let getRunnerSummary count them as skipped, and the
-          // summary table can distinguish them from user-initiated skips via skipReason.
-          for (const ri of remainingItems) {
-            const relativePath = path.relative(collectionPath, ri.pathname);
-            results.push({
-              test: {
-                filename: relativePath
-              },
-              request: {
-                method: null,
-                url: null,
-                headers: null,
-                data: null
-              },
-              response: {
-                status: 'skipped',
-                statusText: null,
-                data: null,
-                responseTime: 0
-              },
-              status: 'skipped',
-              skipped: true,
-              skipReason: 'bail',
-              testResults: [],
-              assertionResults: [],
-              preRequestTestResults: [],
-              postResponseTestResults: [],
-              runDuration: 0,
-              suitename: stripExtension(ri.pathname),
-              name: ri.name,
-              path: relativePath
-            });
-          }
-
-          bailInfo = {
-            bailed: true,
-            bailReason,
-            bailedAt: name,
-            skippedByBail: remainingItems.length
-          };
-
-          console.log(
-            '\n' + chalk.hex(constants.COLORS.ORANGE)(
-              `Bail: Stopping run, ${bailReason} in "${name}". Remaining ${remainingItems.length} request(s) skipped.`
+      try {
+        const datasetContent = fs.readFileSync(resolvedDatasetPath, 'utf8');
+        const parsedDataset = parseRunnerDataset(datasetContent, resolvedDatasetPath);
+        datasetRows = parsedDataset.rows;
+        datasetInfo = { fileName: path.basename(resolvedDatasetPath), columns: parsedDataset.columns };
+        console.log(
+          chalk.dim(
+            chalk.grey(
+              `Loaded dataset ${datasetInfo.fileName}: ${datasetRows.length} iteration(s), variables: ${datasetInfo.columns.join(', ')}`
             )
-          );
+          )
+        );
+      } catch (err) {
+        console.error(chalk.red(`Failed to parse dataset file "${datasetPath}": ${err.message}`));
+        process.exit(constants.EXIT_STATUS.ERROR_INVALID_FILE);
+      }
+    }
 
+    const iterations = datasetRows && datasetRows.length > 0 ? datasetRows : [null];
+    let bailInfo = null; // populated only if --bail triggers
+    let runTerminated = false; // set when a bail failure or bru.runner.stopExecution() should end the whole run
+
+    for (let iterationIndex = 0; iterationIndex < iterations.length && !runTerminated; iterationIndex++) {
+      const iterationRow = iterations[iterationIndex];
+      // Reassign (never mutate in place) so envVars, declared once above, keeps flowing
+      // unchanged across iterations while runtimeVariables resets to the next dataset row.
+      runtimeVariables = iterationRow ? { ...cloneDeep(baseRuntimeVariables), ...cloneDeep(iterationRow) } : cloneDeep(baseRuntimeVariables);
+
+      let currentRequestIndex = 0;
+      let nJumps = 0; // count the number of jumps to avoid infinite loops
+      while (currentRequestIndex < requestItems.length) {
+        const requestItem = cloneDeep(requestItems[currentRequestIndex]);
+        const { name, pathname } = requestItem;
+
+        const start = process.hrtime();
+        const result = await runSingleRequest(
+          requestItem,
+          collectionPath,
+          runtimeVariables,
+          envVars,
+          processEnvVars,
+          brunoConfig,
+          collectionRoot,
+          runtime,
+          collection,
+          runSingleRequestByPathname,
+          globalEnvVars,
+          persistPaths
+        );
+
+        const isLastRun = iterationIndex === iterations.length - 1 && currentRequestIndex === requestItems.length - 1;
+        const isValidDelay = !Number.isNaN(delay) && delay > 0;
+        if (isValidDelay && !isLastRun) {
+          console.log(chalk.yellow(`Waiting for ${delay}ms or ${(delay / 1000).toFixed(3)}s before next request.`));
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+
+        if (Number.isNaN(delay) && !isLastRun) {
+          console.log(chalk.red(`Ignoring delay because it's not a valid number.`));
+        }
+
+        results.push({
+          ...result,
+          runDuration: process.hrtime(start)[0] + process.hrtime(start)[1] / 1e9,
+          suitename: datasetInfo ? `${stripExtension(pathname)} (iteration ${iterationIndex + 1})` : stripExtension(pathname),
+          name,
+          path: result.test?.filename || path.relative(collectionPath, pathname),
+          ...(datasetInfo ? { iterationIndex, iterationCount: iterations.length } : {})
+        });
+
+        sanitizeResultsForReporter(results, {
+          skipAllHeaders: reporterSkipAllHeaders,
+          skipHeaders: reporterSkipHeaders,
+          skipRequestBody: reporterSkipRequestBody || reporterSkipBody,
+          skipResponseBody: reporterSkipResponseBody || reporterSkipBody
+        });
+
+        // bail if option is set and there is a failure
+        if (bail) {
+          const requestFailure = result?.error && !result?.skipped;
+          const testFailure = result?.testResults?.find((iter) => iter.status === 'fail');
+          const assertionFailure = result?.assertionResults?.find((iter) => iter.status === 'fail');
+          const preRequestTestFailure = result?.preRequestTestResults?.find((iter) => iter.status === 'fail');
+          const postResponseTestFailure = result?.postResponseTestResults?.find((iter) => iter.status === 'fail');
+          if (requestFailure || testFailure || assertionFailure || preRequestTestFailure || postResponseTestFailure) {
+            // Pick the most specific reason for the user-facing message
+            let bailReason;
+            if (requestFailure) bailReason = 'request failure';
+            else if (assertionFailure) bailReason = 'assertion failure';
+            else if (preRequestTestFailure) bailReason = 'pre-request test failure';
+            else if (postResponseTestFailure) bailReason = 'post-response test failure';
+            else bailReason = 'test failure';
+
+            const remainingItems = requestItems.slice(currentRequestIndex + 1);
+
+            // Synthesize "Skipped (Bail)" placeholder results for the requests that never
+            // ran due to bail. These let getRunnerSummary count them as skipped, and the
+            // summary table can distinguish them from user-initiated skips via skipReason.
+            for (const ri of remainingItems) {
+              const relativePath = path.relative(collectionPath, ri.pathname);
+              results.push({
+                test: {
+                  filename: relativePath
+                },
+                request: {
+                  method: null,
+                  url: null,
+                  headers: null,
+                  data: null
+                },
+                response: {
+                  status: 'skipped',
+                  statusText: null,
+                  data: null,
+                  responseTime: 0
+                },
+                status: 'skipped',
+                skipped: true,
+                skipReason: 'bail',
+                testResults: [],
+                assertionResults: [],
+                preRequestTestResults: [],
+                postResponseTestResults: [],
+                runDuration: 0,
+                suitename: datasetInfo ? `${stripExtension(ri.pathname)} (iteration ${iterationIndex + 1})` : stripExtension(ri.pathname),
+                name: ri.name,
+                path: relativePath,
+                ...(datasetInfo ? { iterationIndex, iterationCount: iterations.length } : {})
+              });
+            }
+
+            bailInfo = {
+              bailed: true,
+              bailReason,
+              bailedAt: name,
+              skippedByBail: remainingItems.length
+            };
+
+            console.log(
+              '\n' + chalk.hex(constants.COLORS.ORANGE)(
+                `Bail: Stopping run, ${bailReason} in "${name}". Remaining ${remainingItems.length} request(s) skipped.`
+              )
+            );
+
+            runTerminated = true;
+            break;
+          }
+        }
+
+        // determine next request
+        const nextRequestName = result?.nextRequestName;
+
+        if (result?.shouldStopRunnerExecution) {
+          runTerminated = true;
           break;
         }
-      }
 
-      // determine next request
-      const nextRequestName = result?.nextRequestName;
-
-      if (result?.shouldStopRunnerExecution) {
-        break;
-      }
-
-      if (nextRequestName !== undefined) {
-        nJumps++;
-        if (nJumps > 10000) {
-          console.error(chalk.red(`Too many jumps, possible infinite loop`));
-          process.exit(constants.EXIT_STATUS.ERROR_INFINITE_LOOP);
-        }
-        if (nextRequestName === null) {
-          break;
-        }
-        const nextRequestIdx = requestItems.findIndex((iter) => iter.name === nextRequestName);
-        if (nextRequestIdx >= 0) {
-          currentRequestIndex = nextRequestIdx;
+        if (nextRequestName !== undefined) {
+          nJumps++;
+          if (nJumps > 10000) {
+            console.error(chalk.red(`Too many jumps, possible infinite loop`));
+            process.exit(constants.EXIT_STATUS.ERROR_INFINITE_LOOP);
+          }
+          if (nextRequestName === null) {
+            // ends only the current iteration; the dataset run continues with the next row
+            break;
+          }
+          const nextRequestIdx = requestItems.findIndex((iter) => iter.name === nextRequestName);
+          if (nextRequestIdx >= 0) {
+            currentRequestIndex = nextRequestIdx;
+          } else {
+            console.error('Could not find request with name \'' + nextRequestName + '\'');
+            currentRequestIndex++;
+          }
         } else {
-          console.error('Could not find request with name \'' + nextRequestName + '\'');
           currentRequestIndex++;
         }
-      } else {
-        currentRequestIndex++;
       }
     }
 
     const skippedFileResults = createSkippedFileResults(global.brunoSkippedFiles || [], collectionPath);
     results.push(...skippedFileResults);
 
-    const summary = printRunSummary(results);
+    const summary = printRunSummary(results, iterations.length);
     const runCompletionTime = new Date().toISOString();
     const totalTime = results.reduce((acc, res) => acc + res.response.responseTime, 0);
     console.log(chalk.dim(chalk.grey(`Ran all requests - ${totalTime} ms`)));

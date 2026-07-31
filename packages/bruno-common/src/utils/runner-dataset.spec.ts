@@ -1,4 +1,4 @@
-const { parseRunnerDataset } = require('../runner-dataset');
+import { parseRunnerDataset } from './runner-dataset';
 
 describe('runner dataset parser', () => {
   it('parses a JSON array and preserves value types', () => {

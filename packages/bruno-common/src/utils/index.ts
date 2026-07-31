@@ -44,6 +44,14 @@ export {
 } from './string';
 
 export {
+  parseRunnerDataset,
+  RUNNER_DATASET_MAX_ROWS
+} from './runner-dataset';
+export type {
+  ParsedRunnerDataset
+} from './runner-dataset';
+
+export {
   MAX_BODY_SIZE_DEFAULT,
   isStrPresent,
   makeEdgeGridTimestamp,

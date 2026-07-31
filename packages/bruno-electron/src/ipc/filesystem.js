@@ -11,7 +11,7 @@ const {
   isDirectory
 } = require('../utils/filesystem');
 const { findUniqueFolderName } = require('../utils/collection-import');
-const { parseRunnerDataset } = require('../utils/runner-dataset');
+const { parseRunnerDataset } = require('@usebruno/common').utils;
 
 const MAX_RUNNER_DATASET_BYTES = 10 * 1024 * 1024;
 
