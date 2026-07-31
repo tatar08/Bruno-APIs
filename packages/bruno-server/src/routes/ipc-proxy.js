@@ -9,6 +9,7 @@
 const express = require('express');
 const { isPrivilegedChannel, PRIVILEGED_CHANNELS_ENABLED } = require('../security/privileged-channels');
 const { findDisallowedPath } = require('../security/allowed-roots');
+const { logSandboxDenial } = require('../security/audit-log');
 const {
   checkRateLimit,
   acquireConcurrencySlot,
@@ -85,6 +86,7 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
 
     const disallowedPath = findDisallowedPath(channel, args);
     if (disallowedPath) {
+      logSandboxDenial({ channel, path: disallowedPath, sessionId: req.brunoSessionId, requestId });
       return res.status(403).json({
         code: ERROR_CODES.PATH_OUTSIDE_ALLOWED_ROOT,
         error: `Path "${disallowedPath}" is outside the allowed roots configured for this Bridge (BRUNO_SERVER_ALLOWED_ROOTS).`

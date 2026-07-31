@@ -90,7 +90,7 @@ Browser version ในปัจจุบันมี functional parity กับ
 - ✅ validate `Origin` ทั้ง HTTP และ WebSocket ด้วย exact allowlist
 - ✅ เพิ่ม CSRF protection หากใช้ cookie session
 - ✅ rotate/revoke session และปิด WebSocket ทันทีเมื่อ logout/หมดอายุ
-- 🟡 redact token, cookie, Authorization และ secret values จาก log — bootstrap token ปริ้นท์ครั้งเดียวตอน start เท่านั้น (ไม่ log ซ้ำ) แต่ยังไม่มี blanket log-redaction layer ทั่วทั้ง server
+- ✅ redact token, cookie, Authorization และ secret values จาก log — ตรวจสอบ `console.*` call site ทั้งหมดใน `bruno-server` แล้ว (78 จุด) ไม่มีจุดไหน log token/cookie/session/header ตรง ๆ เลย (bootstrap token ปริ้นท์ครั้งเดียวตอน start ตามดีไซน์); 🟡 **ข้อจำกัดที่แยกออกมาต่างหาก**: error message ที่ handler throw ขึ้นมา (`err.message`) ถูก log ต่อโดยไม่ sanitize เนื้อหา — ถ้า handler ตัวใดปล่อยข้อมูล sensitive ปนใน error message เอง (เช่น URL ที่มี credential ฝังอยู่) จะยัง log ออกไปได้ ต้อง audit ทีละ handler เหมือนปัญหา schema validation ของ P0.2 ไม่ใช่ redaction layer ที่ทำได้ใน 1 increment เล็ก ๆ
 
 **Acceptance criteria:**
 
@@ -133,8 +133,8 @@ Browser version ในปัจจุบันมี functional parity กับ
 - ✅ ป้องกัน `..`, symlink escape — มี unit test ครอบทั้งคู่; UNC/network path และ case-insensitive bypass บน Windows ยังไม่ได้ทดสอบเฉพาะเจาะจง
 - แยก read/write permission ต่อ root — ยังไม่ทำ (ตอนนี้ allow/deny รวมทั้ง root ไม่แยก read/write)
 - ให้ผู้ใช้ revoke root ได้ — ยังไม่ทำ (ตั้งค่าผ่าน env var ตอน start เท่านั้น ไม่มี runtime UI)
-- บันทึก audit event โดยไม่ log secret/file content — ยังไม่ทำ
-- upload ต้องตรวจ size, extension, magic bytes และ filename normalization — ยังไม่ทำ
+- ✅ บันทึก audit event โดยไม่ log secret/file content — `security/audit-log.js` log เฉพาะ channel/denied-path/session/requestId ตอน sandbox ปฏิเสธ (403) ไม่แตะ argument หรือ file content
+- upload ต้องตรวจ size, extension, magic bytes และ filename normalization — ยังไม่ทำ (ยังไม่มี upload flow จริงในระบบจนกว่าจะทำ P1.1 file explorer)
 
 **ข้อจำกัดสำคัญ**: ตัว scanner เป็น generic เดาจาก "string ที่หน้าตาเหมือน absolute path" ไม่รู้ semantic รายช่อง — เป็น **safety net เสริม ไม่ใช่ per-channel validation ที่สมบูรณ์** (มีแค่ 5/~85+ handler ที่รับ path ที่เคย validate เองมาก่อนหน้านี้) มี extension point (`CHANNEL_PATH_EXTRACTORS`) ให้เพิ่มความแม่นยำทีละ channel ได้ในอนาคต
 
