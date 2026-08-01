@@ -33,7 +33,7 @@
 | B10 | 🟡 ต่ำ | `network/index.js:1991` | 4xx/5xx response ไม่ส่งต่อ flag `__brunoDisableParsingResponseJson` ให้ `parseDataFromResponse` |
 | B11 | 🟡 ต่ำ | `RunnerResults/index.jsx:99,319` | Delay input เป็น controlled input ที่ค่าเริ่มต้นเป็น `null` (React warning) และ `status === 'cancelled'` ที่เช็คไว้ไม่มีวันเกิด |
 | B12 | 🟡 ต่ำ | `network/index.js:2143-2144` | testError fallback ใช้ `envVars`/`runtimeVariables` ตัวเดิมแทน `currentEnvVars`/`currentRuntimeVars` (ไม่สอดคล้องกับที่ส่งเข้า runtime) |
-| B13 | 🟠 กลาง | root `package-lock.json` (ไม่มี entry `node_modules/simple-git`) | `bruno-electron/package.json` ประกาศ `simple-git@3.32.3` เป็น dependency แต่ lockfile ไม่มี resolved entry ให้เลย — ทุกครั้งที่ install ด้วย `npm ci` (fresh clone, CI ในอนาคต, Docker build — ดู P1.3 ด้านล่าง) module นี้จะหายไป ทำให้ `bruno-electron/src/utils/git.js` โหลดไม่ได้ และ handler กลุ่ม git integration (`ipc/git.js`) กับบางส่วนของ preferences (`ipc/preferences.js`) หายไปแบบ graceful-degrade (log `⚠️ Failed to load ... handlers: Cannot find module 'simple-git'` แล้ว server ยังบูตต่อได้ปกติ ไม่ crash) พบระหว่าง live-verify Docker image (P1.3) — ยืนยันแล้วว่าไม่ใช่ Docker-specific: host node_modules ปัจจุบันก็ไม่มี `simple-git` เหมือนกัน **แก้:** รัน `npm install` (ไม่ใช่ `npm ci`) ที่ root เพื่อ sync lockfile ให้มี resolved entry ของ `simple-git` แล้ว commit `package-lock.json` ที่อัปเดต — เป็นการเปลี่ยนแปลง lockfile ระดับ repo กว้าง (35k+ บรรทัด) ที่ควรทำแยกจาก increment นี้และรัน full test suite ยืนยันหลังทำ ไม่ได้แก้เป็นส่วนหนึ่งของ Docker packaging work เพราะ scope ต่างกัน |
+| B13 | ✅ แก้แล้ว | root `package-lock.json` | `bruno-electron/package.json` ประกาศ `simple-git@3.32.3` เป็น dependency แต่ตอนพบบัคนี้ lockfile ไม่มี resolved entry ให้ — **แก้แล้วเป็นผลพลอยได้จากงาน P1.6** (Electron/Express/React dependency bump ที่รัน `npm install` ที่ root หลายรอบ) ยืนยันด้วย `npm ls simple-git --workspaces` (resolve สะอาด, ตรง version ที่ package.json ประกาศ), boot `bruno-server` จริงแล้วเช็ค log เห็น "✅ Git handlers registered"/"✅ Preferences handlers registered" ครบ 203/203 handler ไม่มี `⚠️ Failed to load` warning เลย และ `bruno-electron` suite เต็ม 47/47 suites, 681/682 tests ผ่าน (1 skip เดิมไม่เกี่ยวข้อง) — ไม่ต้องแก้อะไรเพิ่ม |
 
 ---
 
@@ -701,6 +701,18 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 **การเปลี่ยนแปลงจริง**: ไม่มีการแก้ `channel-policy.js`/`channel-policy.spec.js` เพิ่มในรอบนี้ (0 schema ใหม่) — อัปเดตเฉพาะ `Improvement.md` บรรทัด P0.2 ให้ระบุว่า capability-by-capability survey ครบทั้ง 13 capability แล้ว (`collections`, `workspace`, `environments`, `git`, `filesystem`, `preferences`, `system`, `notifications`, `apispec`, `terminal`, `network`, `ai`, `ui`)
 
 **สถานะ P0.2 ตอนนี้**: ครอบ 65 channel จาก ~203 total — ครบทุก capability ที่เข้าเกณฑ์แล้ว (4 capability จบด้วย "ไม่ต้องเพิ่ม schema" คือ `filesystem`, `system`, `notifications`, `ui`; อีก 9 capability มี schema อย่างน้อย 1 channel) การสำรวจแบบ capability-by-capability ที่ทำมาตลอดหลาย increment ถือว่า**เสร็จสมบูรณ์**แล้ว ส่วนที่เหลืออีก ~138 channel ที่ไม่มี schema เป็น read-only/query/get channel หรือ channel ที่ argument shape ยืดหยุ่นโดยตั้งใจ (ตรงตาม design ของไฟล์ที่ระบุใน comment บนสุด — ไม่ใช่ backlog ที่ต้องทำต่อ)
+
+---
+
+### B13 — ยืนยันว่าแก้แล้ว (ผลพลอยได้จาก P1.6 dependency bump)
+
+เมื่อ `CHANNEL_SCHEMAS` survey ครบทั้ง 13 capability แล้ว (ดูรายการด้านบน) กลับไปดู backlog ที่เหลือใน `find bug and Improvement.md`/`Improvement.md` พบว่า B13 (`simple-git` หายจาก root `package-lock.json` ทำให้ git integration handler โหลดไม่ได้ตอน `npm ci`) ยังค้างอยู่ในสถานะ "ยังไม่ทำ" ตั้งแต่ตอนพบระหว่าง live-verify Docker image (P1.3)
+
+ตรวจสอบสถานะปัจจุบันก่อนแก้ พบว่า**แก้แล้วโดยไม่ตั้งใจ** — commit ชุด P1.6 (bump Electron 6 commit ทีละ major, Express 4→5.1, React 19.0.0→19.2.8 — ทั้งหมดรัน `npm install` ที่ root ก่อน commit `package-lock.json`) resync lockfile ให้มี resolved entry ของ `simple-git` ที่ `packages/bruno-electron/node_modules/simple-git` ไปด้วยโดยเป็นผลข้างเคียง ไม่ใช่การแก้ตรง ๆ
+
+**Verification**: `npm ls simple-git --workspaces` resolve สะอาด ตรงกับ `bruno-electron/package.json`'s `simple-git@3.32.3`, `require.resolve('simple-git')` จาก `packages/bruno-electron` หา module เจอจริง, boot `bruno-server/src/index.js` จริงแล้วอ่าน log เห็น "✅ Git handlers registered" และ "✅ Preferences handlers registered" ครบทั้งคู่ ไม่มี `⚠️ Failed to load` warning เลย รวม 203/203 handler register สำเร็จ (เทียบกับตอนพบบัคที่เห็นแค่ 196), `bruno-electron` full suite รัน 47/47 suites, 681/682 tests ผ่าน (1 skip เดิมไม่เกี่ยวข้อง — ไม่มี regression)
+
+**การเปลี่ยนแปลงจริง**: ไม่มีการแก้โค้ด/lockfile เพิ่มในรอบนี้ (แก้ไปแล้วตั้งแต่ commit P1.6 ก่อนหน้า) — อัปเดตแค่สถานะ B13 ในตารางสรุปด้านบน (หัวข้อ 1) จาก 🟠 กลาง เป็น ✅ แก้แล้ว
 
 ---
 
