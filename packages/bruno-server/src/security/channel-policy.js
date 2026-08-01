@@ -13,9 +13,10 @@
  * channels, the rename/move/save/import-export collection channels, and
  * the save-* file-overwrite channels (spanning ipc/collection.js,
  * ipc/global-environments.js, ipc/openapi-sync.js, ipc/preferences.js and
- * ipc/workspace.js), and the workspace-level mutation/destructive channels
- * (ipc/workspace.js). Everything else is fail-open (no schema registered →
- * no additional validation beyond "args is an array").
+ * ipc/workspace.js), the workspace-level mutation/destructive channels
+ * (ipc/workspace.js), and the remaining environments-capability mutation
+ * channels (ipc/global-environments.js). Everything else is fail-open (no
+ * schema registered → no additional validation beyond "args is an array").
  */
 
 const { getCapability } = require('./channel-capabilities');
@@ -137,7 +138,22 @@ const CHANNEL_SCHEMAS = {
   'renderer:rename-workspace-environment': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
   'renderer:copy-workspace-environment': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
   'renderer:add-collection-to-workspace': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'object'] },
-  'renderer:remove-collection-from-workspace': { minArgs: 3, maxArgs: 4, argTypes: ['string', 'string', 'string', 'object'] }
+  'renderer:remove-collection-from-workspace': { minArgs: 3, maxArgs: 4, argTypes: ['string', 'string', 'string', 'object'] },
+
+  // Remaining environments-capability mutation channels (ipc/global-environments.js)
+  // not already covered by the save-* group above. delete-global-environment and
+  // delete-workspace-dotenv-file are the destructive members (data loss on a
+  // wrong/missing environmentUid or filename); the rest (create/rename/select/
+  // recolor) are additive or cosmetic but schema'd for consistency since they
+  // share the same single-object-argument call shape. renderer:get-global-environments
+  // is intentionally left unschema'd — it's read-only.
+  'renderer:create-global-environment': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:rename-global-environment': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:delete-global-environment': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:select-global-environment': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:update-global-environment-color': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:create-workspace-dotenv-file': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:delete-workspace-dotenv-file': { minArgs: 1, maxArgs: 1, argTypes: ['object'] }
 };
 
 /**

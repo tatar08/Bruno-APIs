@@ -344,5 +344,23 @@ describe('channel-policy', () => {
         /argument 3 must be of type object, got string/
       );
     });
+
+    it('validates the remaining global-environments mutation channels (single object argument)', () => {
+      const channels = [
+        'renderer:create-global-environment',
+        'renderer:rename-global-environment',
+        'renderer:delete-global-environment',
+        'renderer:select-global-environment',
+        'renderer:update-global-environment-color',
+        'renderer:create-workspace-dotenv-file',
+        'renderer:delete-workspace-dotenv-file'
+      ];
+
+      for (const channel of channels) {
+        expect(validateArgs(channel, [{ environmentUid: 'env-uid', workspacePath: '/ws' }])).toBeNull();
+        expect(validateArgs(channel, [])).toMatch(/expects 1 argument/);
+        expect(validateArgs(channel, ['not-an-object'])).toMatch(/argument 0 must be of type object, got string/);
+      }
+    });
   });
 });

@@ -650,6 +650,25 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P0.2 Channel Policy (ต่อ อีกครั้ง) — สำรวจ capability `filesystem` (ตัดสินใจไม่เพิ่ม schema) + เพิ่ม `CHANNEL_SCHEMAS` ครอบกลุ่ม environments-capability mutation channel ที่เหลือ
+
+สำรวจ capability `filesystem` (`packages/bruno-electron/src/ipc/filesystem.js`, 115 บรรทัด, 8 handler) ตามคิวที่วางไว้ในรอบก่อน — อ่านทั้งไฟล์พบว่า handler ทั้งหมด (`browse-directory`, `browse-files`, `browse-pac-file`, `load-runner-dataset`, `exists-sync`, `resolve-path`, `is-directory`, `find-unique-folder-name`) เป็น dialog-opener/read-only/query operation ล้วน ๆ ไม่มี `writeFile`/`removePath`/`fsExtra.remove` หรือ destructive operation ใด ๆ เลย ต่างจากทุกกลุ่มที่ครอบมาก่อนหน้านี้อย่างชัดเจน — **ตัดสินใจไม่เพิ่ม schema สำหรับ capability นี้** เพราะไม่เข้าเกณฑ์ "outsized consequences" ที่ comment บนสุดของ `channel-policy.js` กำหนดไว้ (data loss, arbitrary file overwrite, wrong-target deletion) การเดา argument shape ผิดในกลุ่มนี้อย่างมากก็แค่ throw error หรือ dialog ไม่เปิด ไม่ใช่ risk-shape ที่ layer นี้ตั้งใจป้องกัน
+
+หันไปตรวจ capability `environments` แทน (`ipc/global-environments.js`) พบว่า increment ก่อนหน้า (กลุ่ม save-* กว้าง) ครอบไปแล้วแค่ 3 จาก 10 handler ในไฟล์นี้ (`save-global-environment`, `save-workspace-dotenv-variables`, `save-workspace-dotenv-raw`) ยังเหลือ mutation channel อีก 7 ตัวที่ยังไม่ครอบ: `create-global-environment`, `rename-global-environment`, `delete-global-environment`, `select-global-environment`, `update-global-environment-color`, `create-workspace-dotenv-file`, `delete-workspace-dotenv-file` (เหลือแค่ `get-global-environments` ที่เป็น read-only จงใจไม่ครอบ)
+
+**ตัวที่เสี่ยงสูงสุดในกลุ่ม**: `renderer:delete-global-environment` (ลบ global environment ทิ้งถ้า `environmentUid` ผิด/สลับตำแหน่ง) และ `renderer:delete-workspace-dotenv-file` (`fs.unlinkSync(dotEnvPath)` แบบไม่มี guard อื่นนอกจาก `fs.existsSync` check ก่อนหน้า) ทั้งสองตัวนี้เข้าเกณฑ์ data loss ชัดเจน ส่วนที่เหลือ (create/rename/select/recolor) ความเสี่ยง data loss ต่ำกว่ามากแต่ครอบไปด้วยเพื่อความสม่ำเสมอ เพราะใช้ call shape เดียวกันหมด (single object argument ผ่าน `ipcRenderer.invoke(channel, { ... })`)
+
+**Verification**: อ่าน handler body จริงทุกตัวใน `ipc/global-environments.js` (ทั้งไฟล์ 273 บรรทัด) cross-reference กับ call site จริงใน `ReduxStore/slices/global-environments.js` (บรรทัด 144, 174, 198, 266, 280, 351) และ `ReduxStore/slices/workspaces/actions.js` (บรรทัด 1327, 1347 สำหรับ `create-workspace-dotenv-file`/`delete-workspace-dotenv-file`) — ยืนยันทุกจุดว่า handler ปลายทางรับ argument เดียวเป็น object ที่ destructure เป็น field ต่าง ๆ (`environmentUid`, `name`, `variables`, `color`, `workspaceUid`, `workspacePath`, `filename` ฯลฯ) ตรงกับ pattern `save-global-environment` ที่ครอบไปแล้วในรอบก่อน (`minArgs: 1, maxArgs: 1, argTypes: ['object']`)
+
+**การเปลี่ยนแปลงจริง** (`packages/bruno-server/src/security/channel-policy.js`):
+- เพิ่ม 7 schema ใหม่ทั้งหมดเป็นรูปแบบเดียวกัน: `{ minArgs: 1, maxArgs: 1, argTypes: ['object'] }` — `create-global-environment`, `rename-global-environment`, `delete-global-environment`, `select-global-environment`, `update-global-environment-color`, `create-workspace-dotenv-file`, `delete-workspace-dotenv-file`
+- อัปเดต header comment ด้านบนไฟล์ให้รวม "remaining environments-capability mutation channels (ipc/global-environments.js)" เข้าไปในรายการกลุ่มที่ครอบแล้ว
+- **Unit tests**: `security/__tests__/channel-policy.spec.js` เพิ่ม 1 เคสใหม่ครอบทั้ง 7 channel ใน loop เดียว (valid object ผ่าน, missing arg → 400, wrong type → 400) — suite รวมทั้งแพ็กเกจตอนนี้ 285/285 ผ่าน (เพิ่มจาก 284/284, 18 suite เท่าเดิม)
+
+**ยังไม่ทำ (ตั้งใจเว้นไว้)**: schema ครบทั้ง ~203 handler ยังไม่ทำ — ตอนนี้ครอบไปแล้ว 64 channel รวม (เพิ่มจาก 57) capability `filesystem` สำรวจแล้วและตัดสินใจไม่ครอบเพราะไม่มี destructive operation เลย — เป็น capability แรกในการสำรวจรอบนี้ที่จบด้วยผลลัพธ์ "ไม่ต้องเพิ่ม schema" ต่างจากทุกกลุ่มก่อนหน้า capability ถัดไปที่ยังไม่สำรวจ: `network`, `ai` (ความเสี่ยง false-positive 400 สูงกว่าเพราะ payload ยืดหยุ่นสำหรับ core request-sending) และ `system`/`notifications`/`ui` (มี `CAPABILITY_MAX_PAYLOAD_BYTES` cap แยกอยู่แล้ว ไม่ใช่ argument-shape schema ที่ layer นี้ทำ) — เก็บไว้สำหรับ increment ต่อไป
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี
