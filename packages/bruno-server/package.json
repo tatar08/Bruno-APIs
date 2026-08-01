@@ -13,13 +13,16 @@
     "@usebruno/requests": "^0.1.0",
     "@usebruno/rpc-contract": "0.1.0",
     "cors": "^2.8.5",
-    "express": "^4.21.0",
-    "ws": "^8.18.0",
-    "multer": "^1.4.5-lts.1"
+    "express": "^5.2.1",
+    "multer": "^1.4.5-lts.1",
+    "ws": "^8.18.0"
   },
   "jest": {
     "modulePaths": [
       "node_modules"
     ]
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2"
   }
 }

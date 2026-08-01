@@ -550,7 +550,7 @@ if (serveStaticFrontend) {
   // asset falls through to index.html so client-side routing (deep links,
   // page refreshes) works. /api and /health are already handled above and
   // never reach here; the explicit check is just cheap insurance.
-  app.get(`${BASE_PATH}/*`, (req, res, next) => {
+  app.get(`${BASE_PATH}/*splat`, (req, res, next) => {
     if (req.path.startsWith(`${BASE_PATH}/api/`) || req.path.startsWith('/health/')) return next();
     serveIndexHtml(req, res);
   });
