@@ -630,7 +630,23 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 - เพิ่ม 11 schema ใหม่ตามที่ verify ด้านบน
 - **Unit tests**: `security/__tests__/channel-policy.spec.js` เพิ่ม 5 เคสใหม่ (หนึ่งเคสวนลูปทดสอบ 7 channel ที่ shape เหมือนกันทั้งหมด object เดี่ยว, อีก 4 เคสสำหรับ channel ที่ shape ต่างออกไป) — suite รวมทั้งแพ็กเกจตอนนี้ 277/277 ผ่าน (เพิ่มจาก 272/272, 18 suite เท่าเดิม)
 
-**ยังไม่ทำ (ตั้งใจเว้นไว้)**: schema ครบทั้ง ~203 handler ยังไม่ทำ — ตอนนี้ครอบไปแล้ว 45 channel (git-mutate 3 + terminal 5 + collection-delete 7 + rename/move/save/import-export 13 + save-* siblings 6 + save-* กลุ่มกว้าง 11) กลุ่ม channel ที่เหลือทั้งหมด (~158 handler) ยังไม่ verify signature — ครอบคลุมทุก save-* channel ที่มี pattern "เขียนทับไฟล์แบบไม่มี collision guard" แล้วทั้งหมดเท่าที่สำรวจพบใน `ipc/*.js`; กลุ่มถัดไปที่เข้าเกณฑ์เดียวกันต้องสำรวจใหม่จาก capability อื่น (เช่น network/workspace/ai) ในรอบถัดไป
+**ยังไม่ทำ (ตอนนั้น)**: schema ครบทั้ง ~203 handler ยังไม่ทำ — ครอบคลุมทุก save-* channel ที่มี pattern "เขียนทับไฟล์แบบไม่มี collision guard" แล้วทั้งหมดเท่าที่สำรวจพบใน `ipc/*.js`; กลุ่มถัดไปที่เข้าเกณฑ์เดียวกันต้องสำรวจใหม่จาก capability อื่น — ผู้ใช้ขอให้ทำต่อสำรวจ capability ถัดไปทันที (ทำต่อในหัวข้อถัดไป)
+
+---
+
+### P0.2 Channel Policy (ต่อ อีกครั้ง) — เพิ่ม `CHANNEL_SCHEMAS` ครอบกลุ่ม workspace-level mutation/destructive channels
+
+สำรวจ capability taxonomy ใน `packages/bruno-rpc-contract/src/capabilities.js` (`SOURCE_TO_CAPABILITY`) เพื่อหา capability ถัดไปที่ยังไม่ได้ตรวจตามเกณฑ์เดิม — capability ที่เหลือ ได้แก่ `workspace` (ส่วนที่ยังไม่ครอบ), `environments`, `git` (ครบแล้ว 100%), `filesystem`, `preferences` (ครบแล้วบางส่วน), `system`, `notifications`, `apispec` (ครบแล้วบางส่วน), `network`, `ai`, `ui` — เปิด `ipc/workspace.js` ดูทุก `ipcMain.handle()` พบกลุ่มที่ยังไม่ครอบและเข้าเกณฑ์ตรง ๆ: channel ระดับ workspace ที่เป็นคู่ขนานของกลุ่ม collection-level ที่ครอบไปแล้วในสอง increment ก่อนหน้า (create/rename/close/export/import workspace, delete/import/update/rename/copy workspace-environment, add/remove collection-to/from-workspace)
+
+**ตัวที่เสี่ยงสูงสุดในกลุ่ม**: `renderer:remove-collection-from-workspace` — เมื่อ `options.deleteFiles` เป็น `true` จะเรียก `fsExtra.remove(collectionPath)` แบบ recursive delete ไม่มีเงื่อนไขอื่นกันไว้เลย นอกจาก `fs.existsSync(collectionPath)` check เฉย ๆ — ถ้า argument shape ผิด (เช่น `options` หลุดตำแหน่งไปเป็น string หรือ argument อื่นสลับตำแหน่งกัน) จะลบ directory ผิดตัวทั้งก้อนได้ ตรงกับเกณฑ์ "outsized consequences" ชัดเจนที่สุดในกลุ่มนี้
+
+**Verification**: อ่าน handler body จริงทุกตัวใน `ipc/workspace.js` (บรรทัด 57-105, 250-420, 445-522, 545-572) cross-reference กับ call site จริงใน `ReduxStore/slices/workspaces/actions.js` (และ `collections/actions.js` สำหรับ `add-collection-to-workspace` ที่มีหลาย call site) — ยืนยันครบทุกจุดว่า argument count/order/type ตรงกัน รวมถึง `renderer:export-workspace` ที่มี `destinationPath` optional เหมือน `export-collection-zip` ใน increment ก่อนหน้า (ปรากฏใน `ipc-transport.js:453` เดียวกันที่เติมให้เสมอเมื่อผ่าน Browser Bridge transport)
+
+**การเปลี่ยนแปลงจริง** (`packages/bruno-server/src/security/channel-policy.js`):
+- เพิ่ม 12 schema ใหม่: `create-workspace` (3 string), `rename-workspace`/`import-workspace`/`delete-workspace-environment` (2 string), `close-workspace` (1 string), `export-workspace` (2-3 string), `import-workspace-environment`/`add-collection-to-workspace` (string, object), `update-workspace-environment` (string, string, object), `rename-workspace-environment`/`copy-workspace-environment` (3 string), `remove-collection-from-workspace` (string, string, string, object? — 3-4 argument, ตัวที่เสี่ยงสูงสุดตามที่ระบุด้านบน)
+- **Unit tests**: `security/__tests__/channel-policy.spec.js` เพิ่ม 8 เคสใหม่ตาม pattern เดิม — suite รวมทั้งแพ็กเกจตอนนี้ 284/284 ผ่าน (เพิ่มจาก 277/277, 18 suite เท่าเดิม)
+
+**ยังไม่ทำ (ตั้งใจเว้นไว้)**: schema ครบทั้ง ~203 handler ยังไม่ทำ — ตอนนี้ครอบไปแล้ว 57 channel (git-mutate 3 + terminal 5 + collection-delete 7 + rename/move/save/import-export 13 + save-* siblings 6 + save-* กลุ่มกว้าง 11 + workspace-level 12) capability `workspace` ยังเหลือ channel อื่นที่ไม่เข้าเกณฑ์ "outsized consequences" ชัดเจน (เช่น read-only load/get channel, `ensure-collections-folder`, `start-workspace-watcher`, `get-collection-workspaces`, `get-default-workspace`) — จงใจไม่ครอบเพราะไม่ใช่ risk-shape ที่ comment บนสุดของไฟล์กำหนดไว้ capability ถัดไปที่ยังไม่สำรวจเลย: `filesystem`, `network`, `ai`, `system`, `notifications`, `ui` — เก็บไว้สำหรับ increment ต่อไป
 
 ---
 

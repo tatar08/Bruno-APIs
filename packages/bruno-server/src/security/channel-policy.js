@@ -13,7 +13,8 @@
  * channels, the rename/move/save/import-export collection channels, and
  * the save-* file-overwrite channels (spanning ipc/collection.js,
  * ipc/global-environments.js, ipc/openapi-sync.js, ipc/preferences.js and
- * ipc/workspace.js). Everything else is fail-open (no schema registered →
+ * ipc/workspace.js), and the workspace-level mutation/destructive channels
+ * (ipc/workspace.js). Everything else is fail-open (no schema registered →
  * no additional validation beyond "args is an array").
  */
 
@@ -116,7 +117,27 @@ const CHANNEL_SCHEMAS = {
   'renderer:save-multiple-requests': { minArgs: 1, maxArgs: 1, argTypes: ['array'] },
   'renderer:save-environment': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'object'] },
   'renderer:save-scratch-request': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
-  'renderer:save-workspace-docs': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] }
+  'renderer:save-workspace-docs': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+
+  // Workspace-level mutation/destructive channels (ipc/workspace.js) — the
+  // workspace-scoped counterparts of the collection-level rename/move/
+  // delete/import-export group above. renderer:remove-collection-from-workspace
+  // is the highest-risk of this group: with options.deleteFiles true it does
+  // an unconditional fsExtra.remove(collectionPath) recursive delete, so a
+  // wrong argument shape (e.g. options landing in the wrong position) could
+  // delete the wrong directory outright.
+  'renderer:create-workspace': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
+  'renderer:rename-workspace': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:close-workspace': { minArgs: 1, maxArgs: 1, argTypes: ['string'] },
+  'renderer:export-workspace': { minArgs: 2, maxArgs: 3, argTypes: ['string', 'string'] },
+  'renderer:import-workspace': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:delete-workspace-environment': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:import-workspace-environment': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'object'] },
+  'renderer:update-workspace-environment': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'object'] },
+  'renderer:rename-workspace-environment': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
+  'renderer:copy-workspace-environment': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
+  'renderer:add-collection-to-workspace': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'object'] },
+  'renderer:remove-collection-from-workspace': { minArgs: 3, maxArgs: 4, argTypes: ['string', 'string', 'string', 'object'] }
 };
 
 /**

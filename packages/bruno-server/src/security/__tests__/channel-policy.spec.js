@@ -287,5 +287,62 @@ describe('channel-policy', () => {
         /argument 1 must be of type string, got number/
       );
     });
+
+    it('validates renderer:create-workspace (workspaceName, workspaceFolderName, workspaceLocation)', () => {
+      expect(validateArgs('renderer:create-workspace', ['My Workspace', 'my-workspace', '/loc'])).toBeNull();
+      expect(validateArgs('renderer:create-workspace', ['My Workspace', 'my-workspace'])).toMatch(/expects 3 argument/);
+    });
+
+    it('validates renderer:rename-workspace, renderer:close-workspace, renderer:import-workspace, renderer:delete-workspace-environment (plain string args)', () => {
+      expect(validateArgs('renderer:rename-workspace', ['/ws', 'New Name'])).toBeNull();
+      expect(validateArgs('renderer:rename-workspace', ['/ws'])).toMatch(/expects 2 argument/);
+
+      expect(validateArgs('renderer:close-workspace', ['/ws'])).toBeNull();
+      expect(validateArgs('renderer:close-workspace', [])).toMatch(/expects 1 argument/);
+
+      expect(validateArgs('renderer:import-workspace', ['/tmp/in.zip', '/dest'])).toBeNull();
+      expect(validateArgs('renderer:import-workspace', ['/tmp/in.zip'])).toMatch(/expects 2 argument/);
+
+      expect(validateArgs('renderer:delete-workspace-environment', ['/ws', 'env-uid'])).toBeNull();
+      expect(validateArgs('renderer:delete-workspace-environment', ['/ws'])).toMatch(/expects 2 argument/);
+    });
+
+    it('validates renderer:export-workspace (workspacePath, workspaceName, optional destinationPath)', () => {
+      expect(validateArgs('renderer:export-workspace', ['/ws', 'My Workspace'])).toBeNull();
+      expect(validateArgs('renderer:export-workspace', ['/ws', 'My Workspace', '/tmp/out.zip'])).toBeNull();
+      expect(validateArgs('renderer:export-workspace', ['/ws'])).toMatch(/expects 2-3 argument/);
+    });
+
+    it('validates renderer:import-workspace-environment and renderer:add-collection-to-workspace (string, object)', () => {
+      expect(validateArgs('renderer:import-workspace-environment', ['/ws', { name: 'Env', variables: [] }])).toBeNull();
+      expect(validateArgs('renderer:import-workspace-environment', ['/ws', 'not-an-object'])).toMatch(
+        /argument 1 must be of type object, got string/
+      );
+
+      expect(validateArgs('renderer:add-collection-to-workspace', ['/ws', { pathname: '/c' }])).toBeNull();
+      expect(validateArgs('renderer:add-collection-to-workspace', ['/ws'])).toMatch(/expects 2 argument/);
+    });
+
+    it('validates renderer:update-workspace-environment (workspacePath, environmentUid, environmentData)', () => {
+      expect(validateArgs('renderer:update-workspace-environment', ['/ws', 'env-uid', { variables: [] }])).toBeNull();
+      expect(validateArgs('renderer:update-workspace-environment', ['/ws', 'env-uid'])).toMatch(/expects 3 argument/);
+    });
+
+    it('validates renderer:rename-workspace-environment and renderer:copy-workspace-environment (workspacePath, environmentUid, newName)', () => {
+      expect(validateArgs('renderer:rename-workspace-environment', ['/ws', 'env-uid', 'New Name'])).toBeNull();
+      expect(validateArgs('renderer:rename-workspace-environment', ['/ws', 'env-uid'])).toMatch(/expects 3 argument/);
+
+      expect(validateArgs('renderer:copy-workspace-environment', ['/ws', 'env-uid', 'Copy Name'])).toBeNull();
+      expect(validateArgs('renderer:copy-workspace-environment', ['/ws', 'env-uid'])).toMatch(/expects 3 argument/);
+    });
+
+    it('validates renderer:remove-collection-from-workspace (workspaceUid, workspacePath, collectionPath, optional options)', () => {
+      expect(validateArgs('renderer:remove-collection-from-workspace', ['ws-uid', '/ws', '/c'])).toBeNull();
+      expect(validateArgs('renderer:remove-collection-from-workspace', ['ws-uid', '/ws', '/c', { deleteFiles: true }])).toBeNull();
+      expect(validateArgs('renderer:remove-collection-from-workspace', ['ws-uid', '/ws'])).toMatch(/expects 3-4 argument/);
+      expect(validateArgs('renderer:remove-collection-from-workspace', ['ws-uid', '/ws', '/c', 'not-an-object'])).toMatch(
+        /argument 3 must be of type object, got string/
+      );
+    });
   });
 });
