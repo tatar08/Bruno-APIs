@@ -6,7 +6,7 @@
 
 ## สรุปผู้บริหาร
 
-~~พบบัค **12 รายการ** — ในจำนวนนี้มี **2 รายการระดับสูง (B1, B2)** อยู่ในฟีเจอร์ dataset iterations ที่เพิ่งเพิ่ม ทั้งคู่เกิดจากการสร้าง `currentEnvVars` แบบ merge copy ต่อ request ใน runner loop ควรแก้ B1–B2 ก่อนเริ่มงานตาม `Improvement.md` เพราะเป็น correctness ของฟีเจอร์ที่เพิ่ง ship และแก้ตอนนี้ถูกกว่าแก้หลัง refactor~~ **(อัปเดต 1 สิงหาคม 2026: สรุปข้างบนล้าสมัยแล้ว)** จากบัค 13 รายการที่พบทั้งหมด (B1-B13) มี **10 รายการแก้แล้วจริง** (B1-B7, B10-B12, ทั้งหมดแก้ใน commit `ae9ef0a` ซึ่งเป็น commit เดียวกับที่สร้างไฟล์นี้ — audit กับ fix ถูก commit พร้อมกันแต่ตารางสรุปไม่เคย sync ตาม), **1 รายการครอบคลุมแล้วโดย mechanism ที่มีอยู่แล้ว** (B8 — โดย P0.3 opt-in sandbox), **1 รายการตรวจแล้วสรุปว่าไม่ใช่บัค** (B9 — `stopExecution()` ทำงานตามชื่อจริง มี `skipRequest()` แยกสำหรับ use case อื่นอยู่แล้ว), และ **1 รายการแก้แล้วเป็นผลพลอยได้จากงานอื่น** (B13 — จากงาน P1.6 dependency bump) **ไม่มีบัคเหลือค้างที่ต้องแก้จากรายการนี้แล้ว** ดูรายละเอียดการยืนยันในหัวข้อ "ทวนสถานะบัค 12 รายการเดิม" ท้ายไฟล์
+~~พบบัค **12 รายการ** — ในจำนวนนี้มี **2 รายการระดับสูง (B1, B2)** อยู่ในฟีเจอร์ dataset iterations ที่เพิ่งเพิ่ม ทั้งคู่เกิดจากการสร้าง `currentEnvVars` แบบ merge copy ต่อ request ใน runner loop ควรแก้ B1–B2 ก่อนเริ่มงานตาม `Improvement.md` เพราะเป็น correctness ของฟีเจอร์ที่เพิ่ง ship และแก้ตอนนี้ถูกกว่าแก้หลัง refactor~~ **(อัปเดต 2 สิงหาคม 2026)** จากบัค 13 รายการที่พบทั้งหมด B1-B8 และ B10-B13 แก้แล้ว ส่วน B9 ตรวจแล้วว่าไม่ใช่บัค (`stopExecution()` หยุดทั้ง run ตามชื่อและมี `skipRequest()` สำหรับข้าม request แยกอยู่แล้ว) **ไม่มีบัคเหลือค้างจากรายการนี้**
 
 สถานะที่ตรวจแล้ว (ตอนตรวจครั้งแรก):
 
@@ -28,7 +28,7 @@
 | B5 | ✅ แก้แล้ว | `RunnerResults/index.jsx` | Run Again บังคับ `recursive: true` เสมอ — แก้แล้วใน `ae9ef0a` |
 | B6 | ✅ แก้แล้ว | `collections/index.js` | error ใน `testrun-ended` ถูก reducer ทิ้ง — แก้แล้วใน `ae9ef0a` |
 | B7 | ✅ แก้แล้ว | `bruno-app/src/utils/common/parseDataFile.js` | Dead code + CSV parser พฤติกรรมต่างจากตัวจริงฝั่ง electron — ไฟล์ถูกลบแล้วใน `ae9ef0a` |
-| B8 | 🟡 ครอบคลุมแล้วโดย P0.3 (opt-in) | `bruno-electron/src/ipc/filesystem.js:48-78` | `renderer:load-runner-dataset` รับ path string ใด ๆ — ตอนนี้อยู่ใน `READ_ONLY_SAFE_CHANNELS` ของ `allowed-roots.js` แล้ว เหมือน filesystem handler อื่นๆ ที่ยังไม่ audit รายตัว (ครอบเมื่อเปิด `BRUNO_SERVER_ALLOWED_ROOTS`; ปิดเป็นค่าเริ่มต้นตามการตัดสินใจของ P0.3 ทั้ง scope ไม่ใช่ gap เฉพาะ channel นี้) |
+| B8 | ✅ แก้แล้ว | `bruno-rpc-contract/src/request-schemas.js` | Browser Bridge รับเฉพาะ dataset upload object (`fileName` + `content`) และปฏิเสธ path string ก่อน dispatch; Electron desktop ยังใช้ file picker/path ภายในเครื่องได้ตามเดิม |
 | B9 | ✅ ตรวจแล้ว ไม่ใช่บัค | `network/index.js` | `bru.runner.stopExecution()` หยุดทุก dataset iteration ที่เหลือ — ยืนยันว่าเป็นพฤติกรรมที่ตั้งใจ: `bruno-js/src/bru.js:87-91` มี `skipRequest()` แยกต่างหากสำหรับ "ข้าม request นี้แล้วไปต่อ" อยู่แล้ว (ยืนยันในโค้ด runner loop ว่า `skipRequest` ทำ `currentRequestIndex++; continue;` ต่อในรันเดิม) ดังนั้น `stopExecution` ที่ทำ `break` ออกทั้ง loop คือ "หยุดทั้ง run" ตามชื่อจริงๆ ไม่ใช่บัค |
 | B10 | ✅ แก้แล้ว | `network/index.js` | 4xx/5xx response ไม่ส่งต่อ flag `__brunoDisableParsingResponseJson` — แก้แล้วใน `ae9ef0a` |
 | B11 | ✅ แก้แล้ว | `RunnerResults/index.jsx` | Delay controlled-input warning + dead `cancelled` check — แก้แล้วใน `ae9ef0a` |
@@ -100,6 +100,8 @@ Runner ฝั่ง electron catch error ระดับ run แล้วส่�
 
 `filesystem.js:61-77` — เมื่อ argument เป็น string จะอ่านไฟล์ path นั้นตรง ๆ (จำกัดแค่ 10MB + นามสกุล .json/.csv) ผ่าน browser bridge นี่คือ primitive อ่านไฟล์ .csv/.json ใด ๆ บนเครื่อง host เช่น ไฟล์ config ที่เป็น JSON array ตรงเงื่อนไขนี้ตรงกับช่องโหว่กลุ่ม Filesystem boundary ที่ `Improvement.md` ระบุไว้แล้ว (P0.3) — เพิ่มน้ำหนักว่าควรเริ่ม P0 security เร็ว
 
+**แก้แล้ว (2 สิงหาคม 2026):** เพิ่ม request schema ของ `renderer:load-runner-dataset` ให้ Browser Bridge รับ argument เดียวชนิด object เท่านั้น จึงปฏิเสธ string path ด้วย `400 INVALID_ARGS` ก่อนถึง Electron handler ส่วน browser UI เดิมส่ง `{ fileName, content }` อยู่แล้ว และ Electron desktop ไม่ผ่าน HTTP schema นี้จึงยังใช้ dialog/path ได้ตามเดิม มี regression test ทั้งระดับ shared contract และ HTTP route
+
 ### B9 — `stopExecution` ตัดทุก iterations
 
 `terminateRunnerExecution` break ออกจาก while ทั้งก้อน (`network/index.js:2190-2193`) — ถ้า design ตั้งใจให้หยุดทั้ง run ก็ควร document ไว้; ถ้าอิงพฤติกรรมแบบ Postman ควรหยุดเฉพาะ iteration ปัจจุบันแล้วไปต่อ iteration ถัดไป
@@ -132,13 +134,13 @@ Runner ฝั่ง electron catch error ระดับ run แล้วส่�
 
 **ข้อ 7 (B9 — ตัดสินใจ + document พฤติกรรม `stopExecution`)**: คงพฤติกรรมเดิม (`bru.runner.stopExecution()` หยุดทั้ง run ไม่ใช่แค่ iteration ปัจจุบัน) ไว้ตามเดิม โดยตั้งใจไม่เปลี่ยนเป็นสไตล์ Postman (หยุดแค่ iteration แล้วรันต่อ) เพราะเป็น behavior change ที่กระทบผู้ใช้เดิมที่อาจพึ่งพา semantics ปัจจุบันอยู่แล้ว (breaking change ทาง UX ไม่ต่างจากเหตุผลที่ P0.1/capability-grant-flow เลือกไม่แตะ default โดยไม่ถามผู้ใช้ก่อน) — ถือเป็น **accepted, documented behavior** ไม่ใช่บัค: `stopExecution` แปลว่า "หยุดทั้ง run" ตามชื่อฟังก์ชัน ถ้าต้องการหยุดเฉพาะ iteration ควรเป็น API ใหม่แยกต่างหาก (เช่น `bru.runner.skipIteration()`) ไม่ใช่เปลี่ยนความหมายของตัวเดิม
 
-B8 ถูกครอบคลุมแล้วโดย P0.3 filesystem sandbox (`allowed-roots.js` สแกน argument ทุกตัวของทุก IPC call รวมถึง `renderer:load-runner-dataset` เป็น generic mechanism ไม่ต้องแก้ทีละ handler — ดูหัวข้อ 4.1)
+B8 เดิมถูกครอบเฉพาะเมื่อเปิด P0.3 filesystem sandbox แต่แก้แบบ default-safe แล้วเมื่อ 2 สิงหาคม 2026: Browser Bridge request schema ปฏิเสธ path string ทุกกรณีก่อน dispatch และรับเฉพาะ content upload object
 
 **ข้อเสนอเพิ่ม 3 ข้อด้านล่าง — เสร็จแล้วทั้งหมด**: แต่ละข้อเป็นการตัดสินใจ scope/architecture ที่ใหญ่กว่า bug fix ธรรมดา (เพิ่ม test infra ใหม่, ย้าย module ข้าม package, เพิ่ม concurrency limit ที่กระทบพฤติกรรม run ที่มีอยู่) — ข้อ 3 (parallel run concurrency cap) และข้อ 1 (runner variable-flow test suite) ทำก่อน ข้อ 2 (รวม dataset parser เป็น module เดียว) ทำหลังสุด: เดิมประเมิน scope ผิด (คิดว่าเป็นแค่ "ย้าย module ข้าม 3 shell") ตรวจสอบจริงพบว่า Desktop/Browser Bridge ใช้ handler เดียวกันอยู่แล้ว มีแค่ CLI ที่ขาด ทำให้งานจริงกลายเป็น "สร้าง CLI feature ใหม่ทั้งหมด" (`--dataset` flag + per-iteration run loop) ไม่ใช่แค่ move code — ดูรายละเอียดแต่ละข้อด้านล่าง
 
 ### ขั้นที่ 3 — เข้าสู่ roadmap เดิมใน Improvement.md
 
-ลำดับใน `Improvement.md` ยังเหมาะสม ไม่ต้องแก้ — เริ่มที่ **P0.1 (Bridge auth + loopback binding)** และ **P0.3 (Filesystem sandbox)** โดย B8 เป็นหลักฐานเพิ่มว่า P0.3 ควรครอบคลุม handler ทุกตัวที่รับ path จาก renderer รวมถึง `renderer:load-runner-dataset`, `renderer:browse-pac-file`, `renderer:resolve-path`
+ลำดับใน `Improvement.md` ยังเหมาะสม ไม่ต้องแก้ — เริ่มที่ **P0.1 (Bridge auth + loopback binding)** และ **P0.3 (Filesystem sandbox)** โดย B8 เป็นหลักฐานว่าควรแยก Browser-safe payload contract ออกจาก Electron-only path contract สำหรับ handler ที่เปิดผ่าน bridge; ส่วน handler path อื่น เช่น `renderer:browse-pac-file` และ `renderer:resolve-path` ยังต้องอาศัย filesystem sandbox ตามขอบเขต P0.3
 
 ข้อเสนอเพิ่มจากการตรวจรอบนี้ (ยังไม่อยู่ใน Improvement.md):
 
@@ -652,7 +654,7 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ### P0.2 Channel Policy (ต่อ อีกครั้ง) — สำรวจ capability `filesystem` (ตัดสินใจไม่เพิ่ม schema) + เพิ่ม `CHANNEL_SCHEMAS` ครอบกลุ่ม environments-capability mutation channel ที่เหลือ
 
-สำรวจ capability `filesystem` (`packages/bruno-electron/src/ipc/filesystem.js`, 115 บรรทัด, 8 handler) ตามคิวที่วางไว้ในรอบก่อน — อ่านทั้งไฟล์พบว่า handler ทั้งหมด (`browse-directory`, `browse-files`, `browse-pac-file`, `load-runner-dataset`, `exists-sync`, `resolve-path`, `is-directory`, `find-unique-folder-name`) เป็น dialog-opener/read-only/query operation ล้วน ๆ ไม่มี `writeFile`/`removePath`/`fsExtra.remove` หรือ destructive operation ใด ๆ เลย ต่างจากทุกกลุ่มที่ครอบมาก่อนหน้านี้อย่างชัดเจน — **ตัดสินใจไม่เพิ่ม schema สำหรับ capability นี้** เพราะไม่เข้าเกณฑ์ "outsized consequences" ที่ comment บนสุดของ `channel-policy.js` กำหนดไว้ (data loss, arbitrary file overwrite, wrong-target deletion) การเดา argument shape ผิดในกลุ่มนี้อย่างมากก็แค่ throw error หรือ dialog ไม่เปิด ไม่ใช่ risk-shape ที่ layer นี้ตั้งใจป้องกัน
+สำรวจ capability `filesystem` (`packages/bruno-electron/src/ipc/filesystem.js`, 115 บรรทัด, 8 handler) ตามคิวที่วางไว้ในรอบก่อน — อ่านทั้งไฟล์พบว่า handler ทั้งหมด (`browse-directory`, `browse-files`, `browse-pac-file`, `load-runner-dataset`, `exists-sync`, `resolve-path`, `is-directory`, `find-unique-folder-name`) เป็น dialog-opener/read-only/query operation ล้วน ๆ ไม่มี `writeFile`/`removePath`/`fsExtra.remove` หรือ destructive operation ใด ๆ เลย ต่างจากทุกกลุ่มที่ครอบมาก่อนหน้านี้อย่างชัดเจน — ตอนนั้นจึงตัดสินใจไม่เพิ่ม schema สำหรับ capability นี้ แต่ข้อสรุปส่วน `load-runner-dataset` ถูกแทนที่โดยการแก้ B8 วันที่ 2 สิงหาคม 2026 เพราะ path string ของ read-only handler นี้ยังเปิดเผยข้อมูลบน host ได้; channel นี้จึงมี schema เฉพาะให้ Browser Bridge รับ content upload object เท่านั้น
 
 หันไปตรวจ capability `environments` แทน (`ipc/global-environments.js`) พบว่า increment ก่อนหน้า (กลุ่ม save-* กว้าง) ครอบไปแล้วแค่ 3 จาก 10 handler ในไฟล์นี้ (`save-global-environment`, `save-workspace-dotenv-variables`, `save-workspace-dotenv-raw`) ยังเหลือ mutation channel อีก 7 ตัวที่ยังไม่ครอบ: `create-global-environment`, `rename-global-environment`, `delete-global-environment`, `select-global-environment`, `update-global-environment-color`, `create-workspace-dotenv-file`, `delete-workspace-dotenv-file` (เหลือแค่ `get-global-environments` ที่เป็น read-only จงใจไม่ครอบ)
 
@@ -746,7 +748,7 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 - B6 — reducer's `runFolderEvent` เพิ่ม `else if (action.payload.error) info.statusText = action.payload.error.message` แล้ว
 - B7 — `bruno-app/src/utils/common/parseDataFile.js` ถูกลบทิ้งทั้งไฟล้ว (64 บรรทัด)
 - B10 — `error.response` path เรียก `parseDataFromResponse(error.response, request.__brunoDisableParsingResponseJson)` แล้ว (เดิมไม่ส่ง flag ที่สอง) ยืนยันด้วย grep บรรทัดปัจจุบัน (`network/index.js:2015`)
-- B8 — ยังไม่ใช่ "แก้แล้ว" ในความหมาย code change แต่ **ครอบคลุมแล้วโดย mechanism ที่มีอยู่**: `renderer:load-runner-dataset` อยู่ใน `READ_ONLY_SAFE_CHANNELS` ของ `security/allowed-roots.js` (P0.3) แล้ว เหมือน filesystem handler ที่ยัง unaudited รายตัวอื่นๆ — ป้องกันได้เมื่อเปิด `BRUNO_SERVER_ALLOWED_ROOTS` (ปิดเป็นค่าเริ่มต้นตามการตัดสินใจ scope ของ P0.3 ทั้งก้อน ไม่ใช่ gap เฉพาะ channel นี้) ไม่ถือเป็นบัคค้างที่ต้องทำแยก
+- B8 — **แก้แล้ว 2 สิงหาคม 2026**: shared request schema บังคับให้ Browser Bridge รับเฉพาะ upload object และปฏิเสธ Electron-only path string ก่อน dispatch จึงไม่ขึ้นกับการเปิด opt-in filesystem sandbox อีกต่อไป
 - B9 — ถามผู้ใช้ว่าควรแก้พฤติกรรมให้หยุดเฉพาะ iteration ปัจจุบันไหม (แบบ Postman) ผู้ใช้ให้ตัดสินใจเอง ("เลือกอันดีที่สุด") — ตรวจโค้ด `bruno-js/src/bru.js:87-91` พบว่ามี `skipRequest()` แยกต่างหากจาก `stopExecution()` อยู่แล้ว และ runner loop ปัจจุบัน (`network/index.js`) ยืนยันว่า `skipRequest` ทำ `currentRequestIndex++; continue;` (ข้าม request นี้ ไปต่อใน run เดิม) ส่วน `stopExecution` ทำ `break` ออกทั้ง while loop (ครอบทั้ง request และ iteration dimension เพราะ loop เดียวไม่ nested) — **สรุปว่า `stopExecution` ทำงานตรงตามชื่อ ไม่ใช่บัค** เพราะมี primitive แยกสำหรับ "ข้ามแค่ request นี้" อยู่แล้ว ไม่ต้องแก้อะไร
 
 **การเปลี่ยนแปลงจริง**: ไม่มีการแก้โค้ดในรอบนี้ (ของเดิมถูกแก้ไปแล้วก่อนหน้า, B9 ตรวจแล้วไม่ใช่บัค) — อัปเดตตารางสรุปหัวข้อ 1 (บรรทัด 24-35) ให้ตรงกับสถานะจริง
@@ -770,6 +772,31 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 - ไม่ทำ SBOM/dependency scanning/signing — ยังไม่เลือก tool หรือ signing-key policy
 - ไม่ทำ cross-platform matrix (Windows/macOS) — รันแค่ `ubuntu-latest`
 - ไม่ทำ diff-only lint mode — `eslint-plugin-diff` registered เป็น plugin อยู่แล้วแต่ยังไม่ wire เข้า rule จริง (dead registration) ไม่ใช่ blocker แล้วเพราะ debt เดิมแก้หมด แต่ยังเป็นโอกาสปรับปรุงในอนาคต
+
+---
+
+### P0.1 Error-message log redaction — 2 สิงหาคม 2026
+
+หลัง CI เสร็จแล้ว สำรวจ `Improvement.md`/`find bug and Improvement.md` อีกรอบตามคำสั่งผู้ใช้ (ต่อเนื่องจาก "ลุย" instruction) พบว่า P0.1's own audit เคยทิ้งจุดค้างไว้เป็น 🟡: `console.*` call site ทั้งหมดใน `bruno-server` (78 จุด) ไม่ log token/cookie/session/header ตรง ๆ เลย แต่ยังมีจุดที่ log `err.message` จาก handler ที่ throw โดยไม่ sanitize เนื้อหา — ถ้า handler ตัวใดปล่อย error message ที่มี secret ปนอยู่เอง (URL ที่มี credential ฝังใน userinfo, header ที่หลุดมาจาก upstream fetch, AI provider error ที่ echo API key กลับมา) จะ log ออกไปตรง ๆ ข้อความเดิมบอกว่าต้อง "audit ทีละ handler เหมือน P0.2" ซึ่งไม่ proportionate เพราะ handler ~203 ตัวไม่มี finite set ของ "risky" handler ให้ prioritize (handler ไหนที่ wrap network/git/AI call ก็เสี่ยงได้หมด)
+
+**สิ่งที่ทำ:**
+- สร้าง `packages/bruno-server/src/security/log-redaction.js` — generic pattern-based redaction utility (`redactSecrets()`) แทนการ audit ทีละ handler ใช้ posture เดียวกับ P0.3 filesystem sandbox scanner คือ "coarse safety net ครอบคลุมกว้าง ไม่ใช่ precise per-call validation" มี 3 pattern:
+  1. credential ฝังใน URL userinfo (`scheme://user:pass@host`)
+  2. `Authorization: Bearer/Basic <token>`
+  3. key=value assignment ที่ชื่อ key ดูเป็น secret (`api_key`, `access_token`, `refresh_token`, `client_secret`, `private_key`, `secret`, `password`, `passwd`, `token`) ครอบทั้ง JSON-ish และ query-string-ish shape — ตั้งใจไม่ใส่ `"authorization"` ใน keyword list นี้เพราะ Authorization header จริงต้องมี scheme token เสมอ (RFC 7235) ซึ่ง pattern 2 ครอบไปแล้ว ใส่ซ้ำจะ double-redact
+- สร้าง `packages/bruno-server/src/security/__tests__/log-redaction.spec.js` — ทดสอบ 6 กรณี (pass-through ของ input ที่ไม่ใช่ string/ไม่มี secret, URL credential, Bearer/Basic, key=value หลายรูปแบบ, หลาย secret ในข้อความเดียว) — ระหว่างเขียน test เจอบัค double-redaction จริงตามที่คาด (`"Authorization: Bearer abc"` → pattern 2 redact ถูกก่อน แล้ว pattern 3 (ตอนนั้นยังมี `authorization` ใน list) มา match คำว่า "Bearer" ที่เหลือซ้ำอีกที กลายเป็น `"Authorization: [REDACTED] [REDACTED]"`) แก้โดยตัด `authorization` ออกจาก pattern 3 ตามเหตุผลข้างบน ยืนยันผ่านครบ 6/6 หลังแก้
+- ผูก `redactSecrets()` เข้าทุกจุดที่ log `err.message` ใน `bruno-server`:
+  - `routes/ipc-proxy.js` — จุดเดียวที่ error จากทั้ง ~203 IPC handler ไหลผ่าน (1 จุด)
+  - `index.js` — handler-load-time warning และ graceful-shutdown error (21 จุด, ใช้ scoped `sed` substitution แล้ว verify ด้วย grep count ว่าตรงกับจำนวนที่แก้จริง)
+  - `routes/auth.js` — logout cleanup error (terminal kill, watcher remove, WebSocket close, gRPC cancel — 4 จุด)
+  - `ws/event-bridge.js` — WebSocket error และ send-to-client failure (2 จุด)
+  - รวม 28 call site ทั้งหมด (ไม่นับจุดใน `log-redaction.js` เอง)
+- เจตนาสำคัญ: redact เฉพาะสิ่งที่เขียนลง **server log** เท่านั้น response ที่ส่งกลับ client (`error: err.message`) ปล่อยไว้เหมือนเดิมไม่แตะ เพราะ client คือ session เดียวกับที่ request เข้ามาอยู่แล้ว ไม่ใช่ security boundary ที่ redaction นี้ต้องกัน (boundary ที่กังวลคือ log/ops access)
+- อัปเดต `Improvement.md` P0.1 section: เปลี่ยนจุด 🟡 เดิมเป็น ✅ พร้อมอธิบาย utility, pattern, และจุดที่ผูกครบ
+- Verify: `node --check` ผ่านทั้ง 4 ไฟล์ที่แก้ (`index.js`, `auth.js`, `ipc-proxy.js`, `event-bridge.js`), รัน `npm test --workspace=packages/bruno-server` เต็ม suite ผ่านทั้งหมด 293/293 (19 suite) ไม่มี regression จากการแก้
+
+**ยังไม่ทำ:**
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session นี้ที่ผู้ใช้เลือกไว้ ("ยังไม่ push")
 
 ---
 

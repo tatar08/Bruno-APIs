@@ -10,6 +10,7 @@ const express = require('express');
 const { isPrivilegedChannel, PRIVILEGED_CHANNELS_ENABLED } = require('../security/privileged-channels');
 const { findPathPolicyViolation } = require('../security/allowed-roots');
 const { logSandboxDenial } = require('../security/audit-log');
+const { redactSecrets } = require('../security/log-redaction');
 const {
   checkRateLimit,
   acquireConcurrencySlot,
@@ -266,7 +267,7 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
         return res.status(504).json({ code: ERROR_CODES.HANDLER_TIMEOUT, error: err.message, requestId });
       }
 
-      console.error(`[IPC Proxy] Error in handler "${channel}"${requestId ? ` (requestId=${requestId})` : ''}:`, err.message);
+      console.error(`[IPC Proxy] Error in handler "${channel}"${requestId ? ` (requestId=${requestId})` : ''}:`, redactSecrets(err.message));
 
       return res.status(500).json({
         code: ERROR_CODES.HANDLER_ERROR,

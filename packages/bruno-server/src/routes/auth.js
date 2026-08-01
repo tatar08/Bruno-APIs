@@ -21,6 +21,7 @@ const { getOwnedTerminals, release } = require('../security/terminal-ownership')
 const { getOwnedPaths, release: releaseWatcherOwner } = require('../security/watcher-ownership');
 const { wsConnectionOwnership, grpcConnectionOwnership } = require('../security/connection-ownership');
 const { checkAuthRateLimit } = require('../security/auth-rate-limit');
+const { redactSecrets } = require('../security/log-redaction');
 const { sessionLimitExceeded, MAX_CONCURRENT_SESSIONS } = require('../security/resource-limits');
 const { cookies: cookiesModule } = require('@usebruno/requests');
 const { CHANNELS, ERROR_CODES } = require('@usebruno/rpc-contract');
@@ -41,7 +42,7 @@ const cleanupSessionTerminals = async (sessionId, handlerRegistry, windowShim, c
       try {
         await handlerRegistry.emit(CHANNELS.TERMINAL_KILL, createFakeEvent(windowShim), terminalId);
       } catch (err) {
-        console.error(`[Auth] Failed to kill terminal "${terminalId}" on logout:`, err.message);
+        console.error(`[Auth] Failed to kill terminal "${terminalId}" on logout:`, redactSecrets(err.message));
       } finally {
         release(terminalId);
       }
@@ -69,7 +70,7 @@ const cleanupSessionWatchers = (sessionId, getCollectionWatcher) => {
     try {
       collectionWatcher.removeWatcher(watchPath);
     } catch (err) {
-      console.error(`[Auth] Failed to remove collection watcher for "${watchPath}" on logout:`, err.message);
+      console.error(`[Auth] Failed to remove collection watcher for "${watchPath}" on logout:`, redactSecrets(err.message));
     }
   });
 };
@@ -93,7 +94,7 @@ const cleanupSessionConnections = async (sessionId, handlerRegistry, windowShim,
         try {
           await handlerRegistry.invoke(CHANNELS.RENDERER_WS_CLOSE_CONNECTION, createFakeEvent(windowShim), connectionId);
         } catch (err) {
-          console.error(`[Auth] Failed to close WebSocket connection "${connectionId}" on logout:`, err.message);
+          console.error(`[Auth] Failed to close WebSocket connection "${connectionId}" on logout:`, redactSecrets(err.message));
         } finally {
           wsConnectionOwnership.release(connectionId);
         }
@@ -108,7 +109,7 @@ const cleanupSessionConnections = async (sessionId, handlerRegistry, windowShim,
         try {
           await handlerRegistry.invoke(CHANNELS.GRPC_CANCEL_REQUEST, createFakeEvent(windowShim), { requestId: connectionId });
         } catch (err) {
-          console.error(`[Auth] Failed to cancel gRPC connection "${connectionId}" on logout:`, err.message);
+          console.error(`[Auth] Failed to cancel gRPC connection "${connectionId}" on logout:`, redactSecrets(err.message));
         } finally {
           grpcConnectionOwnership.release(connectionId);
         }

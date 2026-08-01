@@ -8,6 +8,7 @@
 const { WebSocketServer } = require('ws');
 const { isOriginAllowed } = require('../security/origin-policy');
 const { isSessionCookieValid, parseCookies, SESSION_COOKIE_NAME } = require('../security/auth');
+const { redactSecrets } = require('../security/log-redaction');
 
 function getSessionIdFromCookieHeader(cookieHeader) {
   return parseCookies(cookieHeader)[SESSION_COOKIE_NAME] || null;
@@ -101,7 +102,7 @@ class EventBridge {
       });
 
       ws.on('error', (err) => {
-        console.error('[EventBridge] WebSocket error:', err.message);
+        console.error('[EventBridge] WebSocket error:', redactSecrets(err.message));
         this._clients.delete(ws);
         this._subscriptions.delete(ws);
       });
@@ -139,7 +140,7 @@ class EventBridge {
         try {
           client.send(message);
         } catch (err) {
-          console.error(`[EventBridge] Failed to send to client:`, err.message);
+          console.error(`[EventBridge] Failed to send to client:`, redactSecrets(err.message));
         }
       }
     }

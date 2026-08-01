@@ -35,6 +35,7 @@ const { createOauth2CallbackRouter } = require('./routes/oauth2');
 const { isOriginAllowed } = require('./security/origin-policy');
 const { isAuthRequired, requireAuth, bootstrapToken } = require('./security/auth');
 const { getOrCreateMasterKey, createSafeStorageShim } = require('./security/master-key');
+const { redactSecrets } = require('./security/log-redaction');
 const { validateStartupConfig } = require('./config-validation');
 const { getBuildInfo } = require('./health');
 const { injectRuntimeConfig } = require('./static-frontend');
@@ -268,7 +269,7 @@ const registerHandlers = () => {
     registerFilesystemIpc(windowShim);
     console.log('  ✅ Filesystem handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load filesystem handlers:', err.message);
+    console.warn('  ⚠️  Failed to load filesystem handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -277,7 +278,7 @@ const registerHandlers = () => {
     registerPreferencesIpc(windowShim);
     console.log('  ✅ Preferences handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load preferences handlers:', err.message);
+    console.warn('  ⚠️  Failed to load preferences handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -286,7 +287,7 @@ const registerHandlers = () => {
     registerSnapshotIpc();
     console.log('  ✅ Snapshot handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load snapshot handlers:', err.message);
+    console.warn('  ⚠️  Failed to load snapshot handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -300,7 +301,7 @@ const registerHandlers = () => {
     grpcEventHandlers = require(path.join(electronSrcPath, 'ipc/network/grpc-event-handlers'));
     console.log('  ✅ Network handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load network handlers:', err.message);
+    console.warn('  ⚠️  Failed to load network handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -312,7 +313,7 @@ const registerHandlers = () => {
     registerCollectionsIpc(windowShim, collectionWatcher);
     console.log('  ✅ Collection handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load collection handlers:', err.message);
+    console.warn('  ⚠️  Failed to load collection handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -323,7 +324,7 @@ const registerHandlers = () => {
     registerWorkspaceIpc(windowShim, workspaceWatcher);
     console.log('  ✅ Workspace handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load workspace handlers:', err.message);
+    console.warn('  ⚠️  Failed to load workspace handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -333,7 +334,7 @@ const registerHandlers = () => {
     registerGlobalEnvironmentsIpc(windowShim, globalEnvironmentsManager);
     console.log('  ✅ Global environments handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load global environments handlers:', err.message);
+    console.warn('  ⚠️  Failed to load global environments handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -342,7 +343,7 @@ const registerHandlers = () => {
     registerGitIpc(windowShim);
     console.log('  ✅ Git handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load git handlers:', err.message);
+    console.warn('  ⚠️  Failed to load git handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -353,7 +354,7 @@ const registerHandlers = () => {
     registerSystemMonitorIpc(windowShim, systemMonitor);
     console.log('  ✅ System monitor handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load system monitor handlers:', err.message);
+    console.warn('  ⚠️  Failed to load system monitor handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -363,7 +364,7 @@ const registerHandlers = () => {
     registerNotificationsIpc(windowShim, collectionWatcher);
     console.log('  ✅ Notifications handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load notifications handlers:', err.message);
+    console.warn('  ⚠️  Failed to load notifications handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -373,7 +374,7 @@ const registerHandlers = () => {
     registerApiSpecIpc(windowShim, new ApiSpecWatcher());
     console.log('  ✅ API Spec handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load API Spec handlers:', err.message);
+    console.warn('  ⚠️  Failed to load API Spec handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -382,7 +383,7 @@ const registerHandlers = () => {
     registerOpenAPISyncIpc(windowShim);
     console.log('  ✅ OpenAPI Sync handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load OpenAPI Sync handlers:', err.message);
+    console.warn('  ⚠️  Failed to load OpenAPI Sync handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -391,7 +392,7 @@ const registerHandlers = () => {
     registerAiIpc(windowShim);
     console.log('  ✅ AI handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load AI handlers:', err.message);
+    console.warn('  ⚠️  Failed to load AI handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -399,7 +400,7 @@ const registerHandlers = () => {
     registerAiAutocompleteIpc(windowShim);
     console.log('  ✅ AI Autocomplete handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load AI Autocomplete handlers:', err.message);
+    console.warn('  ⚠️  Failed to load AI Autocomplete handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -408,7 +409,7 @@ const registerHandlers = () => {
     terminalManager = new TerminalManager();
     console.log('  ✅ Terminal handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load Terminal handlers:', err.message);
+    console.warn('  ⚠️  Failed to load Terminal handlers:', redactSecrets(err.message));
   }
 
   try {
@@ -417,7 +418,7 @@ const registerHandlers = () => {
     registerMountIpc();
     console.log('  ✅ Mount handlers registered');
   } catch (err) {
-    console.warn('  ⚠️  Failed to load mount handlers:', err.message);
+    console.warn('  ⚠️  Failed to load mount handlers:', redactSecrets(err.message));
   }
 
   // Electron emits this from its BrowserWindow lifecycle. The browser has no
@@ -633,7 +634,7 @@ const shutdown = async (signal) => {
     terminalManager?.killAll();
     console.log('  ✅ Terminals closed');
   } catch (err) {
-    console.error('  ⚠️  Error closing terminals:', err.message);
+    console.error('  ⚠️  Error closing terminals:', redactSecrets(err.message));
   }
 
   try {
@@ -641,7 +642,7 @@ const shutdown = async (signal) => {
     grpcEventHandlers?.closeAllConnections?.();
     console.log('  ✅ WebSocket/gRPC connections closed');
   } catch (err) {
-    console.error('  ⚠️  Error closing WebSocket/gRPC connections:', err.message);
+    console.error('  ⚠️  Error closing WebSocket/gRPC connections:', redactSecrets(err.message));
   }
 
   try {
@@ -651,21 +652,21 @@ const shutdown = async (signal) => {
     ]);
     console.log('  ✅ Filesystem watchers closed');
   } catch (err) {
-    console.error('  ⚠️  Error closing filesystem watchers:', err.message);
+    console.error('  ⚠️  Error closing filesystem watchers:', redactSecrets(err.message));
   }
 
   try {
     await eventBridge.close();
     console.log('  ✅ Event bridge closed');
   } catch (err) {
-    console.error('  ⚠️  Error closing event bridge:', err.message);
+    console.error('  ⚠️  Error closing event bridge:', redactSecrets(err.message));
   }
 
   try {
     await httpClosed;
     console.log('  ✅ HTTP server closed (no new connections accepted)');
   } catch (err) {
-    console.error('  ⚠️  Error closing HTTP server:', err.message);
+    console.error('  ⚠️  Error closing HTTP server:', redactSecrets(err.message));
   }
 
   clearTimeout(forceExitTimer);
