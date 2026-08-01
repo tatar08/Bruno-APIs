@@ -9,7 +9,6 @@ import { SAVE_TRIGGERS } from 'utils/snapshot';
 import { transport } from 'utils/common/ipc-transport';
 import { serializeSnapshot } from './serializeSnapshot';
 
-
 let saveTimer = null;
 const DEBOUNCE_MS = 1000;
 

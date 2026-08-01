@@ -36,4 +36,3 @@ export const browseDirectory = async (pathname) => {
 export const isDirectory = async (dirPath) => {
   return await transport.invoke('renderer:is-directory', dirPath);
 };
-

@@ -32,13 +32,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # continue-on-error: `npm run lint` currently fails with 54
-      # pre-existing errors scattered across files this CI change didn't
-      # touch (verified 2026-08-02). Blocking merges on unrelated debt
-      # isn't this increment's job; this still surfaces the status on
-      # every run so the debt is visible instead of silently ignored.
       - run: npm run lint
-        continue-on-error: true
 
   test:
     runs-on: ubuntu-latest

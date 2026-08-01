@@ -9,7 +9,6 @@ import {
 import { normalizePath } from 'utils/common/path';
 import { transport } from 'utils/common/ipc-transport';
 
-
 const COLLECTION_SORT_ORDER_BY_WORKSPACE_SORTING = {
   default: 'default',
   alphabetical: 'alphabetical',

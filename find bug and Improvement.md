@@ -759,7 +759,7 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 **สิ่งที่ทำ:**
 - สร้าง `.github/workflows/ci.yml` — repo มี remote (`github.com/tatar08/Bruno-APIs`) แต่ไม่มี CI มาก่อนเลย (มีแค่ `.github/dependabot.yml`) trigger บน push ไป `main` และทุก pull request สามงานแบบ parallel:
-  - `lint` (`npm run lint`) — รันจริงก่อน commit พบว่า repo มี lint error ค้างอยู่ 54 จุด กระจายในไฟล์ที่ไม่เกี่ยวกับ session นี้เลย (เช่น `bruno-electron/src/ipc/collection.js`, `workspace.js` indent, quote style หลายไฟล์) ตั้งใจไม่ไล่แก้ทั้งหมดเพราะเป็น scope creep ที่ไม่เกี่ยวกับงาน "ตั้ง CI" — ตั้ง job นี้เป็น `continue-on-error: true` แทน เพื่อให้เห็นสถานะใน CI แต่ไม่บล็อก merge ด้วย debt เดิม
+  - `lint` (`npm run lint`) — รันจริงก่อน commit พบว่า repo มี lint error ค้างอยู่ 54 จุด กระจายในไฟล์ที่ไม่เกี่ยวกับ session นี้เลย (เช่น `bruno-electron/src/ipc/collection.js`, `workspace.js` indent, quote style หลายไฟล์) ตอนแรกตั้งเป็น `continue-on-error: true` เพื่อไม่บล็อก merge ด้วย debt เดิม — **อัปเดตภายหลังในเซสชันเดียวกัน**: ผู้ใช้ขอให้ "ลุยแก้ไข bugs ทั้งหมด" จึงรัน `npm run lint:fix` แก้ครบทั้ง 54 จุด (ทั้งหมด auto-fixable: quote style, indentation, blank-line เท่านั้น ไม่แตะ logic) ยืนยันด้วย `git diff` ว่าเป็น whitespace/quote change ล้วน ๆ แล้วรัน test suite ของทุกไฟล์ที่ถูกแก้ (`bruno-electron`: collection/workspace/runner-variable-persistence 93/93 ผ่าน; `bruno-app`: ipc-transport/snapshot 56/56 ผ่าน) ก่อนเปลี่ยน job กลับเป็น blocking (`continue-on-error` ถูกลบออก) ตอนนี้ `npm run lint` สะอาด 0 error
   - `test` (`npm test --workspaces --if-present`) — รัน jest ของทุก workspace ที่มี `test` script, ข้าม workspace ที่ไม่มี (`bruno-docs`, `bruno-graphql-docs`, `bruno-schema-types`, `bruno-tests`) live-verified แล้วว่าผ่านทั้งหมดก่อน commit (ตัวอย่าง: `bruno-server` 286/286, `bruno-rpc-contract` 19/19)
   - `rpc-contract-parity` (`npm run audit:parity --workspace=packages/bruno-rpc-contract`) — live-verified ผ่าน (229 channel ตรงกับ fixture) ก่อน commit
 - อัปเดต `Improvement.md`: P0.5's acceptance criteria (parity audit ตอนนี้ 🟡→✅ เพราะผูก CI แล้ว), P0.6's static parity audit line (ลบ 🟡 "ยังไม่ผูกเข้า CI"), P1.3's SBOM line (แก้ blocker reasoning จาก "ไม่มี CI" เป็น "มี CI แล้ว แต่ยังต้องเลือก tool/policy"), เพิ่ม section ใหม่ **P0.7 CI Pipeline** สรุป scope ที่ทำจริงและที่ยังไม่ทำ (Playwright e2e ใน CI, SBOM/signing, cross-platform matrix — ทั้งหมดเป็น decision/infra แยกที่ใหญ่กว่า)
@@ -769,7 +769,7 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 - ไม่ผูก Playwright e2e/`browser-bridge` suite เข้า CI — ต้องมี browser binary install + headless boot strategy เพิ่ม เป็นงานแยก
 - ไม่ทำ SBOM/dependency scanning/signing — ยังไม่เลือก tool หรือ signing-key policy
 - ไม่ทำ cross-platform matrix (Windows/macOS) — รันแค่ `ubuntu-latest`
-- ไม่แก้ lint error ที่มีอยู่เดิม 54 จุด — นอกสโคปของ "ตั้ง CI", ปล่อยให้เห็นผลแบบ non-blocking แทน
+- ไม่ทำ diff-only lint mode — `eslint-plugin-diff` registered เป็น plugin อยู่แล้วแต่ยังไม่ wire เข้า rule จริง (dead registration) ไม่ใช่ blocker แล้วเพราะ debt เดิมแก้หมด แต่ยังเป็นโอกาสปรับปรุงในอนาคต
 
 ---
 

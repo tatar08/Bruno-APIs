@@ -409,39 +409,39 @@ class BrowserTransport {
    */
   async invoke(channel, ...args) {
     const promptForPath = (message) => {
-      const value = window.prompt(message, "");
-      return typeof value === "string" ? value.trim() : "";
+      const value = window.prompt(message, '');
+      return typeof value === 'string' ? value.trim() : '';
     };
 
-    if (channel === "renderer:browse-directory") {
-      const selectedPath = promptForPath("Enter a directory path on the Bruno bridge server:");
+    if (channel === 'renderer:browse-directory') {
+      const selectedPath = promptForPath('Enter a directory path on the Bruno bridge server:');
       if (!selectedPath) return false;
-      return (await this.invoke("renderer:is-directory", selectedPath)) ? selectedPath : false;
+      return (await this.invoke('renderer:is-directory', selectedPath)) ? selectedPath : false;
     }
 
-    if (channel === "renderer:browse-files") {
-      const value = promptForPath("Enter file path(s) on the Bruno bridge server, separated by new lines:");
+    if (channel === 'renderer:browse-files') {
+      const value = promptForPath('Enter file path(s) on the Bruno bridge server, separated by new lines:');
       if (!value) return [];
       const paths = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
-      const valid = await Promise.all(paths.map(async (filePath) => (await this.invoke("renderer:exists-sync", filePath)) ? filePath : null));
+      const valid = await Promise.all(paths.map(async (filePath) => (await this.invoke('renderer:exists-sync', filePath)) ? filePath : null));
       return valid.filter(Boolean);
     }
 
-    if (channel === "renderer:open-collection") {
-      const value = promptForPath("Enter collection folder path(s) on the Bruno bridge server, separated by new lines:");
+    if (channel === 'renderer:open-collection') {
+      const value = promptForPath('Enter collection folder path(s) on the Bruno bridge server, separated by new lines:');
       if (!value) return;
       const paths = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
-      return this.invoke("renderer:open-multiple-collections", paths, args[0] || {});
+      return this.invoke('renderer:open-multiple-collections', paths, args[0] || {});
     }
 
-    if (channel === "renderer:open-workspace-dialog") {
-      const selectedPath = promptForPath("Enter a workspace folder path on the Bruno bridge server:");
-      return selectedPath ? this.invoke("renderer:open-workspace", selectedPath) : null;
+    if (channel === 'renderer:open-workspace-dialog') {
+      const selectedPath = promptForPath('Enter a workspace folder path on the Bruno bridge server:');
+      return selectedPath ? this.invoke('renderer:open-workspace', selectedPath) : null;
     }
 
-    if (channel === "renderer:open-api-spec") {
-      const selectedPath = promptForPath("Enter an OpenAPI file path on the Bruno bridge server:");
-      return selectedPath ? this.invoke("renderer:open-api-spec-file", selectedPath, args[0] || null) : null;
+    if (channel === 'renderer:open-api-spec') {
+      const selectedPath = promptForPath('Enter an OpenAPI file path on the Bruno bridge server:');
+      return selectedPath ? this.invoke('renderer:open-api-spec-file', selectedPath, args[0] || null) : null;
     }
 
     if (channel === 'renderer:load-gql-schema-file' || channel === 'renderer:browse-pac-file') {
@@ -450,40 +450,40 @@ class BrowserTransport {
       args = [selectedPath];
     }
 
-    if (["renderer:export-collection-zip", "renderer:export-workspace"].includes(channel)) {
-      const suggestedName = String(args[1] || "export").replace(/[^a-zA-Z0-9._-]/g, "_") + ".zip";
-      const destinationPath = promptForPath("Enter the destination ZIP path on the Bruno bridge server (for example: /tmp/" + suggestedName + "):");
+    if (['renderer:export-collection-zip', 'renderer:export-workspace'].includes(channel)) {
+      const suggestedName = String(args[1] || 'export').replace(/[^a-zA-Z0-9._-]/g, '_') + '.zip';
+      const destinationPath = promptForPath('Enter the destination ZIP path on the Bruno bridge server (for example: /tmp/' + suggestedName + '):');
       if (!destinationPath) return { success: false, canceled: true };
       args.push(destinationPath);
     }
 
-    if (channel === "renderer:save-response-to-file") {
-      const destinationPath = promptForPath("Enter the destination file path on the Bruno bridge server:");
+    if (channel === 'renderer:save-response-to-file') {
+      const destinationPath = promptForPath('Enter the destination file path on the Bruno bridge server:');
       if (!destinationPath) return { success: false, cancelled: true };
       args.push(destinationPath);
     }
 
-    if (channel === "renderer:open-docs") {
-      return this.openExternal("https://docs.usebruno.com");
+    if (channel === 'renderer:open-docs') {
+      return this.openExternal('https://docs.usebruno.com');
     }
 
-    if (channel === "renderer:open-about") {
-      window.alert("Bruno v2.0.0");
-      return { version: "2.0.0" };
+    if (channel === 'renderer:open-about') {
+      window.alert('Bruno v2.0.0');
+      return { version: '2.0.0' };
     }
 
-    if (channel === "renderer:window-is-fullscreen") {
+    if (channel === 'renderer:window-is-fullscreen') {
       return Boolean(document.fullscreenElement);
     }
 
-    if (channel === "renderer:toggle-fullscreen") {
+    if (channel === 'renderer:toggle-fullscreen') {
       return document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
     }
 
-    if (channel === "renderer:reset-zoom") this._zoomPercentage = 100;
-    if (channel === "renderer:zoom-in") this._zoomPercentage = Math.min(200, this._zoomPercentage + 10);
-    if (channel === "renderer:zoom-out") this._zoomPercentage = Math.max(50, this._zoomPercentage - 10);
-    if (["renderer:reset-zoom", "renderer:zoom-in", "renderer:zoom-out"].includes(channel)) {
+    if (channel === 'renderer:reset-zoom') this._zoomPercentage = 100;
+    if (channel === 'renderer:zoom-in') this._zoomPercentage = Math.min(200, this._zoomPercentage + 10);
+    if (channel === 'renderer:zoom-out') this._zoomPercentage = Math.max(50, this._zoomPercentage - 10);
+    if (['renderer:reset-zoom', 'renderer:zoom-in', 'renderer:zoom-out'].includes(channel)) {
       document.documentElement.style.zoom = String(this._zoomPercentage / 100);
       return;
     }

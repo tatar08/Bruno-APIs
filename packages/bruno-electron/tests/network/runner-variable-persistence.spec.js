@@ -101,7 +101,7 @@ describe('runner: variable flow across requests (Improvement.md B1/B2)', () => {
           params: [],
           body: { mode: 'none' },
           auth: { mode: 'none' },
-          script: { res: "bru.setEnvVar('token', res.getBody().token);" }
+          script: { res: 'bru.setEnvVar(\'token\', res.getBody().token);' }
         }
       },
       {
@@ -168,7 +168,7 @@ describe('runner: variable flow across requests (Improvement.md B1/B2)', () => {
             params: [],
             body: { mode: 'none' },
             auth: { mode: 'none' },
-            script: { req: "bru.setEnvVar('counter', (Number(bru.getEnvVar('counter')) || 0) + 1);" }
+            script: { req: 'bru.setEnvVar(\'counter\', (Number(bru.getEnvVar(\'counter\')) || 0) + 1);' }
           }
         }
       ]

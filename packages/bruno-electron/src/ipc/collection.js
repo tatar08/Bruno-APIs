@@ -2507,10 +2507,10 @@ const registerRendererEventHandlers = (mainWindow, watcher) => {
       const { filePath, canceled } = destinationPath
         ? { filePath: destinationPath, canceled: false }
         : await dialog.showSaveDialog(mainWindow, {
-          title: 'Export Collection as ZIP',
-          defaultPath: defaultFileName,
-          filters: [{ name: 'Zip Files', extensions: ['zip'] }]
-        });
+            title: 'Export Collection as ZIP',
+            defaultPath: defaultFileName,
+            filters: [{ name: 'Zip Files', extensions: ['zip'] }]
+          });
 
       if (canceled || !filePath) {
         return { success: false, canceled: true };
