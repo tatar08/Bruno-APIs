@@ -362,5 +362,16 @@ describe('channel-policy', () => {
         expect(validateArgs(channel, ['not-an-object'])).toMatch(/argument 0 must be of type object, got string/);
       }
     });
+
+    it('validates renderer:save-response-to-file (response object, url, pathname, optional destinationPath)', () => {
+      expect(validateArgs('renderer:save-response-to-file', [{ headers: {} }, 'https://example.com', '/tmp/req.bru'])).toBeNull();
+      expect(
+        validateArgs('renderer:save-response-to-file', [{ headers: {} }, 'https://example.com', '/tmp/req.bru', '/tmp/out.json'])
+      ).toBeNull();
+      expect(validateArgs('renderer:save-response-to-file', [{ headers: {} }, 'https://example.com'])).toMatch(/expects 3-4 argument/);
+      expect(validateArgs('renderer:save-response-to-file', ['not-an-object', 'https://example.com', '/tmp/req.bru'])).toMatch(
+        /argument 0 must be of type object, got string/
+      );
+    });
   });
 });

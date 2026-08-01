@@ -14,9 +14,11 @@
  * the save-* file-overwrite channels (spanning ipc/collection.js,
  * ipc/global-environments.js, ipc/openapi-sync.js, ipc/preferences.js and
  * ipc/workspace.js), the workspace-level mutation/destructive channels
- * (ipc/workspace.js), and the remaining environments-capability mutation
- * channels (ipc/global-environments.js). Everything else is fail-open (no
- * schema registered → no additional validation beyond "args is an array").
+ * (ipc/workspace.js), the remaining environments-capability mutation
+ * channels (ipc/global-environments.js), and the one file-overwrite channel
+ * in the network capability (ipc/network/index.js). Everything else is
+ * fail-open (no schema registered → no additional validation beyond "args
+ * is an array").
  */
 
 const { getCapability } = require('./channel-capabilities');
@@ -153,7 +155,23 @@ const CHANNEL_SCHEMAS = {
   'renderer:select-global-environment': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
   'renderer:update-global-environment-color': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
   'renderer:create-workspace-dotenv-file': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
-  'renderer:delete-workspace-dotenv-file': { minArgs: 1, maxArgs: 1, argTypes: ['object'] }
+  'renderer:delete-workspace-dotenv-file': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+
+  // network capability (ipc/network/index.js) — of the ~20 channels in this
+  // file, renderer:save-response-to-file is the only one that does an
+  // unconditional writeFile() (arbitrary file overwrite at `destinationPath ||
+  // chooseFileToSave(...)`), matching the same criterion as the save-*
+  // groups above. Everything else in network/ai (send-http-request,
+  // ws/grpc connection channels, ai chat/autocomplete/api-key channels) is
+  // either transient in-memory state (cancelled/cleared, not lost data) or
+  // already has provider/shape guards inside the handler itself
+  // (assertKnownProvider), so it doesn't meet the "outsized consequences"
+  // bar — deliberately left unschema'd. destinationPath is optional on
+  // direct Electron IPC (defaults to null) but always supplied through the
+  // Browser Bridge transport (ipc-transport.js appends it via a prompt,
+  // same pattern as export-collection-zip/export-workspace above) — hence
+  // maxArgs 4 with argTypes only covering the required 3.
+  'renderer:save-response-to-file': { minArgs: 3, maxArgs: 4, argTypes: ['object', 'string', 'string'] }
 };
 
 /**

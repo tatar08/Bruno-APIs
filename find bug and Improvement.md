@@ -669,6 +669,25 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P0.2 Channel Policy (ต่อ อีกครั้ง) — สำรวจ capability `network`/`ai` เต็มรูปแบบ พบ channel เข้าเกณฑ์แค่ตัวเดียว: `save-response-to-file`
+
+สำรวจ capability `network` (`packages/bruno-electron/src/ipc/network/index.js`, `network/ws-event-handlers.js`, `network/grpc-event-handlers.js` — รวม ~20 handler) และ `ai` (`ipc/ai/index.js`, `ipc/ai/chat.js`, `ipc/ai/autocomplete.js`) ตามที่ user อนุมัติให้ลุยต่อแม้จะมี risk false-positive สูงกว่ากลุ่มก่อน ๆ ตามที่เคยแจ้งไว้
+
+พบว่า channel ส่วนใหญ่ในสอง capability นี้ไม่เข้าเกณฑ์ "outsized consequences": `send-http-request`/`fetch-gql-schema`/`grpc:*`/`renderer:ws:*` เป็น core request-sending ที่ payload ยืดหยุ่นโดยตั้งใจ (เดา schema ผิดมีโอกาสสูงกว่าจะพัง flow จริง), ส่วน connection-action channel อย่าง `renderer:ws:send-message`/`close-connection`/`grpc:send-message`/`end-request`/`cancel-request` มี ownership check แยกอยู่แล้วใน `ipc-proxy.js` (บรรทัด 104-138, ใช้ `args[0]` หรือ `args[0]?.requestId` เทียบกับ session owner) — ถ้า shape ผิดก็แค่ denied 403 ไม่ใช่ data loss ส่วนกลุ่ม `ai` (`set/clear/get-ai-api-key`, `ai-test-provider` ฯลฯ) มี `assertKnownProvider()` guard ในตัว handler เองอยู่แล้ว และผลกระทบสูงสุดคือ clear API key ของ provider เดียว (กู้คืนได้ ผู้ใช้ใส่ใหม่ได้) ไม่ใช่ data loss ถาวร, `clear-oauth2-cache`/`cancel-http-request` ก็เป็น transient in-memory state เช่นกัน
+
+**ตัวเดียวที่เข้าเกณฑ์จริง**: `renderer:save-response-to-file` (`ipc/network/index.js:2266`) — ทำ `writeFile(filePath, data)` แบบไม่มีเงื่อนไขกันซ้ำที่ `filePath = destinationPath || await chooseFileToSave(...)` ตรงกับ pattern arbitrary-file-overwrite เดียวกับกลุ่ม save-* ที่ครอบมาแล้วทุกกลุ่มก่อนหน้า
+
+**Verification**: อ่าน handler จริงที่ `ipc/network/index.js:2265-2266` (signature `(event, response, url, pathname, destinationPath = null)`) cross-reference กับ call site จริงใน `components/ResponsePane/ResponseDownload/index.js:26` และ `components/ResponsePane/LargeResponseWarning/index.js:16` (ทั้งคู่เรียกด้วย 3 argument, ไม่ส่ง destinationPath) และ `utils/common/ipc-transport.js:460-463` ที่ยืนยันว่า Browser Bridge transport เติม `destinationPath` เป็น argument ที่ 4 เสมอผ่าน prompt — เหมือน pattern `export-collection-zip`/`export-workspace` ที่ครอบไปแล้วก่อนหน้า
+
+**การเปลี่ยนแปลงจริง** (`packages/bruno-server/src/security/channel-policy.js`):
+- เพิ่ม 1 schema ใหม่: `renderer:save-response-to-file` → `{ minArgs: 3, maxArgs: 4, argTypes: ['object', 'string', 'string'] }` (argument ที่ 4 optional ไม่ type-check เหมือน export-collection-zip)
+- อัปเดต header comment ด้านบนไฟล์ให้รวม "the one file-overwrite channel in the network capability (ipc/network/index.js)"
+- **Unit tests**: เพิ่ม 1 เคสใหม่ — suite รวมทั้งแพ็กเกจตอนนี้ 286/286 ผ่าน (เพิ่มจาก 285/285, 18 suite เท่าเดิม)
+
+**ยังไม่ทำ (ตั้งใจเว้นไว้)**: schema ครบทั้ง ~203 handler ยังไม่ทำ — ตอนนี้ครอบไปแล้ว 65 channel รวม capability `network`/`ai` ถือว่าสำรวจครบแล้ว (ไม่ใช่แค่ deferred เหมือน `filesystem` — สำรวจจริงทุก handler แล้วตัดสินใจว่าเข้าเกณฑ์แค่ตัวเดียว) capability ที่เหลือยังไม่สำรวจแบบละเอียด: `system` (`ipc/system-monitor.js`), `notifications` (`ipc/notifications.js`), `ui` (inline ใน `bruno-server/src/index.js`) — ทั้งสามมี `CAPABILITY_MAX_PAYLOAD_BYTES` cap แยกอยู่แล้ว (8KB/16KB/8KB) แต่ยังไม่เคยตรวจว่ามี channel ไหนเข้าเกณฑ์ argument-shape schema เพิ่มเติมหรือไม่ — เก็บไว้สำหรับ increment ต่อไปถ้า user ต้องการให้สำรวจต่อจนครบทุก capability
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี
