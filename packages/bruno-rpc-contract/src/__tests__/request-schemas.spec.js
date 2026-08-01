@@ -44,5 +44,14 @@ describe('request-schemas', () => {
         'Channel "renderer:import-collection" argument 0 must be of type object|array, got string'
       );
     });
+
+    it('rejects the Electron-only dataset path form in Browser Bridge requests', () => {
+      expect(validateRequestArgs('renderer:load-runner-dataset', ['/etc/data.json'])).toBe(
+        'Channel "renderer:load-runner-dataset" argument 0 must be of type object, got string'
+      );
+      expect(
+        validateRequestArgs('renderer:load-runner-dataset', [{ fileName: 'data.json', content: '[{"id":1}]' }])
+      ).toBeNull();
+    });
   });
 });

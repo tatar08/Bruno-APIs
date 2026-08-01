@@ -40,6 +40,7 @@ const buildApp = ({ staticDir } = {}) => {
   let collectionWatcher = null;
 
   handlerRegistry.register('renderer:echo', async (event, value) => ({ echoed: value }));
+  handlerRegistry.register('renderer:load-runner-dataset', async (event, upload) => ({ fileName: upload.fileName }));
   handlerRegistry.registerEvent('renderer:fire-and-forget', async () => {});
 
   app.use(cors({ origin: (origin, callback) => callback(null, isOriginAllowed(origin)), credentials: true }));
@@ -112,6 +113,21 @@ describe('Bridge Express app (Express 5 routing contract)', () => {
     const res = await request(app).post('/api/ipc/renderer:echo').send({ args: ['hello'] });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ data: { echoed: 'hello' } });
+  });
+
+  test('POST /api/ipc rejects host paths for runner datasets but accepts uploaded content', async () => {
+    const app = buildApp();
+    const pathResponse = await request(app)
+      .post('/api/ipc/renderer:load-runner-dataset')
+      .send({ args: ['/etc/data.json'] });
+    expect(pathResponse.status).toBe(400);
+    expect(pathResponse.body.code).toBe('INVALID_ARGS');
+
+    const uploadResponse = await request(app)
+      .post('/api/ipc/renderer:load-runner-dataset')
+      .send({ args: [{ fileName: 'data.json', content: '[{"id":1}]' }] });
+    expect(uploadResponse.status).toBe(200);
+    expect(uploadResponse.body).toEqual({ data: { fileName: 'data.json' } });
   });
 
   test('POST /api/ipc/:channel returns 404 for an unregistered channel', async () => {

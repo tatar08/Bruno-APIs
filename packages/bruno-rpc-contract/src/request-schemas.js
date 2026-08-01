@@ -28,6 +28,10 @@
  */
 
 const REQUEST_SCHEMAS = {
+  // Browser clients upload dataset contents. Accepting the Electron-only
+  // string-path form here would let a remote caller read arbitrary JSON/CSV
+  // files from the Bridge host (B8).
+  'renderer:load-runner-dataset': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
   'renderer:clone-git-repository': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
   'renderer:connect-collection-to-git': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
   'renderer:disconnect-collection-from-git': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
