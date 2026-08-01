@@ -6,14 +6,14 @@
 
 ## สรุปผู้บริหาร
 
-พบบัค **12 รายการ** — ในจำนวนนี้มี **2 รายการระดับสูง (B1, B2)** อยู่ในฟีเจอร์ dataset iterations ที่เพิ่งเพิ่ม ทั้งคู่เกิดจากการสร้าง `currentEnvVars` แบบ merge copy ต่อ request ใน runner loop ควรแก้ B1–B2 ก่อนเริ่มงานตาม `Improvement.md` เพราะเป็น correctness ของฟีเจอร์ที่เพิ่ง ship และแก้ตอนนี้ถูกกว่าแก้หลัง refactor
+~~พบบัค **12 รายการ** — ในจำนวนนี้มี **2 รายการระดับสูง (B1, B2)** อยู่ในฟีเจอร์ dataset iterations ที่เพิ่งเพิ่ม ทั้งคู่เกิดจากการสร้าง `currentEnvVars` แบบ merge copy ต่อ request ใน runner loop ควรแก้ B1–B2 ก่อนเริ่มงานตาม `Improvement.md` เพราะเป็น correctness ของฟีเจอร์ที่เพิ่ง ship และแก้ตอนนี้ถูกกว่าแก้หลัง refactor~~ **(อัปเดต 1 สิงหาคม 2026: สรุปข้างบนล้าสมัยแล้ว)** จากบัค 13 รายการที่พบทั้งหมด (B1-B13) มี **10 รายการแก้แล้วจริง** (B1-B7, B10-B12, ทั้งหมดแก้ใน commit `ae9ef0a` ซึ่งเป็น commit เดียวกับที่สร้างไฟล์นี้ — audit กับ fix ถูก commit พร้อมกันแต่ตารางสรุปไม่เคย sync ตาม), **1 รายการครอบคลุมแล้วโดย mechanism ที่มีอยู่แล้ว** (B8 — โดย P0.3 opt-in sandbox), **1 รายการตรวจแล้วสรุปว่าไม่ใช่บัค** (B9 — `stopExecution()` ทำงานตามชื่อจริง มี `skipRequest()` แยกสำหรับ use case อื่นอยู่แล้ว), และ **1 รายการแก้แล้วเป็นผลพลอยได้จากงานอื่น** (B13 — จากงาน P1.6 dependency bump) **ไม่มีบัคเหลือค้างที่ต้องแก้จากรายการนี้แล้ว** ดูรายละเอียดการยืนยันในหัวข้อ "ทวนสถานะบัค 12 รายการเดิม" ท้ายไฟล์
 
-สถานะที่ตรวจแล้ว:
+สถานะที่ตรวจแล้ว (ตอนตรวจครั้งแรก):
 
 - ✅ `runner-dataset.spec.js` ผ่าน 5/5
 - ✅ `timeline-routing.spec.js` ผ่าน 12/12
 - ✅ eslint ไฟล์ที่เปลี่ยนล่าสุด ไม่มี error
-- ❌ ยังไม่มี test ครอบคลุม env-var persistence ข้าม request ใน runner (จุดที่ B1 พัง)
+- ✅ env-var persistence ข้าม request ใน runner (จุดที่ B1 เคยพัง) ยืนยันแล้วว่าแก้จริงด้วยการอ่าน diff `ae9ef0a` + grep โค้ดปัจจุบัน (ไม่มี test ใหม่เฉพาะเจาะจงเพิ่ม แต่ยืนยันด้วยการอ่านโค้ดตรง)
 
 ---
 
@@ -21,18 +21,18 @@
 
 | # | ระดับ | ไฟล์ | อาการ |
 |---|---|---|---|
-| B1 | 🔴 สูง | `packages/bruno-electron/src/ipc/network/index.js:1670-1673` | `bru.setEnvVar()` ใน script ไม่ persist ไป request ถัดไปใน runner |
-| B2 | 🔴 สูง | `network/index.js:1670-1673` + `network/index.js:517-532` | ค่า dataset/runtime variables รั่วเข้า environment ของ UI |
-| B3 | 🟠 กลาง | `bruno-app/src/components/RunnerResults/index.jsx:499-616` | ปุ่ม Filter (Passed/Failed/Skipped) ไม่มีผลใน Table view ซึ่งเป็น view เริ่มต้น |
-| B4 | 🟠 กลาง | `RunnerResults/index.jsx:100,196-209,278,525,806` | Table view/Data modal อ่าน dataset จาก local state ไม่ใช่ข้อมูลของ run จริง |
-| B5 | 🟠 กลาง | `RunnerResults/index.jsx:235-258` | Run Again บังคับ `recursive: true` เสมอ ไม่ใช้ค่า `runnerInfo.isRecursive` ของ run เดิม |
-| B6 | 🟡 ต่ำ | `collections/index.js:3309-3318` | error ใน `testrun-ended` ถูก reducer ทิ้ง ผู้ใช้ไม่เห็นสาเหตุที่รันล้มเหลว |
-| B7 | 🟡 ต่ำ | `bruno-app/src/utils/common/parseDataFile.js` | Dead code + CSV parser พฤติกรรมต่างจากตัวจริงฝั่ง electron |
-| B8 | 🟡 ต่ำ | `bruno-electron/src/ipc/filesystem.js:48-78` | `renderer:load-runner-dataset` รับ path string ใด ๆ จาก renderer → อ่านไฟล์นอก workspace ได้ (เกี่ยวข้อง P0.3 ใน Improvement.md) |
-| B9 | 🟡 ต่ำ | `network/index.js:2190-2193` | `bru.runner.stopExecution()` ใน iteration เดียว หยุดทุก dataset iterations ที่เหลือ |
-| B10 | 🟡 ต่ำ | `network/index.js:1991` | 4xx/5xx response ไม่ส่งต่อ flag `__brunoDisableParsingResponseJson` ให้ `parseDataFromResponse` |
-| B11 | 🟡 ต่ำ | `RunnerResults/index.jsx:99,319` | Delay input เป็น controlled input ที่ค่าเริ่มต้นเป็น `null` (React warning) และ `status === 'cancelled'` ที่เช็คไว้ไม่มีวันเกิด |
-| B12 | 🟡 ต่ำ | `network/index.js:2143-2144` | testError fallback ใช้ `envVars`/`runtimeVariables` ตัวเดิมแทน `currentEnvVars`/`currentRuntimeVars` (ไม่สอดคล้องกับที่ส่งเข้า runtime) |
+| B1 | ✅ แก้แล้ว | `packages/bruno-electron/src/ipc/network/index.js` | `bru.setEnvVar()` ใน script ไม่ persist ไป request ถัดไปใน runner — แก้แล้วใน `ae9ef0a` |
+| B2 | ✅ แก้แล้ว | `network/index.js` | ค่า dataset/runtime variables รั่วเข้า environment ของ UI — แก้แล้วใน `ae9ef0a` (side effect ของ B1) |
+| B3 | ✅ แก้แล้ว | `bruno-app/src/components/RunnerResults/index.jsx` | ปุ่ม Filter (Passed/Failed/Skipped) ไม่มีผลใน Table view — แก้แล้วใน `ae9ef0a` |
+| B4 | ✅ แก้แล้ว | `RunnerResults/index.jsx` | Table view/Data modal อ่าน dataset จาก local state ไม่ใช่ข้อมูลของ run จริง — แก้แล้วใน `ae9ef0a` |
+| B5 | ✅ แก้แล้ว | `RunnerResults/index.jsx` | Run Again บังคับ `recursive: true` เสมอ — แก้แล้วใน `ae9ef0a` |
+| B6 | ✅ แก้แล้ว | `collections/index.js` | error ใน `testrun-ended` ถูก reducer ทิ้ง — แก้แล้วใน `ae9ef0a` |
+| B7 | ✅ แก้แล้ว | `bruno-app/src/utils/common/parseDataFile.js` | Dead code + CSV parser พฤติกรรมต่างจากตัวจริงฝั่ง electron — ไฟล์ถูกลบแล้วใน `ae9ef0a` |
+| B8 | 🟡 ครอบคลุมแล้วโดย P0.3 (opt-in) | `bruno-electron/src/ipc/filesystem.js:48-78` | `renderer:load-runner-dataset` รับ path string ใด ๆ — ตอนนี้อยู่ใน `READ_ONLY_SAFE_CHANNELS` ของ `allowed-roots.js` แล้ว เหมือน filesystem handler อื่นๆ ที่ยังไม่ audit รายตัว (ครอบเมื่อเปิด `BRUNO_SERVER_ALLOWED_ROOTS`; ปิดเป็นค่าเริ่มต้นตามการตัดสินใจของ P0.3 ทั้ง scope ไม่ใช่ gap เฉพาะ channel นี้) |
+| B9 | ✅ ตรวจแล้ว ไม่ใช่บัค | `network/index.js` | `bru.runner.stopExecution()` หยุดทุก dataset iteration ที่เหลือ — ยืนยันว่าเป็นพฤติกรรมที่ตั้งใจ: `bruno-js/src/bru.js:87-91` มี `skipRequest()` แยกต่างหากสำหรับ "ข้าม request นี้แล้วไปต่อ" อยู่แล้ว (ยืนยันในโค้ด runner loop ว่า `skipRequest` ทำ `currentRequestIndex++; continue;` ต่อในรันเดิม) ดังนั้น `stopExecution` ที่ทำ `break` ออกทั้ง loop คือ "หยุดทั้ง run" ตามชื่อจริงๆ ไม่ใช่บัค |
+| B10 | ✅ แก้แล้ว | `network/index.js` | 4xx/5xx response ไม่ส่งต่อ flag `__brunoDisableParsingResponseJson` — แก้แล้วใน `ae9ef0a` |
+| B11 | ✅ แก้แล้ว | `RunnerResults/index.jsx` | Delay controlled-input warning + dead `cancelled` check — แก้แล้วใน `ae9ef0a` |
+| B12 | ✅ แก้แล้ว | `network/index.js` | testError fallback ใช้ตัวแปรไม่ตรงกัน — แก้แล้วใน `ae9ef0a` (side effect ของ B1) |
 | B13 | ✅ แก้แล้ว | root `package-lock.json` | `bruno-electron/package.json` ประกาศ `simple-git@3.32.3` เป็น dependency แต่ตอนพบบัคนี้ lockfile ไม่มี resolved entry ให้ — **แก้แล้วเป็นผลพลอยได้จากงาน P1.6** (Electron/Express/React dependency bump ที่รัน `npm install` ที่ root หลายรอบ) ยืนยันด้วย `npm ls simple-git --workspaces` (resolve สะอาด, ตรง version ที่ package.json ประกาศ), boot `bruno-server` จริงแล้วเช็ค log เห็น "✅ Git handlers registered"/"✅ Preferences handlers registered" ครบ 203/203 handler ไม่มี `⚠️ Failed to load` warning เลย และ `bruno-electron` suite เต็ม 47/47 suites, 681/682 tests ผ่าน (1 skip เดิมไม่เกี่ยวข้อง) — ไม่ต้องแก้อะไรเพิ่ม |
 
 ---
@@ -731,6 +731,25 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 **ผลการรัน test**: `bruno-rpc-contract` 4 suites/19 tests ผ่านหมด (เพิ่มจาก 3 suites/14 tests), `bruno-server` 18 suites/286 tests ผ่านหมดไม่เปลี่ยนแปลง (`channel-policy.spec.js` รวมอยู่ในนั้น) — zero regression
 
 **สถานะ P0.5 ตอนนี้**: request schemas ย้ายเป็น canonical แล้ว (🟡 เพราะครอบแค่ 65/~203 channel ตามเกณฑ์ "outsized consequences" เดิม ไม่ใช่ทุก channel) — response schemas ยังไม่ทำ (ต้อง enumerate return shape จริงของ ~203 handler ก่อน เป็นงานแยกที่ใหญ่กว่ามาก) — event schemas และ generated Browser client/Electron adapter ยังไม่ทำเหมือนเดิม
+
+**หมายเหตุ (สำรวจเพิ่มเติม, ไม่ทำต่อรอบนี้):** สำรวจว่า "event schemas" (payload shape ของ event ที่ push จาก main process ไป renderer ผ่าน `webContents.send()`) ควรเป็น increment ถัดไปหรือไม่ — พบว่า event call site กระจายอยู่มากกว่าที่คิด: ไม่ใช่แค่ `bruno-electron/src/**` แต่รวม `bruno-requests/src/ws/ws-client.js` (และ gRPC client คู่กัน) ที่เรียกผ่าน `eventCallback(...)` แยกชั้นออกไปอีก ไม่มี live-registry mechanism แบบเดียวกับ `HandlerRegistry.getChannels()` ที่ใช้ capture request channel ได้ (นั่น capture เฉพาะ `ipcMain.handle()`/`ipcMain.on()` ไม่ครอบ outbound push) ต้องสร้าง static-scan mechanism ใหม่ข้าม 2+ package และหลาย wrapper function name (`send`, `sendEvent`, `eventCallback`, `webContents.send` ตรงๆ) ความเสี่ยงสูงที่จะได้ fixture ไม่ครบ/ผิด ซึ่งแย่กว่าไม่มี test เลย (สร้างความมั่นใจปลอมว่า contract ครบ) แถมไม่มี natural enforcement chokepoint เหมือน request schema (event เป็น server-to-client แบบ trusted ไม่ใช่ untrusted boundary) — **ตัดสินใจไม่ทำ increment นี้ต่อตอนนี้** ถือว่าไม่ well-scoped พอเทียบกับงานอื่นที่ทำสำเร็จมาตลอด session (request-schemas มี live-capture mechanism พร้อมอยู่แล้วก่อนเริ่ม)
+
+---
+
+### ทวนสถานะบัค 12 รายการเดิม — พบว่า 10/12 แก้แล้วแต่ตารางสรุปไม่เคยอัปเดต, 1 รายการตรวจแล้วไม่ใช่บัค
+
+ระหว่างมองหางานถัดไป กลับไปดู B1-B12 (บัคเดิมที่ตรวจพบก่อน `Improvement.md` roadmap) พบว่าตารางสรุปหัวข้อ 1 (บรรทัด 24-35) ยังโชว์ทุกอย่างเป็น "ยังไม่แก้" ทั้งที่จริง ๆ **10 ใน 12 รายการถูกแก้ไปแล้วตั้งแต่ commit `ae9ef0a`** (commit เดียวกับที่สร้างไฟล์นี้ขึ้นมาครั้งแรก — audit report กับ fix ถูก commit พร้อมกัน แต่ตารางสรุปไม่ได้ sync ตาม เหมือน pattern เดียวกับ B13 ที่ต้องมาอัปเดตทีหลัง)
+
+**ยืนยันด้วยการอ่าน diff ของ `ae9ef0a` และ `f9525c8` + grep โค้ดปัจจุบัน:**
+- B1, B2, B12 — `currentEnvVars`/`currentRuntimeVars` (spread copy ต่อ request) ถูกลบออกทั้งหมด กลับไปใช้ `envVars`/`runtimeVariables` ตัวจริงร่วมกันทุก request เหมือนพฤติกรรมเดิมก่อน regression — grep ปัจจุบันไม่พบ `currentEnvVars`/`currentRuntimeVars` เหลืออยู่ในไฟล์เลย
+- B3, B4, B5, B11 — `RunnerResults/index.jsx` เก็บ `resultDatasetRows`/`resultIterationCount` จาก `runnerInfo` (ของ run จริง) แทน local form state, filter table view ใช้ `visibleIterItems` จริง, Run Again ใช้ `runnerInfo.isRecursive`, delay input เปลี่ยนจาก `null` เป็น `''` (แก้ controlled-input warning) และเงื่อนไข `cancelled` ที่ไม่มีวันเกิดถูกลบออก
+- B6 — reducer's `runFolderEvent` เพิ่ม `else if (action.payload.error) info.statusText = action.payload.error.message` แล้ว
+- B7 — `bruno-app/src/utils/common/parseDataFile.js` ถูกลบทิ้งทั้งไฟล้ว (64 บรรทัด)
+- B10 — `error.response` path เรียก `parseDataFromResponse(error.response, request.__brunoDisableParsingResponseJson)` แล้ว (เดิมไม่ส่ง flag ที่สอง) ยืนยันด้วย grep บรรทัดปัจจุบัน (`network/index.js:2015`)
+- B8 — ยังไม่ใช่ "แก้แล้ว" ในความหมาย code change แต่ **ครอบคลุมแล้วโดย mechanism ที่มีอยู่**: `renderer:load-runner-dataset` อยู่ใน `READ_ONLY_SAFE_CHANNELS` ของ `security/allowed-roots.js` (P0.3) แล้ว เหมือน filesystem handler ที่ยัง unaudited รายตัวอื่นๆ — ป้องกันได้เมื่อเปิด `BRUNO_SERVER_ALLOWED_ROOTS` (ปิดเป็นค่าเริ่มต้นตามการตัดสินใจ scope ของ P0.3 ทั้งก้อน ไม่ใช่ gap เฉพาะ channel นี้) ไม่ถือเป็นบัคค้างที่ต้องทำแยก
+- B9 — ถามผู้ใช้ว่าควรแก้พฤติกรรมให้หยุดเฉพาะ iteration ปัจจุบันไหม (แบบ Postman) ผู้ใช้ให้ตัดสินใจเอง ("เลือกอันดีที่สุด") — ตรวจโค้ด `bruno-js/src/bru.js:87-91` พบว่ามี `skipRequest()` แยกต่างหากจาก `stopExecution()` อยู่แล้ว และ runner loop ปัจจุบัน (`network/index.js`) ยืนยันว่า `skipRequest` ทำ `currentRequestIndex++; continue;` (ข้าม request นี้ ไปต่อใน run เดิม) ส่วน `stopExecution` ทำ `break` ออกทั้ง while loop (ครอบทั้ง request และ iteration dimension เพราะ loop เดียวไม่ nested) — **สรุปว่า `stopExecution` ทำงานตรงตามชื่อ ไม่ใช่บัค** เพราะมี primitive แยกสำหรับ "ข้ามแค่ request นี้" อยู่แล้ว ไม่ต้องแก้อะไร
+
+**การเปลี่ยนแปลงจริง**: ไม่มีการแก้โค้ดในรอบนี้ (ของเดิมถูกแก้ไปแล้วก่อนหน้า, B9 ตรวจแล้วไม่ใช่บัค) — อัปเดตตารางสรุปหัวข้อ 1 (บรรทัด 24-35) ให้ตรงกับสถานะจริง
 
 ---
 
