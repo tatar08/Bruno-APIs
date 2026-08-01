@@ -27,8 +27,8 @@ describe('channel-policy', () => {
     });
 
     it('passes channels with no registered schema through unchanged, as long as args is an array', () => {
-      expect(validateArgs('renderer:save-file', [])).toBeNull();
-      expect(validateArgs('renderer:save-file', [{ path: '/x', content: 'y' }])).toBeNull();
+      expect(validateArgs('renderer:open-about', [])).toBeNull();
+      expect(validateArgs('renderer:open-about', [{ path: '/x', content: 'y' }])).toBeNull();
     });
 
     it('validates renderer:clone-git-repository against its schema', () => {
@@ -118,6 +118,86 @@ describe('channel-policy', () => {
     it('validates renderer:delete-cookie (domain, path, cookieKey)', () => {
       expect(validateArgs('renderer:delete-cookie', ['example.com', '/', 'session'])).toBeNull();
       expect(validateArgs('renderer:delete-cookie', ['example.com', '/'])).toMatch(/expects 3 argument/);
+    });
+
+    it('validates renderer:rename-collection (newName, collectionPathname)', () => {
+      expect(validateArgs('renderer:rename-collection', ['New Name', '/c'])).toBeNull();
+      expect(validateArgs('renderer:rename-collection', ['New Name'])).toMatch(/expects 2 argument/);
+    });
+
+    it('validates renderer:save-file (pathname, content)', () => {
+      expect(validateArgs('renderer:save-file', ['/c/req.bru', 'meta { name: req }'])).toBeNull();
+      expect(validateArgs('renderer:save-file', ['/c/req.bru'])).toMatch(/expects 2 argument/);
+      expect(validateArgs('renderer:save-file', ['/c/req.bru', { not: 'a string' }])).toMatch(
+        /argument 1 must be of type string, got object/
+      );
+    });
+
+    it('validates renderer:rename-environment (collectionPathname, environmentName, newName)', () => {
+      expect(validateArgs('renderer:rename-environment', ['/c', 'Old', 'New'])).toBeNull();
+      expect(validateArgs('renderer:rename-environment', ['/c', 'Old'])).toMatch(/expects 3 argument/);
+    });
+
+    it('validates renderer:rename-item-name and renderer:rename-item-filename (single object arg)', () => {
+      expect(validateArgs('renderer:rename-item-name', [{ itemPath: '/c/a.bru', newName: 'b', collectionPathname: '/c' }])).toBeNull();
+      expect(validateArgs('renderer:rename-item-name', [])).toMatch(/expects 1 argument/);
+      expect(validateArgs('renderer:rename-item-name', ['not-an-object'])).toMatch(/argument 0 must be of type object/);
+
+      expect(
+        validateArgs('renderer:rename-item-filename', [
+          { oldPath: '/c/a.bru', newPath: '/c/b.bru', newName: 'b', newFilename: 'b.bru', collectionPathname: '/c' }
+        ])
+      ).toBeNull();
+      expect(validateArgs('renderer:rename-item-filename', ['not-an-object'])).toMatch(/argument 0 must be of type object/);
+    });
+
+    it('validates renderer:move-item and renderer:move-item-cross-format (single object arg)', () => {
+      expect(validateArgs('renderer:move-item', [{ targetDirname: '/c/dst', sourcePathname: '/c/src' }])).toBeNull();
+      expect(validateArgs('renderer:move-item', ['not-an-object'])).toMatch(/argument 0 must be of type object/);
+
+      expect(
+        validateArgs('renderer:move-item-cross-format', [
+          { targetDirname: '/c/dst', sourcePathname: '/c/src', sourceFormat: 'bru', targetFormat: 'yml' }
+        ])
+      ).toBeNull();
+      expect(validateArgs('renderer:move-item-cross-format', [])).toMatch(/expects 1 argument/);
+    });
+
+    it('validates renderer:move-file-item and renderer:move-folder-item (itemPath/folderPath, destinationPath)', () => {
+      expect(validateArgs('renderer:move-file-item', ['/c/a.bru', '/c/dst/a.bru'])).toBeNull();
+      expect(validateArgs('renderer:move-file-item', ['/c/a.bru'])).toMatch(/expects 2 argument/);
+
+      expect(validateArgs('renderer:move-folder-item', ['/c/folder', '/c/dst/folder'])).toBeNull();
+      expect(validateArgs('renderer:move-folder-item', ['/c/folder'])).toMatch(/expects 2 argument/);
+    });
+
+    it('validates renderer:clone-folder (itemFolder object, collectionPath, collectionPathname)', () => {
+      expect(validateArgs('renderer:clone-folder', [{ items: [] }, '/c/new-folder', '/c'])).toBeNull();
+      expect(validateArgs('renderer:clone-folder', ['not-an-object', '/c/new-folder', '/c'])).toMatch(
+        /argument 0 must be of type object, got string/
+      );
+      expect(validateArgs('renderer:clone-folder', [{ items: [] }, '/c/new-folder'])).toMatch(/expects 3 argument/);
+    });
+
+    it('validates renderer:import-collection (collection object|array, collectionLocation, optional options)', () => {
+      expect(validateArgs('renderer:import-collection', [{ name: 'c' }, '/dest'])).toBeNull();
+      expect(validateArgs('renderer:import-collection', [[{ name: 'c1' }, { name: 'c2' }], '/dest'])).toBeNull();
+      expect(validateArgs('renderer:import-collection', [{ name: 'c' }, '/dest', { format: 'yml' }])).toBeNull();
+      expect(validateArgs('renderer:import-collection', ['not-object-or-array', '/dest'])).toMatch(
+        /argument 0 must be of type object\|array, got string/
+      );
+      expect(validateArgs('renderer:import-collection', [{ name: 'c' }])).toMatch(/expects 2-3 argument/);
+    });
+
+    it('validates renderer:export-collection-zip (collectionPath, collectionName, optional destinationPath)', () => {
+      expect(validateArgs('renderer:export-collection-zip', ['/c', 'My Collection'])).toBeNull();
+      expect(validateArgs('renderer:export-collection-zip', ['/c', 'My Collection', '/tmp/out.zip'])).toBeNull();
+      expect(validateArgs('renderer:export-collection-zip', ['/c'])).toMatch(/expects 2-3 argument/);
+    });
+
+    it('validates renderer:import-collection-zip (zipFilePath, collectionLocation)', () => {
+      expect(validateArgs('renderer:import-collection-zip', ['/tmp/in.zip', '/dest'])).toBeNull();
+      expect(validateArgs('renderer:import-collection-zip', ['/tmp/in.zip'])).toMatch(/expects 2 argument/);
     });
   });
 });

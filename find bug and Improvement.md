@@ -589,6 +589,23 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P0.2 Channel Policy (ต่อ อีกครั้ง) — เพิ่ม `CHANNEL_SCHEMAS` ครอบกลุ่ม rename/move/save/import-export collection
+
+หลัง P1.6 step 1-5 ปิดครบแล้ว เหลือแต่ step 6 (process decision ของทีม, ไม่ทำเอง) และ item อื่นที่เหลือทั้งหมดใน roadmap เป็น decision-blocked (P1.1 UI feature ใหญ่, P1.2 ที่เหลือ, P1.3 HTTPS/WSS+SBOM ต้อง deployment-topology decision, P1.5 ตัดสินใจ out-of-scope ไปแล้ว) หรือ greenfield หลายเดือน (P2.x/P3.x) — กลับมาที่ `channel-policy.js` อีกรอบเพื่อทำต่อ extension point เดิมทีละกลุ่มความเสี่ยงสูงตามแบบแผนเดิม
+
+**เกณฑ์เลือกกลุ่มถัดไป**: หลังจากครอบ git-mutate, terminal และ destructive collection-delete ไปแล้ว 15 channel ในสอง increment ก่อนหน้า สำรวจ `ipc/collection.js` (capability `collections`) ต่อหา channel กลุ่มถัดไปที่ argument shape ผิดมี consequence สูง — พบกลุ่ม rename/move/save/import-export ที่เข้าเกณฑ์เดียวกัน: `renderer:save-file` เขียนทับไฟล์แบบไม่มี collision guard (`writeFile` ตรง ๆ ถ้าไฟล์มีอยู่แล้ว), `renderer:move-item` ลบ source path ทิ้งแบบไม่เช็คก่อนว่ามีอยู่จริง (`removePath(sourcePathname)` unconditional หลัง copy), `renderer:export-collection-zip`/`renderer:import-collection-zip` เขียน zip/collection ไปผิด path ได้ถ้า argument shape ผิด
+
+**Verification**: dispatch Explore agent สำรวจ signature ทั้งหมดก่อน แล้ว verify เองอีกชั้นด้วยการอ่าน `ipcMain.handle()` destructuring ตรง ๆ ใน `bruno-electron/src/ipc/collection.js` (10 ช่วงบรรทัดต่างกัน) และ grep call site จริงของ `ipcRenderer.invoke(...)` ใน `bruno-app` (`ReduxStore/slices/{collections,workspaces}/actions.js`, `components/ShareCollection`, `components/.../MigrateToYmlModal`) — พบว่า agent รายงาน `renderer:clone-folder`'s อาร์กิวเมนต์แรกผิด (รายงานว่าเป็น string path) ทั้งที่ handler จริง (`ipc/collection.js:1512`) ใช้ `itemFolder.root`/`itemFolder.items` และ call site จริงส่ง `item` object ไม่ใช่ string — แก้เป็น `object` ก่อนเขียน schema (ตัวอย่างที่ตรงกับหลักการเดิม: ห้ามเขียน schema จาก signature guess อย่างเดียว ต้องอ่านโค้ดจริงทุกจุด)
+
+**การเปลี่ยนแปลงจริง** (`packages/bruno-server/src/security/channel-policy.js`):
+- ขยาย `validateArgs`'s type-check ให้รองรับ union type ต่อ argument position ได้ (`argTypes[i]` เป็น array ของ type ที่ยอมรับได้แทนที่จะเป็น string เดี่ยว) — จำเป็นสำหรับ `renderer:import-collection`'s argument แรกที่ handler จริงรองรับทั้ง `object` เดี่ยวและ `array` (`Array.isArray(collection) ? collection : [collection]`)
+- เพิ่ม 13 schema ใหม่: `rename-collection` (2 string), `save-file` (2 string), `rename-environment` (3 string), `rename-item-name`/`rename-item-filename`/`move-item`/`move-item-cross-format` (destructured object เดี่ยว 1 argument), `move-file-item`/`move-folder-item` (2 string — handler ลงทะเบียนจริงแต่ไม่มี call site ใน `bruno-app` เลย ยังใส่ schema ไว้เพราะ endpoint ยัง routable ผ่าน bridge server โดยตรงได้), `clone-folder` (object, string, string — แก้ตามที่ verify เจอด้านบน), `import-collection` (object|array, string, object? — union type แรกในไฟล์นี้), `export-collection-zip` (2-3 string — `destinationPath` optional ตอนเรียกผ่าน Electron IPC ตรง แต่ `ipc-transport.js:453` เติมให้เสมอเมื่อเรียกผ่าน Browser Bridge transport), `import-collection-zip` (2 string)
+- **Unit tests**: `security/__tests__/channel-policy.spec.js` เพิ่ม 13 เคสใหม่ (valid shape ผ่าน, arg count ผิดโดน 400, arg type ผิดโดน 400, union-type reject ที่ไม่ตรงทั้งสองแบบ) — พบว่าเทสเดิม "passes channels with no registered schema through unchanged" ใช้ `renderer:save-file` เป็นตัวอย่าง channel ที่ไม่มี schema ซึ่งตอนนี้ stale เพราะเพิ่ง schema ให้แล้ว แก้ให้ใช้ `renderer:open-about` แทน — suite รวมทั้งแพ็กเกจตอนนี้ 266/266 ผ่าน (เพิ่มจาก 243/243 ก่อนหน้า, 18 suite เท่าเดิม)
+
+**ยังไม่ทำ (ตั้งใจเว้นไว้เหมือนเดิม)**: schema ครบทั้ง ~203 handler ยังไม่ทำ — ตอนนี้ครอบไปแล้ว 28 channel (git-mutate 3 + terminal 5 + collection-delete 7 + rename/move/save/import-export 13) กลุ่มพี่น้องที่ format-specific ของ `save-file` (`save-request`, `save-folder-root`, `save-collection-root`, `save-dotenv-*` ใน `ipc/collection.js`, `save-api-spec` ใน `ipc/apiSpec.js:25`) ยังไม่ verify signature จึงยังไม่ใส่ schema ให้ — เก็บไว้เป็นกลุ่มถัดไปที่เข้าเกณฑ์เดียวกัน (เขียนทับไฟล์แบบไม่มี collision guard) สำหรับ increment ต่อไป
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

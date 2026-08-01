@@ -9,8 +9,10 @@
  * an extension point (same pattern as allowed-roots.js's
  * CHANNEL_PATH_EXTRACTORS) populated for the channels where getting the
  * shape wrong has outsized consequences: the already-privileged git-mutate
- * channels and the terminal channels. Everything else is fail-open (no
- * schema registered → no additional validation beyond "args is an array").
+ * channels, the terminal channels, the destructive collection-delete
+ * channels, and the rename/move/save/import-export collection channels.
+ * Everything else is fail-open (no schema registered → no additional
+ * validation beyond "args is an array").
  */
 
 const { getCapability } = require('./channel-capabilities');
@@ -53,7 +55,35 @@ const CHANNEL_SCHEMAS = {
   'renderer:delete-transient-requests': { minArgs: 2, maxArgs: 2, argTypes: ['array', 'string'] },
   'renderer:remove-collection': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
   'renderer:delete-cookies-for-domain': { minArgs: 1, maxArgs: 1, argTypes: ['string'] },
-  'renderer:delete-cookie': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] }
+  'renderer:delete-cookie': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
+
+  // Rename/move/save/import-export channels (ipc/collection.js) — same
+  // "outsized consequences" criterion: a wrong argument shape here can
+  // silently overwrite a file (save-file has no collision guard once the
+  // target exists), remove a source path without checking it exists first
+  // (move-item), or drop content at the wrong destination path (export/
+  // import zip). Signatures re-verified directly against both the
+  // ipcMain.handle() destructuring in bruno-electron/src/ipc/collection.js
+  // and the real ipcRenderer.invoke() call sites in bruno-app
+  // (ReduxStore/slices/{collections,workspaces}/actions.js,
+  // components/ShareCollection, components/.../MigrateToYmlModal).
+  // renderer:export-collection-zip's destinationPath is optional on direct
+  // Electron IPC calls (defaults to null) but is always supplied when routed
+  // through the Browser Bridge transport (ipc-transport.js appends it via a
+  // prompt) — hence maxArgs 3 with argTypes only covering the required 2.
+  'renderer:rename-collection': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:save-file': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:rename-environment': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
+  'renderer:rename-item-name': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:rename-item-filename': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:move-item': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:move-item-cross-format': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:move-file-item': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:move-folder-item': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:clone-folder': { minArgs: 3, maxArgs: 3, argTypes: ['object', 'string', 'string'] },
+  'renderer:import-collection': { minArgs: 2, maxArgs: 3, argTypes: [['object', 'array'], 'string', 'object'] },
+  'renderer:export-collection-zip': { minArgs: 2, maxArgs: 3, argTypes: ['string', 'string'] },
+  'renderer:import-collection-zip': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] }
 };
 
 /**
@@ -79,8 +109,9 @@ function validateArgs(channel, args) {
     if (value === undefined) continue; // covered by minArgs above when required
 
     const actualType = Array.isArray(value) ? 'array' : typeof value;
-    if (actualType !== expectedType) {
-      return `Channel "${channel}" argument ${i} must be of type ${expectedType}, got ${actualType}`;
+    const allowedTypes = Array.isArray(expectedType) ? expectedType : [expectedType];
+    if (!allowedTypes.includes(actualType)) {
+      return `Channel "${channel}" argument ${i} must be of type ${allowedTypes.join('|')}, got ${actualType}`;
     }
   }
 
