@@ -800,6 +800,30 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### B8 follow-up — จำกัด `renderer:load-runner-dataset` ให้รับแค่ object argument, ไม่รับ path string
+
+พบระหว่างสำรวจ `Improvement.md`/`find bug and Improvement.md` รอบใหม่ (uncommitted อยู่แล้วในต้นไม้ตอน resume session — ไม่ใช่งานที่เพิ่งเขียนในเซสชันนี้ แต่ยังไม่เคย commit): `REQUEST_SCHEMAS`'s Electron form ของ `renderer:load-runner-dataset` เดิมรับ string path ได้ ซึ่งถ้าเปิดผ่าน Browser Bridge จะกลายเป็นให้ remote caller อ่านไฟล์ JSON/CSV ใดก็ได้บน Bridge host (ตรงกับ B8's arbitrary-file-read pattern) แก้โดยเพิ่ม schema บังคับ `argTypes: ['object']` เท่านั้นใน `REQUEST_SCHEMAS` (Browser client ต้อง upload เนื้อหาไฟล์มาเป็น object เสมอ ไม่ใช่ path) มี test ใหม่ยืนยันทั้งระดับ `request-schemas.spec.js` และ integration ระดับ `app-routes.spec.js` (ยิง request จริงผ่าน Express app เช็คว่า path form ได้ 400 ส่วน object form ได้ 200) — commit แยกจาก P0.1 เพราะเป็นบั๊กคนละเรื่องกัน (`b70258f`)
+
+---
+
+### P0.5 Response shapes documentation (docs-only) — 2 สิงหาคม 2026
+
+สำรวจ roadmap ทั้งสองไฟล์อีกรอบหลังปิด P0.1 พบว่าของที่เหลือทั้งหมดใน P0/P1 ต้องการ product/architecture decision จากผู้ใช้ (P1.1 file explorer UI, P1.2 idempotency/resync/offline-cache, P1.3 HTTPS/WSS topology + SBOM tooling, P1.4 external secret provider, P1.5 popup UI) ยกเว้น P0.5's response schemas ที่เหลือ ("ต้อง enumerate return shape จริงของ ~203 handler") ซึ่งเป็นงาน engineering ล้วนๆ ไม่ใช่ product decision — แต่ก่อนเริ่มพบว่ามี fork สำคัญ: request schema เดิม enforce runtime (reject 400 ถ้า arg ผิด shape) ปลอดภัยเพราะ caller ผิด shape เป็นเรื่องผิดปกติจริง ส่วน response shape คือค่าที่ handler คืนมาซึ่งถูกต้องโดยนิยาม (เป็น source of truth) ถ้า enforce runtime แล้วเดา shape ผิดจะไป reject legitimate response แทนที่จะจับบั๊ก จึงถามผู้ใช้ก่อนว่าจะทำแบบไหน ผู้ใช้เลือก **"docs-only, ไม่มี runtime check"**
+
+**สิ่งที่ทำ:**
+- สร้าง `packages/bruno-rpc-contract/src/response-schemas.js`'s `RESPONSE_SHAPES` — บันทึก return shape จริงของ handler เป็น human-readable string ต่อ channel ไม่มี validation function ใดๆ ผูกเข้า runtime (ต่างจาก `REQUEST_SCHEMAS`/`validateRequestArgs` โดยตั้งใจ)
+- สโคปรอบนี้ครอบ 66 channel เดียวกับที่ `REQUEST_SCHEMAS` ครอบอยู่แล้ว (เพราะ handler body ของกลุ่มนี้ถูกอ่านละเอียดมาก่อนหน้าแล้วจากงาน request-schema) — อ่าน handler จริงทีละตัว (ผ่าน subagent สองตัวแบ่งงานคู่ขนาน: batch 1 ครอบ `ipc/collection.js`/`ipc/workspace.js` 42 channel, batch 2 ครอบ terminal/git/global-environments/openapi-sync/preferences/network 24 channel) ไล่ trace เข้า delegate function จริงเวลา handler เรียก helper อื่นต่อ (เช่น `renderer:import-workspace-environment` เรียก `workspace-environments.js`'s `createGlobalEnvironment` ซึ่งมี return shape จริงที่ต้องดูของ helper ไม่ใช่ wrapper)
+- พบ pattern ที่น่าสนใจระหว่างอ่าน: หลาย handler (`renderer:delete-item`, `renderer:remove-collection`, `renderer:save-preferences` ฯลฯ) ไม่มี `return` statement เลยจริงๆ (คืน `undefined` เสมอ) แม้ชื่อ channel จะฟังดูเหมือนควรคืนผลลัพธ์บางอย่าง — ไม่ใช่บั๊ก แค่ inconsistent convention ระหว่าง handler เก่า/ใหม่ บันทึกไว้ตามจริง; `terminal:input`/`terminal:resize`/`terminal:kill` ลงทะเบียนด้วย `ipcMain.on()` ไม่ใช่ `.handle()` เลย (fire-and-forget, ไม่มี return value ส่งกลับ renderer ได้เลยไม่ว่า handler body จะมีอะไร) บันทึกข้อสังเกตนี้ไว้ในไฟล์ด้วย
+- เพิ่ม parity test (`response-schemas.spec.js`) ยืนยันว่าทุก key เป็น channel จริงที่ registered จริง (pattern เดียวกับ `request-schemas.spec.js`) — ป้องกัน entry ค้างหลัง channel ถูก rename
+- export `RESPONSE_SHAPES` จาก package index (`packages/bruno-rpc-contract/src/index.js`)
+- Verify: `npm test --workspace=packages/bruno-rpc-contract` ผ่านทั้งหมด 22/22 (5 suite), `npm run audit:parity` ผ่าน 229 channel ตรงกับ fixture เหมือนเดิม
+
+**ยังไม่ทำ:**
+- ~137 channel ที่เหลือยังไม่มี response shape documented — เป็นส่วนขยายทำทีละกลุ่มได้ในอนาคต เหมือน pattern ที่ใช้กับ request schema (ไม่ต้องทำทีเดียวทั้งหมด)
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี
