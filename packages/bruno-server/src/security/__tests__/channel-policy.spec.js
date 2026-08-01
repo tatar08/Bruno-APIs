@@ -244,5 +244,48 @@ describe('channel-policy', () => {
         /argument 1 must be of type string, got number/
       );
     });
+
+    it('validates the single-object-arg save-* channels (global-environment, workspace-dotenv-*, openapi-spec, preferences, transient-request, scratch-request)', () => {
+      const channels = [
+        'renderer:save-global-environment',
+        'renderer:save-workspace-dotenv-variables',
+        'renderer:save-workspace-dotenv-raw',
+        'renderer:save-openapi-spec',
+        'renderer:save-preferences',
+        'renderer:save-transient-request',
+        'renderer:save-scratch-request'
+      ];
+      for (const channel of channels) {
+        expect(validateArgs(channel, [{ any: 'shape' }])).toBeNull();
+        expect(validateArgs(channel, [])).toMatch(/expects 1 argument/);
+        expect(validateArgs(channel, ['not-an-object'])).toMatch(/argument 0 must be of type object/);
+      }
+    });
+
+    it('validates renderer:save-collection-security-config (collectionPath, securityConfig)', () => {
+      expect(validateArgs('renderer:save-collection-security-config', ['/c', { jsSandboxMode: 'developer' }])).toBeNull();
+      expect(validateArgs('renderer:save-collection-security-config', ['/c'])).toMatch(/expects 2 argument/);
+    });
+
+    it('validates renderer:save-multiple-requests (requestsToSave[])', () => {
+      expect(validateArgs('renderer:save-multiple-requests', [[{ pathname: '/c/a.bru', item: {}, format: 'bru' }]])).toBeNull();
+      expect(validateArgs('renderer:save-multiple-requests', ['not-an-array'])).toMatch(
+        /argument 0 must be of type array, got string/
+      );
+      expect(validateArgs('renderer:save-multiple-requests', [])).toMatch(/expects 1 argument/);
+    });
+
+    it('validates renderer:save-environment (collectionPathname, environment)', () => {
+      expect(validateArgs('renderer:save-environment', ['/c', { name: 'Production' }])).toBeNull();
+      expect(validateArgs('renderer:save-environment', ['/c'])).toMatch(/expects 2 argument/);
+    });
+
+    it('validates renderer:save-workspace-docs (workspacePath, docs)', () => {
+      expect(validateArgs('renderer:save-workspace-docs', ['/ws', 'docs content'])).toBeNull();
+      expect(validateArgs('renderer:save-workspace-docs', ['/ws'])).toMatch(/expects 2 argument/);
+      expect(validateArgs('renderer:save-workspace-docs', ['/ws', 123])).toMatch(
+        /argument 1 must be of type string, got number/
+      );
+    });
   });
 });

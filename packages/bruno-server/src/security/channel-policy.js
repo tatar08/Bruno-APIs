@@ -11,9 +11,10 @@
  * shape wrong has outsized consequences: the already-privileged git-mutate
  * channels, the terminal channels, the destructive collection-delete
  * channels, the rename/move/save/import-export collection channels, and
- * the remaining save-* file-overwrite channels. Everything else is
- * fail-open (no schema registered → no additional validation beyond
- * "args is an array").
+ * the save-* file-overwrite channels (spanning ipc/collection.js,
+ * ipc/global-environments.js, ipc/openapi-sync.js, ipc/preferences.js and
+ * ipc/workspace.js). Everything else is fail-open (no schema registered →
+ * no additional validation beyond "args is an array").
  */
 
 const { getCapability } = require('./channel-capabilities');
@@ -97,7 +98,25 @@ const CHANNEL_SCHEMAS = {
   'renderer:save-request': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'object', 'string'] },
   'renderer:save-dotenv-variables': { minArgs: 2, maxArgs: 3, argTypes: ['string', 'array', 'string'] },
   'renderer:save-dotenv-raw': { minArgs: 2, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
-  'renderer:save-api-spec': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] }
+  'renderer:save-api-spec': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+
+  // Wider save-* group (ipc/global-environments.js, ipc/openapi-sync.js,
+  // ipc/preferences.js, ipc/collection.js, ipc/workspace.js) — same
+  // unconditional-writeFile-no-collision-guard criterion as the group
+  // above, just spanning more source files. save-scratch-request has no
+  // call site anywhere in bruno-app but is still schema'd since it's
+  // routable directly through the bridge server regardless.
+  'renderer:save-global-environment': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:save-workspace-dotenv-variables': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:save-workspace-dotenv-raw': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:save-openapi-spec': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:save-preferences': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:save-collection-security-config': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'object'] },
+  'renderer:save-transient-request': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:save-multiple-requests': { minArgs: 1, maxArgs: 1, argTypes: ['array'] },
+  'renderer:save-environment': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'object'] },
+  'renderer:save-scratch-request': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:save-workspace-docs': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] }
 };
 
 /**
