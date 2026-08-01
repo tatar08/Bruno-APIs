@@ -162,7 +162,7 @@ Browser version ในปัจจุบันมี functional parity กับ
 สร้าง package เช่น `packages/bruno-rpc-contract` ที่ประกอบด้วย: (✅ package นี้สร้างแล้วจริง — `@usebruno/rpc-contract`)
 
 - ✅ channel names แบบ typed constants (`CHANNELS`/`ALL_CHANNELS`, generate จาก 229 channel จริง)
-- request/response schemas — ยังไม่ทำ (ต้อง verify signature จริงของ ~203 handler ก่อน)
+- 🟡 request schemas — ย้าย `CHANNEL_SCHEMAS`/`validateArgs` (เดิมอยู่ที่ `bruno-server/src/security/channel-policy.js`) มาเป็น canonical `REQUEST_SCHEMAS`/`validateRequestArgs` ที่ `packages/bruno-rpc-contract/src/request-schemas.js` แล้ว — `channel-policy.js` เหลือแค่ thin re-export (pattern เดียวกับ `channel-capabilities.js`), byte-for-byte behavior-preserving (286 test เดิมใน `channel-policy.spec.js` ผ่านหมดโดยไม่แก้ assertion เลย) พร้อม test ใหม่ยืนยัน parity กับ live fixture (`request-schemas.spec.js`, 5 test) ว่าทุก schema key เป็น channel จริงที่ registered — ครอบ 65 channel จาก ~203 channel ทั้งหมด (เกณฑ์ "outsized consequences" เดิม ไม่เปลี่ยน) — response schemas ยังไม่ทำ (ต้อง enumerate return shape จริงของ ~203 handler ก่อน แยกงานใหญ่กว่ามาก)
 - event schemas — ยังไม่ทำ
 - ✅ error envelope มาตรฐาน (`ERROR_CODES` + `createErrorEnvelope()`, wired เข้า `ipc-proxy.js` แบบ additive)
 - ✅ capability metadata (ย้าย capability taxonomy จาก P0.2 มาเป็น canonical ที่นี่)

@@ -716,6 +716,24 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P0.5 Typed RPC Contract — ย้าย request schemas (`CHANNEL_SCHEMAS`/`validateArgs`) ไปเป็น canonical ที่ `@usebruno/rpc-contract`
+
+เมื่อ P0.2's capability survey ครบทั้ง 13 capability แล้ว กลับมาดู P0.5 ("request/response schemas — ยังไม่ทำ") ซึ่งเป็นรายการเดียวที่เหลือใน P0.5 ที่ยังไม่มี canonical home ร่วมกับ `capabilities.js`/`channels.js`/`error-envelope.js` ที่ย้ายไปแล้วก่อนหน้านี้
+
+**สิ่งที่ทำ**: ย้าย `CHANNEL_SCHEMAS` (data, 65 entries) และ `validateArgs` (function) จาก `bruno-server/src/security/channel-policy.js` ไปเป็น `REQUEST_SCHEMAS`/`validateRequestArgs` ที่ `packages/bruno-rpc-contract/src/request-schemas.js` — ใช้ pattern เดียวกับที่ `channel-capabilities.js` วางไว้ตอนย้าย capability taxonomy: canonical data+function อยู่ที่ `rpc-contract`, ส่วน `channel-policy.js` เหลือแค่ thin re-export (`const { REQUEST_SCHEMAS: CHANNEL_SCHEMAS, validateRequestArgs: validateArgs } = require('@usebruno/rpc-contract');`) เพื่อให้ `ipc-proxy.js` และ test suite เดิมไม่ต้องแก้อะไรเลย — `getMaxPayloadBytes`/`CAPABILITY_MAX_PAYLOAD_BYTES` ยังอยู่ที่ `channel-policy.js` เหมือนเดิมเพราะเป็น bruno-server-specific policy ไม่ใช่ shared contract
+
+Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUEST_SCHEMAS`, `validateRequestArgs`) เพิ่มเข้า `module.exports` เดิม
+
+**ความถูกต้องของการย้าย**: คัดลอก logic ของ `validateArgs` มาแบบ byte-for-byte (error message format เดิมทุกตัวอักษร: `'"args" must be an array'`, `` `Channel "${channel}" expects ${expected} argument(s), got ${args.length}` ``, `` `Channel "${channel}" argument ${i} must be of type ${allowedTypes.join('|')}, got ${actualType}` ``) — verify ด้วยการรัน `channel-policy.spec.js` เดิม (286 test, ไม่แก้ assertion แม้แต่ตัวเดียว) แล้วผ่านหมด ยืนยันว่า behavior-preserving จริง
+
+**Test ใหม่**: เพิ่ม `packages/bruno-rpc-contract/src/__tests__/request-schemas.spec.js` (5 test) ตาม pattern เดียวกับ `capabilities.spec.js` — drift-detection test ที่เช็คว่าทุก schema key เป็น channel จริงที่ registered (เทียบกับ live fixture `fixtures/real-channel-sources.json`), schema shape consistency (`minArgs <= maxArgs`, `argTypes.length <= maxArgs`), และ behavior test สำหรับ `validateRequestArgs` (non-array args, ไม่มี schema, minArgs/maxArgs enforcement, union-type argTypes)
+
+**ผลการรัน test**: `bruno-rpc-contract` 4 suites/19 tests ผ่านหมด (เพิ่มจาก 3 suites/14 tests), `bruno-server` 18 suites/286 tests ผ่านหมดไม่เปลี่ยนแปลง (`channel-policy.spec.js` รวมอยู่ในนั้น) — zero regression
+
+**สถานะ P0.5 ตอนนี้**: request schemas ย้ายเป็น canonical แล้ว (🟡 เพราะครอบแค่ 65/~203 channel ตามเกณฑ์ "outsized consequences" เดิม ไม่ใช่ทุก channel) — response schemas ยังไม่ทำ (ต้อง enumerate return shape จริงของ ~203 handler ก่อน เป็นงานแยกที่ใหญ่กว่ามาก) — event schemas และ generated Browser client/Electron adapter ยังไม่ทำเหมือนเดิม
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี
