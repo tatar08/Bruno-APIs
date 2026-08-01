@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import Modal from 'components/Modal';
 import Button from 'ui/Button';
-import { IconCheck, IconAlertTriangle, IconFileExport } from '@tabler/icons';
+import { IconCheck, IconAlertTriangle, IconFileExport, IconX } from '@tabler/icons';
 import StyledWrapper from './StyledWrapper';
 import exportPostmanCollection from 'utils/exporters/postman-collection';
 import exportOpenCollection from 'utils/exporters/opencollection';
@@ -10,6 +10,7 @@ import { transformCollectionToSaveToExportAsFile } from 'utils/collections/index
 import { useSelector } from 'react-redux';
 import { findCollectionByUid, areItemsLoading } from 'utils/collections/index';
 import toast from 'react-hot-toast';
+import { TransferCancelledError } from 'utils/common/ipc-transport';
 
 const EXPORT_FORMATS = {
   ZIP: 'zip',
@@ -22,6 +23,14 @@ const ShareCollection = ({ onClose, collectionUid }) => {
   const isCollectionLoading = areItemsLoading(collection);
   const [selectedFormat, setSelectedFormat] = useState(EXPORT_FORMATS.ZIP);
   const [isExporting, setIsExporting] = useState(false);
+  // Only true while a Browser-Bridge ZIP export download is streaming
+  // (Improvement.md P1.1 Transfer Center) — Electron's export writes
+  // straight to disk via a native dialog with no comparable progress to show.
+  const [isDownloading, setIsDownloading] = useState(false);
+  // 0-100, or null when the response had no Content-Length to compute a
+  // percentage from (bar still shown, just without a determinate fill).
+  const [exportProgress, setExportProgress] = useState(null);
+  const abortControllerRef = useRef(null);
 
   const hasNonExportableRequestTypes = useMemo(() => {
     let types = new Set();
@@ -46,15 +55,49 @@ const ShareCollection = ({ onClose, collectionUid }) => {
   }, [collection]);
 
   const handleExportZip = async () => {
+    const { ipcRenderer } = window;
+
+    // downloadWithProgress only exists on BrowserTransport (Browser Bridge
+    // mode) — real Electron's preload ipcRenderer has no such method, so
+    // this falls straight through to the existing plain invoke() there,
+    // unchanged from before progress/cancel support existed.
+    if (typeof ipcRenderer.downloadWithProgress !== 'function') {
+      try {
+        const result = await ipcRenderer.invoke('renderer:export-collection-zip', collection.pathname, collection.name);
+        if (result.success) {
+          toast.success('Collection exported successfully');
+        }
+      } catch (error) {
+        toast.error('Failed to export collection: ' + error.message);
+      }
+      return;
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    setIsDownloading(true);
+    setExportProgress(0);
     try {
-      const { ipcRenderer } = window;
-      const result = await ipcRenderer.invoke('renderer:export-collection-zip', collection.pathname, collection.name);
+      const result = await ipcRenderer.downloadWithProgress(
+        'renderer:export-collection-zip',
+        [collection.pathname, collection.name],
+        { onProgress: setExportProgress, signal: controller.signal }
+      );
       if (result.success) {
         toast.success('Collection exported successfully');
       }
     } catch (error) {
+      if (error instanceof TransferCancelledError) throw error;
       toast.error('Failed to export collection: ' + error.message);
+    } finally {
+      abortControllerRef.current = null;
+      setIsDownloading(false);
+      setExportProgress(null);
     }
+  };
+
+  const handleCancelExport = () => {
+    abortControllerRef.current?.abort();
   };
 
   const handleExportYaml = () => {
@@ -85,7 +128,9 @@ const ShareCollection = ({ onClose, collectionUid }) => {
       }
       onClose();
     } catch (error) {
-      console.error('Export error:', error);
+      if (!(error instanceof TransferCancelledError)) {
+        console.error('Export error:', error);
+      }
     } finally {
       setIsExporting(false);
     }
@@ -187,11 +232,34 @@ const ShareCollection = ({ onClose, collectionUid }) => {
           </div>
         )}
 
+        {isDownloading && (
+          <div className="flex items-center gap-2 mt-4" data-testid="export-progress">
+            <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all"
+                style={{ width: `${exportProgress ?? 0}%` }}
+              />
+            </div>
+            <span className="text-xs text-gray-500 dark:text-gray-400 w-10 text-right">
+              {exportProgress === null ? '' : `${exportProgress}%`}
+            </span>
+            <button
+              type="button"
+              data-testid="export-cancel-btn"
+              className="text-gray-500 hover:text-red-500"
+              onClick={handleCancelExport}
+              title="Cancel export"
+            >
+              <IconX size={16} />
+            </button>
+          </div>
+        )}
+
         <div className="modal-footer">
           <Button
             onClick={handleProceed}
             disabled={isDisabled}
-            loading={isExporting}
+            loading={isExporting && !isDownloading}
           >
             {isExporting ? 'Exporting...' : 'Proceed'}
           </Button>

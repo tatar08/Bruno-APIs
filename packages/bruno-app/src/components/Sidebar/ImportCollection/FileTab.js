@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { IconFileImport } from '@tabler/icons';
+import { IconFileImport, IconX } from '@tabler/icons';
 import { toastError } from 'utils/common/error';
 import jsyaml from 'js-yaml';
 import { isPostmanCollection } from 'utils/importers/postman-collection';
@@ -9,7 +9,7 @@ import { isWSDLCollection } from 'utils/importers/wsdl-collection';
 import { isBrunoCollection } from 'utils/importers/bruno-collection';
 import { isOpenCollection } from 'utils/importers/opencollection';
 import { useTheme } from 'providers/Theme';
-import { transport } from 'utils/common/ipc-transport';
+import { transport, TransferCancelledError } from 'utils/common/ipc-transport';
 
 const convertFileToObject = async (file) => {
   const text = await file.text();
@@ -40,7 +40,12 @@ const FileTab = ({
   setErrorMessage
 }) => {
   const [dragActive, setDragActive] = useState(false);
+  // Only meaningful for a zip upload to a Browser Bridge (Improvement.md
+  // P1.1 Transfer Center) — null while idle/not uploading, 0-100 while an
+  // upload is in flight.
+  const [uploadProgress, setUploadProgress] = useState(null);
   const fileInputRef = useRef(null);
+  const uploadAbortControllerRef = useRef(null);
   const { theme } = useTheme();
 
   const acceptedFileTypes = [
@@ -74,9 +79,16 @@ const FileTab = ({
   };
 
   const processZipFile = async (zipFile) => {
-    setIsLoading(true);
+    const controller = new AbortController();
+    uploadAbortControllerRef.current = controller;
+    setUploadProgress(0);
     try {
-      const filePath = await transport.uploadZipFile(zipFile);
+      const filePath = await transport.uploadZipFile(zipFile, { onProgress: setUploadProgress, signal: controller.signal });
+      // Only swap to the fullscreen loader once the upload itself is done —
+      // doing this any earlier would unmount FileTab (and its progress bar
+      // + cancel button) for the entire transfer, before the user ever gets
+      // a chance to see or cancel it.
+      setIsLoading(true);
       const isBrunoZip = await transport.invoke('renderer:is-bruno-collection-zip', filePath);
 
       if (isBrunoZip) {
@@ -87,10 +99,18 @@ const FileTab = ({
 
       toastError(new Error('The ZIP file is not a valid Bruno collection'));
     } catch (err) {
-      toastError(err, 'Import ZIP file failed');
+      if (!(err instanceof TransferCancelledError)) {
+        toastError(err, 'Import ZIP file failed');
+      }
     } finally {
+      uploadAbortControllerRef.current = null;
+      setUploadProgress(null);
       setIsLoading(false);
     }
+  };
+
+  const handleCancelZipUpload = () => {
+    uploadAbortControllerRef.current?.abort();
   };
 
   const handleMultipleFiles = async (fileArray) => {
@@ -276,6 +296,27 @@ const FileTab = ({
           </p>
         </div>
       </div>
+
+      {uploadProgress !== null && (
+        <div className="flex items-center gap-2 mt-3" data-testid="zip-upload-progress">
+          <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+            <div
+              className="bg-blue-500 h-2 rounded-full transition-all"
+              style={{ width: `${uploadProgress}%` }}
+            />
+          </div>
+          <span className="text-xs text-gray-500 dark:text-gray-400 w-10 text-right">{uploadProgress}%</span>
+          <button
+            type="button"
+            data-testid="zip-upload-cancel-btn"
+            className="text-gray-500 hover:text-red-500"
+            onClick={handleCancelZipUpload}
+            title="Cancel upload"
+          >
+            <IconX size={16} />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

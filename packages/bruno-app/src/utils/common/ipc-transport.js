@@ -156,6 +156,20 @@ export class IpcTimeoutError extends Error {
 }
 
 /**
+ * Thrown by uploadZipFile()/downloadWithProgress() (Improvement.md P1.1
+ * Transfer Center progress/cancel) when the caller aborts an in-flight
+ * transfer via its AbortSignal — distinguished from a real network/server
+ * failure so callers can skip showing an error toast for a user-initiated
+ * cancel.
+ */
+export class TransferCancelledError extends Error {
+  constructor(message = 'Transfer cancelled') {
+    super(message);
+    this.name = 'TransferCancelledError';
+  }
+}
+
+/**
  * Electron Transport — delegates directly to window.ipcRenderer
  * (the existing preload.js bridge)
  */
@@ -181,8 +195,9 @@ class ElectronTransport {
   }
 
   // Electron already has a real local path for any picked/dropped file
-  // (webUtils.getPathForFile via getFilePath) — there's nothing to upload.
-  uploadZipFile(file) {
+  // (webUtils.getPathForFile via getFilePath) — there's nothing to upload,
+  // so there's no meaningful progress to report and nothing to cancel.
+  uploadZipFile(file, _options) {
     return Promise.resolve(this.getFilePath(file));
   }
 
@@ -289,18 +304,11 @@ class BrowserTransport {
           this._ws.send(JSON.stringify({ type: 'subscribe-batch', channels: resubscribeChannels }));
         }
 
-        // Flush the queued subscribe/unsubscribe actions accumulated while offline
-        const queuedSubscribe = [];
-        const queuedUnsubscribe = [];
-        for (const [channel, action] of this._wsQueue) {
-          (action === 'subscribe' ? queuedSubscribe : queuedUnsubscribe).push(channel);
-        }
-        if (queuedSubscribe.length) {
-          this._ws.send(JSON.stringify({ type: 'subscribe-batch', channels: queuedSubscribe }));
-        }
-        if (queuedUnsubscribe.length) {
-          this._ws.send(JSON.stringify({ type: 'unsubscribe-batch', channels: queuedUnsubscribe }));
-        }
+        // Any subscribe/unsubscribe queued while offline already mutated
+        // this._listeners (the source of truth used above), so nothing
+        // further needs to be sent for it here — a fresh server-side
+        // connection also starts with an empty subscription set, making a
+        // queued 'unsubscribe' a no-op regardless.
         this._wsQueue.clear();
 
         this._startHeartbeat();
@@ -644,6 +652,92 @@ class BrowserTransport {
   }
 
   /**
+   * Same as _downloadViaBridge() but reports download progress and supports
+   * cancellation (Improvement.md P1.1 Transfer Center) — kept as a separate
+   * public method rather than adding options to _downloadViaBridge/invoke()
+   * because invoke()'s generic (channel, ...args) signature already treats a
+   * trailing arg as a real handler argument (e.g. export's optional
+   * destinationPath string), so there's no ambiguity-free way to smuggle an
+   * options object through it. Callers that want progress/cancel call this
+   * directly instead of going through invoke('renderer:export-collection-zip', ...).
+   *
+   * @param {string} channel one of DOWNLOADABLE_CHANNELS on the server
+   * @param {any[]} args the handler's real arguments, e.g. [pathname, name]
+   * @param {{ onProgress?: (percent: number|null) => void, signal?: AbortSignal }} [options]
+   *   onProgress receives null when the response has no Content-Length
+   *   (percent can't be computed), otherwise a 0-100 integer.
+   */
+  async downloadWithProgress(channel, args, { onProgress, signal } = {}) {
+    await ensureBridgeAuth();
+
+    const requestId = generateRequestId();
+    const headers = { 'Content-Type': 'application/json', 'X-Request-Id': requestId };
+    if (_csrfToken) headers['X-CSRF-Token'] = _csrfToken;
+
+    let response;
+    try {
+      response = await fetch(`${BRIDGE_SERVER_URL}/api/downloads/${encodeURIComponent(channel)}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ args }),
+        signal
+      });
+    } catch (err) {
+      if (err.name === 'AbortError') throw new TransferCancelledError();
+      throw err;
+    }
+
+    if (!response.ok) {
+      let message = `Export failed (HTTP ${response.status})`;
+      try {
+        const body = await response.json();
+        message = body.error || message;
+      } catch (err) {}
+      throw new Error(message);
+    }
+
+    const disposition = response.headers.get('content-disposition') || '';
+    const match = /filename="?([^";]+)"?/i.exec(disposition);
+    const fileName = match ? match[1] : `${String(args[1] || 'export').replace(/[^a-zA-Z0-9._-]/g, '_')}.zip`;
+
+    let blob;
+    if (onProgress && response.body?.getReader) {
+      const total = Number(response.headers.get('content-length')) || 0;
+      const reader = response.body.getReader();
+      const chunks = [];
+      let received = 0;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          onProgress(total ? Math.round((received / total) * 100) : null);
+        }
+      } catch (err) {
+        if (signal?.aborted || err.name === 'AbortError') throw new TransferCancelledError();
+        throw err;
+      }
+      blob = new Blob(chunks);
+    } else {
+      blob = await response.blob();
+    }
+
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+
+    return { success: true, filePath: fileName };
+  }
+
+  /**
    * Saves a network response's bytes to disk (renderer:save-response-to-file,
    * Improvement.md P1.1 Transfer Center) entirely client-side — the response
    * bytes are already in the browser tab's memory (response.dataBuffer) by
@@ -705,28 +799,67 @@ class BrowserTransport {
    * narrowly to the zip-import call sites; other getFilePath() callers are
    * unaffected.
    */
-  async uploadZipFile(file) {
+  /**
+   * @param {File} file
+   * @param {{ onProgress?: (percent: number) => void, signal?: AbortSignal }} [options]
+   *   onProgress is called with a 0-100 integer as upload bytes are sent —
+   *   plain fetch() has no upload-progress event in any browser, hence
+   *   XMLHttpRequest here instead of the fetch() used elsewhere in this file.
+   *   signal lets the caller cancel a large in-flight upload (Improvement.md
+   *   P1.1 Transfer Center).
+   */
+  async uploadZipFile(file, { onProgress, signal } = {}) {
     await ensureBridgeAuth();
+
+    if (signal?.aborted) {
+      throw new TransferCancelledError();
+    }
 
     const formData = new FormData();
     formData.append('file', file);
 
-    const headers = {};
-    if (_csrfToken) headers['X-CSRF-Token'] = _csrfToken;
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${BRIDGE_SERVER_URL}/api/uploads/scratch-file`);
+      xhr.withCredentials = true;
+      if (_csrfToken) xhr.setRequestHeader('X-CSRF-Token', _csrfToken);
 
-    const response = await fetch(`${BRIDGE_SERVER_URL}/api/uploads/scratch-file`, {
-      method: 'POST',
-      credentials: 'include',
-      headers,
-      body: formData
+      const onAbort = () => xhr.abort();
+      signal?.addEventListener('abort', onAbort);
+      const cleanup = () => signal?.removeEventListener('abort', onAbort);
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable && onProgress) {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      };
+
+      xhr.onload = () => {
+        cleanup();
+        let body = {};
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch (err) {}
+
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(body.data);
+        } else {
+          reject(new Error(body.error || `Upload failed (HTTP ${xhr.status})`));
+        }
+      };
+
+      xhr.onerror = () => {
+        cleanup();
+        reject(new Error('Upload failed (network error)'));
+      };
+
+      xhr.onabort = () => {
+        cleanup();
+        reject(new TransferCancelledError());
+      };
+
+      xhr.send(formData);
     });
-
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(body.error || `Upload failed (HTTP ${response.status})`);
-    }
-
-    return body.data;
   }
 
   /**

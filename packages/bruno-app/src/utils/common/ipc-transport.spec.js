@@ -11,8 +11,60 @@ import {
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_MAX_MISSED,
   INVOKE_TIMEOUT_MS,
-  IpcTimeoutError
+  IpcTimeoutError,
+  TransferCancelledError
 } from './ipc-transport';
+
+// Minimal XMLHttpRequest double for uploadZipFile() tests (Improvement.md
+// P1.1 Transfer Center progress/cancel) — real fetch() has no upload
+// progress event in any browser, so uploadZipFile() uses XHR instead, which
+// jsdom doesn't implement well enough to drive real network I/O against.
+class FakeXHR {
+  constructor() {
+    this.upload = {};
+    this.status = 0;
+    this.responseText = '';
+    this._headers = {};
+    FakeXHR.instances.push(this);
+  }
+
+  open(method, url) {
+    this.method = method;
+    this.url = url;
+  }
+
+  setRequestHeader(name, value) {
+    this._headers[name] = value;
+  }
+
+  send(body) {
+    this.sentBody = body;
+  }
+
+  abort() {
+    this.aborted = true;
+    this.onabort && this.onabort();
+  }
+
+  // --- test helpers ---
+  _progress(loaded, total) {
+    this.upload.onprogress && this.upload.onprogress({ lengthComputable: true, loaded, total });
+  }
+
+  _respond(status, body) {
+    this.status = status;
+    this.responseText = JSON.stringify(body);
+    this.onload && this.onload();
+  }
+
+  _networkError() {
+    this.onerror && this.onerror();
+  }
+
+  static latest() {
+    return FakeXHR.instances[FakeXHR.instances.length - 1];
+  }
+}
 
 class FakeWebSocket {
   constructor(url) {
@@ -195,7 +247,7 @@ describe('BrowserTransport (Improvement.md P1.2)', () => {
       ws._open();
 
       expect(ws.sent).toEqual(
-        expect.arrayContaining([{ type: 'subscribe', channel: 'main:app-loaded' }])
+        expect.arrayContaining([{ type: 'subscribe-batch', channels: ['main:app-loaded'] }])
       );
       expect(transport._wsQueue.size).toBe(0);
 
@@ -278,6 +330,172 @@ describe('BrowserTransport (Improvement.md P1.2)', () => {
       await expect(transport.invoke('renderer:some-channel')).rejects.toMatchObject({
         requestId: 'server-req-123'
       });
+    });
+  });
+
+  describe('uploadZipFile() progress + cancel (Improvement.md P1.1 Transfer Center)', () => {
+    const file = new File(['zip-bytes'], 'collection.zip', { type: 'application/zip' });
+    // These tests only await plain promise chains (ensureBridgeAuth() -> XHR
+    // creation), no timers -- switch off the outer describe's fake timers so
+    // a real setTimeout(…, 0) can flush them without manual timer-advancing.
+    const flushAsync = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    beforeEach(() => {
+      jest.useRealTimers();
+      FakeXHR.instances = [];
+      global.XMLHttpRequest = FakeXHR;
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+    });
+
+    afterEach(() => {
+      delete global.XMLHttpRequest;
+      delete global.fetch;
+    });
+
+    it('reports 0-100 progress as the XHR fires upload.onprogress events', async () => {
+      const onProgress = jest.fn();
+      const promise = transport.uploadZipFile(file, { onProgress });
+      await flushAsync();
+
+      const xhr = FakeXHR.latest();
+      xhr._progress(50, 200);
+      xhr._progress(200, 200);
+      xhr._respond(200, { data: '/scratch/collection.zip' });
+
+      await expect(promise).resolves.toBe('/scratch/collection.zip');
+      expect(onProgress).toHaveBeenNthCalledWith(1, 25);
+      expect(onProgress).toHaveBeenNthCalledWith(2, 100);
+    });
+
+    it('rejects with TransferCancelledError and aborts the XHR when the signal fires mid-upload', async () => {
+      const controller = new AbortController();
+      const promise = transport.uploadZipFile(file, { signal: controller.signal });
+      await flushAsync();
+
+      controller.abort();
+
+      await expect(promise).rejects.toBeInstanceOf(TransferCancelledError);
+      expect(FakeXHR.latest().aborted).toBe(true);
+    });
+
+    it('rejects with TransferCancelledError immediately if the signal is already aborted, without starting a request', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(transport.uploadZipFile(file, { signal: controller.signal })).rejects.toBeInstanceOf(TransferCancelledError);
+      expect(FakeXHR.instances.length).toBe(0);
+    });
+
+    it('rejects with the server-provided error message on a non-2xx response', async () => {
+      const promise = transport.uploadZipFile(file);
+      await flushAsync();
+
+      FakeXHR.latest()._respond(413, { error: 'File too large' });
+
+      await expect(promise).rejects.toThrow('File too large');
+    });
+  });
+
+  describe('downloadWithProgress() progress + cancel (Improvement.md P1.1 Transfer Center)', () => {
+    const makeReadableBody = (chunks) => {
+      let i = 0;
+      return {
+        getReader: () => ({
+          read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true, value: undefined })
+        })
+      };
+    };
+
+    beforeEach(() => {
+      jest.useRealTimers();
+      // jsdom doesn't implement these; downloadWithProgress uses them to
+      // trigger the browser's real save-file flow via a hidden <a download>.
+      global.URL.createObjectURL = jest.fn(() => 'blob:mock-url');
+      global.URL.revokeObjectURL = jest.fn();
+    });
+
+    afterEach(() => {
+      delete global.fetch;
+    });
+
+    it('reports 0-100 progress from Content-Length as chunks stream in', async () => {
+      const chunk = new Uint8Array(50);
+      global.fetch = jest.fn().mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        return Promise.resolve({
+          ok: true,
+          headers: { get: (name) => (name === 'content-length' ? '200' : name === 'content-disposition' ? 'attachment; filename="Test.zip"' : null) },
+          body: makeReadableBody([chunk, chunk, chunk, chunk])
+        });
+      });
+
+      const onProgress = jest.fn();
+      const result = await transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'], { onProgress });
+
+      expect(result).toEqual({ success: true, filePath: 'Test.zip' });
+      expect(onProgress).toHaveBeenCalledWith(25);
+      expect(onProgress).toHaveBeenCalledWith(50);
+      expect(onProgress).toHaveBeenCalledWith(75);
+      expect(onProgress).toHaveBeenCalledWith(100);
+    });
+
+    it('reports null progress when the response has no Content-Length', async () => {
+      const chunk = new Uint8Array(10);
+      global.fetch = jest.fn().mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        return Promise.resolve({ ok: true, headers: { get: () => null }, body: makeReadableBody([chunk]) });
+      });
+
+      const onProgress = jest.fn();
+      await transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'], { onProgress });
+
+      expect(onProgress).toHaveBeenCalledWith(null);
+    });
+
+    it('rejects with TransferCancelledError when the fetch is aborted', async () => {
+      global.fetch = jest.fn().mockImplementation((url, options) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        return new Promise((resolve, reject) => {
+          const rejectAbort = () => {
+            const err = new Error('The operation was aborted');
+            err.name = 'AbortError';
+            reject(err);
+          };
+          // Real fetch() rejects immediately when handed a signal that's
+          // already aborted — it doesn't wait for a future 'abort' event,
+          // which (being one-shot) would never fire again in that case.
+          if (options?.signal?.aborted) {
+            rejectAbort();
+            return;
+          }
+          options?.signal?.addEventListener('abort', rejectAbort);
+        });
+      });
+
+      const controller = new AbortController();
+      const promise = transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'], { signal: controller.signal });
+      controller.abort();
+
+      await expect(promise).rejects.toBeInstanceOf(TransferCancelledError);
+    });
+
+    it('falls back to response.blob() when no onProgress callback is given', async () => {
+      const mockBlob = { size: 3 };
+      global.fetch = jest.fn().mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        return Promise.resolve({ ok: true, headers: { get: () => null }, blob: async () => mockBlob });
+      });
+
+      const result = await transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test']);
+      expect(result).toEqual({ success: true, filePath: expect.any(String) });
     });
   });
 });

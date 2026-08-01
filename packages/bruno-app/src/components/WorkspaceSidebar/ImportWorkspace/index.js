@@ -4,14 +4,14 @@ import { useFormik } from 'formik';
 import * as Yup from 'yup';
 import toast from 'react-hot-toast';
 import get from 'lodash/get';
-import { IconFileZip } from '@tabler/icons';
+import { IconFileZip, IconX } from '@tabler/icons';
 import Modal from 'components/Modal';
 import { browseDirectory } from 'providers/ReduxStore/slices/collections/actions';
 import { importWorkspaceAction } from 'providers/ReduxStore/slices/workspaces/actions';
 import { formatIpcError } from 'utils/common/error';
 import { multiLineMsg } from 'utils/common/index';
 import Help from 'components/Help';
-import { transport } from 'utils/common/ipc-transport';
+import { transport, TransferCancelledError } from 'utils/common/ipc-transport';
 
 const ImportWorkspace = ({ onClose }) => {
   const dispatch = useDispatch();
@@ -20,8 +20,12 @@ const ImportWorkspace = ({ onClose }) => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  // Only meaningful for a Browser Bridge upload (Improvement.md P1.1
+  // Transfer Center) — null while idle, 0-100 while uploading.
+  const [uploadProgress, setUploadProgress] = useState(null);
   const fileInputRef = useRef(null);
   const locationInputRef = useRef(null);
+  const uploadAbortControllerRef = useRef(null);
 
   const defaultLocation = get(preferences, 'general.defaultLocation', '');
 
@@ -73,20 +77,31 @@ const ImportWorkspace = ({ onClose }) => {
       return null;
     }
 
+    const controller = new AbortController();
+    uploadAbortControllerRef.current = controller;
     try {
       setIsUploading(true);
-      const filePath = await transport.uploadZipFile(file);
+      setUploadProgress(0);
+      const filePath = await transport.uploadZipFile(file, { onProgress: setUploadProgress, signal: controller.signal });
       if (!filePath) {
         toast.error('Could not get file path');
         return null;
       }
       return { name: file.name, path: filePath };
     } catch (error) {
-      toast.error(multiLineMsg('Failed to read workspace zip file', formatIpcError(error)));
+      if (!(error instanceof TransferCancelledError)) {
+        toast.error(multiLineMsg('Failed to read workspace zip file', formatIpcError(error)));
+      }
       return null;
     } finally {
+      uploadAbortControllerRef.current = null;
+      setUploadProgress(null);
       setIsUploading(false);
     }
+  };
+
+  const handleCancelZipUpload = () => {
+    uploadAbortControllerRef.current?.abort();
   };
 
   const handleDrop = async (e) => {
@@ -213,6 +228,26 @@ const ImportWorkspace = ({ onClose }) => {
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   Supports exported Bruno workspace zip files
                 </p>
+                {uploadProgress !== null && (
+                  <div className="flex items-center gap-2 mt-3 w-full" data-testid="workspace-zip-upload-progress">
+                    <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-blue-500 h-2 rounded-full transition-all"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 w-10 text-right">{uploadProgress}%</span>
+                    <button
+                      type="button"
+                      data-testid="workspace-zip-upload-cancel-btn"
+                      className="text-gray-500 hover:text-red-500"
+                      onClick={handleCancelZipUpload}
+                      title="Cancel upload"
+                    >
+                      <IconX size={16} />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}

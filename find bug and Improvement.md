@@ -875,6 +875,35 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P1.1 Transfer Center upload/download progress + cancel — 2 สิงหาคม 2026
+
+ต่อจาก "P1.1 Transfer Center upload/download + WebSocket reconnect resubscribe flood bug" ปิด gap ที่บันทึกไว้ว่ายังไม่ทำ ("progress/cancel ... ของ upload/download") — เพิ่ม progress bar + cancel ให้ทั้ง upload (import ZIP ผ่าน Browser Bridge) และ download (export collection ผ่าน Browser Bridge)
+
+**สิ่งที่ทำ:**
+- `ipc-transport.js` (`BrowserTransport`): เขียน `uploadZipFile()` ใหม่จาก `fetch()` ธรรมดาเป็น XHR-based (`XMLHttpRequest`) เพื่อให้มี `upload.onprogress` event รายงาน % จริงระหว่างส่งไฟล์ รับ `{ onProgress, signal }` เป็น option — `signal.addEventListener('abort', () => xhr.abort())` ผูก `AbortController` เดิมของฝั่ง React component เข้ากับ XHR โดยตรง
+- เพิ่มฟังก์ชันใหม่ `downloadWithProgress()` บน `BrowserTransport` สำหรับ export — ใช้ streamed `fetch()` + `response.body.getReader()` อ่านทีละ chunk คำนวณ % จาก `Content-Length` header คืนมาเป็น `Blob` เมื่อจบ รองรับ `AbortSignal` เดียวกัน
+- เพิ่ม `TransferCancelledError` (custom Error class) แยกจาก error ทั่วไป เพื่อให้ caller แยกกรณี "user กด cancel เอง" (ไม่ต้อง toast error) ออกจากกรณี fail จริง
+- ปรับ WS reconnect resubscribe ให้ง่ายขึ้นอีกขั้น: เดิม `onopen` ส่ง batch resubscribe (จาก fix ก่อนหน้า) แล้ว**ยังแยก flush `_wsQueue`** เป็น batch อีกชุดซ้ำซ้อน — พบว่า `_listeners` (Map channel→handlers) เป็น source-of-truth ของ "สิ่งที่ควร subscribe อยู่ตอนนี้" อยู่แล้วไม่ว่า WS จะ connect หรือไม่ (mutate synchronous ทันทีตอนเรียก `.on()`/unsubscribe) ดังนั้น resubscribe-batch ตัวเดียวจาก `_listeners.keys()` ครอบคลุมทุกอย่างที่ queue ไว้ตอน offline อยู่แล้ว (`_wsQueue`'s queued unsubscribe ก็เป็น no-op เพราะ server สร้าง connection ใหม่ด้วย empty subscription set เสมอ) — ลบโค้ด flush `_wsQueue` เป็น batch แยกทิ้ง เหลือแค่ `this._wsQueue.clear()`
+- UI: `FileTab.js` เพิ่ม progress bar + ปุ่ม cancel (`data-testid="zip-upload-progress"` / `zip-upload-cancel-btn"`) ต่อจาก drop-zone, `ShareCollection/index.js` เพิ่มแบบเดียวกันสำหรับ export (`data-testid="export-progress"` / `export-cancel-btn`), `ImportWorkspace/index.js` ตรวจแล้วไม่ต้องแก้ (ไม่มี early-return ที่ unmount progress UI)
+- Test: เพิ่ม/แก้ test ใน `ipc-transport.spec.js` ครอบ upload progress callback, download progress + cancel, `TransferCancelledError`, และแก้ test เดิม 2 ตัวที่พังจากการเปลี่ยนแปลงนี้ (รายละเอียดใน "บั๊กที่เจอ" ด้านล่าง) — รวม 23/23 ผ่าน, full `bruno-app` suite (76 suites / 1395 tests) ผ่านหมดไม่มี regression, `npx eslint` ผ่านสะอาดทุกไฟล์ที่แก้
+
+**บั๊กที่เจอระหว่างเขียน test (mock/test fidelity, ไม่ใช่ production bug):**
+- test `downloadWithProgress() ... rejects with TransferCancelledError when the fetch is aborted` ค้าง timeout 5000ms — root cause: mock `fetch` เดิมรอ `'abort'` event แบบ listener เท่านั้น แต่ `controller.abort()` ถูกเรียก synchronous ทันทีหลัง invoke `downloadWithProgress()` ซึ่งเร็วกว่า async function จะไปถึงจุด attach listener ทัน (abort event เป็น one-shot ยิงไปแล้วไม่มีใครฟังทัน) — fix mock ให้เช็ค `signal?.aborted` แบบ synchronous ก่อนแล้วค่อย fallback ไป `addEventListener('abort', ...)` ให้ตรงกับพฤติกรรมจริงของ `fetch()` ที่ reject ทันทีถ้า handed signal ที่ abort ไปแล้ว
+- test WS-reconnect เดิม (จาก fix รอบก่อน) พังเพราะยังคาด format ข้อความเก่า `{type:'subscribe', channel}` ทั้งที่โค้ดเปลี่ยนไปส่ง `subscribe-batch` แล้ว — แก้ assertion ให้ตรงพฤติกรรมใหม่ (ไม่ใช่แก้โค้ดกลับไปตาม test เก่า)
+
+**บั๊กจริงที่เจอจาก live browser testing (ไม่ใช่ mock/test — เจอเฉพาะตอน verify ผ่าน Playwright จริงเท่านั้น หน่วย test 23/23 ผ่านหมดไม่จับได้):**
+- อาการ: build production ใหม่ + serve ผ่าน `bruno-server` จริง แล้วลองทดสอบ upload throttled (CDP `Network.emulateNetworkConditions` จำกัด `uploadThroughput: 3000` byte/s) พบว่า progress bar (`[data-testid="zip-upload-progress"]`) ไม่เคยปรากฏเลยตลอด poll 10 รอบ (200ms ต่อรอบ) แม้ upload ยังทำงานอยู่จริง
+- สงสัยว่า CDP throttling ไม่ทำงานจริงก่อน — เขียน `sanity-throttle.js` แยกทดสอบ raw `fetch()` POST 2MB ที่ throttle เดียวกัน ยืนยันว่าใช้เวลา >30s ตามที่คาด (ควรใช้ ~667s ทฤษฎี) พิสูจน์ว่า throttling ทำงานจริง ไม่ใช่สาเหตุ
+- Root cause จริง: `ImportCollection/index.js` (parent ของ `FileTab.js`) มี `if (isLoading) return <FullscreenLoader isLoading={isLoading} />;` — early return แบบนี้ unmount children (`FileTab` และ progress bar/cancel button ข้างใน) ทิ้งทั้งหมดตราบใดที่ `isLoading === true` ส่วน `processZipFile()` เดิมเรียก `setIsLoading(true)` เป็นบรรทัดแรกสุดของฟังก์ชัน — ก่อนสร้าง `AbortController` ด้วยซ้ำ — จึง unmount FileTab ทันทีตั้งแต่เริ่ม upload ทำให้ progress bar/cancel button ที่เพิ่งสร้างไม่มีทางถูกมองเห็นหรือกดได้เลยตลอดการ upload ทั้งหมด แม้ logic การอัปเดต `uploadProgress` ภายใต้ hood จะถูกต้อง 100% ก็ตาม — เป็น class ของบั๊กที่ unit test ที่ทดสอบ `ipc-transport.js` แยกส่วนจับไม่ได้เด็ดขาด เพราะไม่เคย render ความสัมพันธ์ parent-child ระหว่าง `FileTab`/`ImportCollection` จริง
+- Fix: ย้าย `setIsLoading(true)` ใน `processZipFile()` ให้ทำงาน**หลัง**จาก upload เสร็จสมบูรณ์เท่านั้น (ก่อนเรียก `renderer:is-bruno-collection-zip` ซึ่งไม่มี cancel affordance อยู่แล้วและได้ประโยชน์จาก fullscreen loader "Processing/Analyzing/Translating" พอดี) แทนที่จะเรียกตั้งแต่ต้นฟังก์ชัน — ตรวจ `ImportWorkspace/index.js` และ `ShareCollection/index.js` เพิ่มเติมว่าไม่มีบั๊กแบบเดียวกัน (ยืนยันด้วย screenshot จริงสำหรับ export)
+- Verify: rebuild production ใหม่หลัง fix, restart `bruno-server`, re-run `verify-upload.js` ผ่าน Playwright จริงกับ build ใหม่ — progress bar ปรากฏทันที (`POLL 0 progress-el-count=1`), progress text แสดง `0%` แล้วขยับเป็น `1%` จริงระหว่าง throttled upload, กด cancel แล้ว progress bar หายสะอาด ไม่มี error toast ("Import ZIP file failed" ไม่ปรากฏ), จากนั้นลอง upload ไฟล์ zip จริง (ไม่ throttle) จบครบ reach หน้า Location/Import step ปกติ — ยืนยันว่า fix ทั้งแก้บั๊กและไม่กระทบ success path เดิม
+
+**ยังไม่ทำ:**
+- search/recent/favorites, create-folder/rename/conflict-resolution, multi-select+preview สำหรับไฟล์, checksum/resume ของ upload/download (resume โดยเฉพาะยังไม่ทำ — progress/cancel ปิดแล้วรอบนี้), label แยก Bridge machine vs Browser machine, opaque file handle API — ตามที่บันทึกไว้ใน `Improvement.md` P1.1 ว่ายังเหลือ
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี
