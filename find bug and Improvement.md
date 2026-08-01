@@ -688,6 +688,22 @@ P0.4 เต็มรูปแบบ (session-scoped active workspace, terminal i
 
 ---
 
+### P0.2 Channel Policy (ต่อ อีกครั้ง) — สำรวจ capability `system`/`notifications`/`ui` ที่เหลือ (ไม่พบ channel เข้าเกณฑ์เพิ่ม) — capability survey ครบทั้ง 13 capability
+
+สำรวจ 3 capability สุดท้ายที่ยังไม่เคยตรวจแบบละเอียด ตามที่ user อนุมัติให้ลุยต่อ:
+
+- **`system`** (`ipc/system-monitor.js`, เต็มไฟล์ 36 บรรทัด, 3 handler): `start-system-monitoring` (รับ `intervalMs` optional number), `stop-system-monitoring`, `is-system-monitoring-active` (ไม่รับ arg) — ทั้งหมดแค่ start/stop polling interval ในหน่วยความจำ ไม่มี write/delete ไฟล์เลย `intervalMs` ผิด shape อย่างมากแค่ตั้ง interval แปลก ๆ (เป็น resource-limit concern ไม่ใช่ data-loss) ไม่เข้าเกณฑ์
+- **`notifications`** (`ipc/notifications.js`, เต็มไฟล์ 26 บรรทัด, 1 channel): `renderer:notifications-opened` — ไม่รับ argument เลย (แค่ trigger fetch จาก `BRUNO_INFO_ENDPOINT` แล้ว push กลับ) ไม่มี argument shape ให้ผิดได้
+- **`ui`** (inline ใน `bruno-electron/src/index.js` บรรทัด 257-330, capture เป็น source `src/index.js` → capability `ui`ตาม `SOURCE_TO_CAPABILITY`): ~13 channel ทั้งหมดเป็น window control (`window-minimize/maximize/close`, `open-preferences`, `toggle-devtools`, `reset-zoom`/`zoom-in`/`zoom-out`, `set-zoom-level`, `toggle-fullscreen`, `open-docs`, `open-about`) บวก `main:cache-clear` (ไม่รับ arg, แค่ emit internal snapshot reset) ไม่มีตัวไหน write/delete ไฟล์ผู้ใช้เลย
+
+**สรุป**: ทั้งสาม capability ไม่มี channel ไหนเข้าเกณฑ์ "outsized consequences" เลยสักตัว — **ไม่เพิ่ม schema ใหม่ในรอบนี้** สอดคล้องกับที่ `CAPABILITY_MAX_PAYLOAD_BYTES` เลือกครอบทั้งสาม capability นี้ด้วย payload cap แทน (เพราะ argument shape เรียบง่ายอยู่แล้ว ความเสี่ยงจริงคือ payload ใหญ่เกินไป ไม่ใช่ shape ผิด)
+
+**การเปลี่ยนแปลงจริง**: ไม่มีการแก้ `channel-policy.js`/`channel-policy.spec.js` เพิ่มในรอบนี้ (0 schema ใหม่) — อัปเดตเฉพาะ `Improvement.md` บรรทัด P0.2 ให้ระบุว่า capability-by-capability survey ครบทั้ง 13 capability แล้ว (`collections`, `workspace`, `environments`, `git`, `filesystem`, `preferences`, `system`, `notifications`, `apispec`, `terminal`, `network`, `ai`, `ui`)
+
+**สถานะ P0.2 ตอนนี้**: ครอบ 65 channel จาก ~203 total — ครบทุก capability ที่เข้าเกณฑ์แล้ว (4 capability จบด้วย "ไม่ต้องเพิ่ม schema" คือ `filesystem`, `system`, `notifications`, `ui`; อีก 9 capability มี schema อย่างน้อย 1 channel) การสำรวจแบบ capability-by-capability ที่ทำมาตลอดหลาย increment ถือว่า**เสร็จสมบูรณ์**แล้ว ส่วนที่เหลืออีก ~138 channel ที่ไม่มี schema เป็น read-only/query/get channel หรือ channel ที่ argument shape ยืดหยุ่นโดยตั้งใจ (ตรงตาม design ของไฟล์ที่ระบุใน comment บนสุด — ไม่ใช่ backlog ที่ต้องทำต่อ)
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี
