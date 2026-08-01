@@ -21,6 +21,10 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 const HEARTBEAT_INTERVAL_MS = 30000;
 const MESSAGE_RATE_LIMIT = 50;
 const MESSAGE_RATE_WINDOW_MS = 10000;
+// Bounds a single subscribe-batch/unsubscribe-batch frame (sent once per
+// reconnect to restore every channel the renderer has a listener for) —
+// generous relative to the app's actual channel count, just a sanity cap.
+const MAX_BATCH_CHANNELS = 500;
 
 class EventBridge {
   constructor() {
@@ -82,6 +86,20 @@ class EventBridge {
             this._subscriptions.get(ws)?.add(msg.channel);
           } else if (msg.type === 'unsubscribe' && msg.channel) {
             this._subscriptions.get(ws)?.delete(msg.channel);
+          } else if (msg.type === 'subscribe-batch' && Array.isArray(msg.channels)) {
+            const subs = this._subscriptions.get(ws);
+            if (subs) {
+              for (const channel of msg.channels.slice(0, MAX_BATCH_CHANNELS)) {
+                if (typeof channel === 'string') subs.add(channel);
+              }
+            }
+          } else if (msg.type === 'unsubscribe-batch' && Array.isArray(msg.channels)) {
+            const subs = this._subscriptions.get(ws);
+            if (subs) {
+              for (const channel of msg.channels.slice(0, MAX_BATCH_CHANNELS)) {
+                if (typeof channel === 'string') subs.delete(channel);
+              }
+            }
           } else if (msg.type === 'ping') {
             // Application-level heartbeat (Improvement.md P1.2): the browser
             // client can't observe protocol-level ping/pong frames, so it

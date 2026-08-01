@@ -32,6 +32,8 @@ const { createIpcProxyRouter } = require('./routes/ipc-proxy');
 const { createAuthRouter } = require('./routes/auth');
 const { createAdminRouter } = require('./routes/admin');
 const { createOauth2CallbackRouter } = require('./routes/oauth2');
+const { createUploadsRouter } = require('./routes/uploads');
+const { createDownloadsRouter } = require('./routes/downloads');
 const { isOriginAllowed } = require('./security/origin-policy');
 const { isAuthRequired, requireAuth, bootstrapToken } = require('./security/auth');
 const { getOrCreateMasterKey, createSafeStorageShim } = require('./security/master-key');
@@ -123,7 +125,13 @@ let grpcEventHandlers = null;
 
 app.use(cors({
   origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
-  credentials: true
+  credentials: true,
+  // Content-Disposition isn't on the CORS response-header safelist by
+  // default; without this, fetch() in ipc-transport.js can't read the
+  // server-suggested filename for a Bridge export download (Improvement.md
+  // P1.1 Transfer Center) whenever bruno-app is served from a different
+  // origin than bruno-server (e.g. local dev).
+  exposedHeaders: ['Content-Disposition']
 }));
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
@@ -466,6 +474,8 @@ const registerHandlers = () => {
 
 app.use(`${BASE_PATH}/api/auth`, createAuthRouter(handlerRegistry, windowShim, createFakeEvent, getCollectionWatcher));
 app.use(`${BASE_PATH}/api/ipc`, requireAuth, createIpcProxyRouter(handlerRegistry, windowShim, createFakeEvent));
+app.use(`${BASE_PATH}/api/uploads`, requireAuth, createUploadsRouter());
+app.use(`${BASE_PATH}/api/downloads`, requireAuth, createDownloadsRouter(handlerRegistry, windowShim, createFakeEvent));
 app.use(`${BASE_PATH}/api/admin`, requireAuth, createAdminRouter());
 // Not behind requireAuth — see routes/oauth2.js's header comment for why an
 // IdP redirect can never carry a Bridge session cookie/CSRF token.

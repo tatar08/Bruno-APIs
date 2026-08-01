@@ -180,6 +180,12 @@ class ElectronTransport {
     return window.ipcRenderer.getFilePath(file);
   }
 
+  // Electron already has a real local path for any picked/dropped file
+  // (webUtils.getPathForFile via getFilePath) — there's nothing to upload.
+  uploadZipFile(file) {
+    return Promise.resolve(this.getFilePath(file));
+  }
+
   openExternal(url) {
     return window.ipcRenderer.openExternal(url);
   }
@@ -272,14 +278,28 @@ class BrowserTransport {
         // A reconnect creates a new server-side client, so restore every
         // subscription registered by the renderer. Electron listeners remain
         // active across a renderer/main-process transport interruption and the
-        // browser transport should provide the same behaviour.
-        for (const channel of this._listeners.keys()) {
-          this._ws.send(JSON.stringify({ type: 'subscribe', channel }));
+        // browser transport should provide the same behaviour. Sent as a
+        // single batched frame rather than one message per channel — the app
+        // registers dozens of distinct event channels at mount, and one
+        // message per channel used to blow past event-bridge.js's per-socket
+        // message-rate limit on every single reconnect, closing the socket
+        // again immediately and looping forever.
+        const resubscribeChannels = [...this._listeners.keys()];
+        if (resubscribeChannels.length) {
+          this._ws.send(JSON.stringify({ type: 'subscribe-batch', channels: resubscribeChannels }));
         }
 
         // Flush the queued subscribe/unsubscribe actions accumulated while offline
+        const queuedSubscribe = [];
+        const queuedUnsubscribe = [];
         for (const [channel, action] of this._wsQueue) {
-          this._ws.send(JSON.stringify({ type: action, channel }));
+          (action === 'subscribe' ? queuedSubscribe : queuedUnsubscribe).push(channel);
+        }
+        if (queuedSubscribe.length) {
+          this._ws.send(JSON.stringify({ type: 'subscribe-batch', channels: queuedSubscribe }));
+        }
+        if (queuedUnsubscribe.length) {
+          this._ws.send(JSON.stringify({ type: 'unsubscribe-batch', channels: queuedUnsubscribe }));
         }
         this._wsQueue.clear();
 
@@ -476,16 +496,11 @@ class BrowserTransport {
     }
 
     if (['renderer:export-collection-zip', 'renderer:export-workspace'].includes(channel)) {
-      const suggestedName = String(args[1] || 'export').replace(/[^a-zA-Z0-9._-]/g, '_') + '.zip';
-      const destinationPath = promptForPath('Enter the destination ZIP path on the Bruno bridge server (for example: /tmp/' + suggestedName + '):');
-      if (!destinationPath) return { success: false, canceled: true };
-      args.push(destinationPath);
+      return this._downloadViaBridge(channel, [args[0], args[1]]);
     }
 
     if (channel === 'renderer:save-response-to-file') {
-      const destinationPath = promptForPath('Enter the destination file path on the Bruno bridge server:');
-      if (!destinationPath) return { success: false, cancelled: true };
-      args.push(destinationPath);
+      return this._saveResponseToFileLocally(args[0], args[1], args[2]);
     }
 
     if (channel === 'renderer:open-docs') {
@@ -579,6 +594,139 @@ class BrowserTransport {
         throw err;
       })
       .finally(() => clearTimeout(timeoutId));
+  }
+
+  /**
+   * Downloads a server-generated file (renderer:export-collection-zip /
+   * renderer:export-workspace, Improvement.md P1.1 Transfer Center) via
+   * POST /api/downloads/:channel and triggers a real browser save, instead
+   * of writing to a path on the Bridge's own filesystem the browser has no
+   * way to retrieve.
+   */
+  async _downloadViaBridge(channel, args) {
+    await ensureBridgeAuth();
+
+    const requestId = generateRequestId();
+    const headers = { 'Content-Type': 'application/json', 'X-Request-Id': requestId };
+    if (_csrfToken) headers['X-CSRF-Token'] = _csrfToken;
+
+    const response = await fetch(`${BRIDGE_SERVER_URL}/api/downloads/${encodeURIComponent(channel)}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify({ args })
+    });
+
+    if (!response.ok) {
+      let message = `Export failed (HTTP ${response.status})`;
+      try {
+        const body = await response.json();
+        message = body.error || message;
+      } catch (err) {}
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') || '';
+    const match = /filename="?([^";]+)"?/i.exec(disposition);
+    const fileName = match ? match[1] : `${String(args[1] || 'export').replace(/[^a-zA-Z0-9._-]/g, '_')}.zip`;
+
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+
+    return { success: true, filePath: fileName };
+  }
+
+  /**
+   * Saves a network response's bytes to disk (renderer:save-response-to-file,
+   * Improvement.md P1.1 Transfer Center) entirely client-side — the response
+   * bytes are already in the browser tab's memory (response.dataBuffer) by
+   * the time this channel is invoked, so no Bridge round-trip is needed at
+   * all, unlike export-collection-zip/export-workspace above.
+   */
+  _saveResponseToFileLocally(response, url, pathname) {
+    const getHeaderValue = (headerName) => {
+      const headersArray = typeof response?.headers === 'object' ? Object.entries(response.headers) : [];
+      const header = headersArray.find(([key]) => key.toLowerCase() === headerName);
+      return header ? header[1] : undefined;
+    };
+
+    const getFileNameFromContentDisposition = () => {
+      const raw = getHeaderValue('content-disposition');
+      if (!raw) return null;
+      const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(raw);
+      return match ? decodeURIComponent(match[1]) : null;
+    };
+
+    const getFileNameFromUrlPath = () => {
+      try {
+        const lastSegment = new URL(url).pathname.split('/').pop();
+        return lastSegment && /\..+/.test(lastSegment) ? lastSegment : null;
+      } catch (err) {
+        return null;
+      }
+    };
+
+    const fileName
+      = getFileNameFromContentDisposition()
+        || getFileNameFromUrlPath()
+        || (pathname ? pathname.split(/[\\/]/).pop() : null)
+        || 'response';
+
+    const byteString = window.atob(response?.dataBuffer || '');
+    const bytes = new Uint8Array(byteString.length);
+    for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+
+    const objectUrl = URL.createObjectURL(new Blob([bytes]));
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+
+    return { success: true, filePath: fileName };
+  }
+
+  /**
+   * Uploads a browser File (drag-drop / <input type=file>) to the Bridge's
+   * scratch directory via POST /api/uploads/scratch-file and returns a real
+   * path on the Bridge — needed because channels like
+   * renderer:import-collection-zip/renderer:import-workspace only accept a
+   * path that already exists on the Bridge's filesystem, which a browser
+   * File object never has (Improvement.md P1.1 Transfer Center). Scoped
+   * narrowly to the zip-import call sites; other getFilePath() callers are
+   * unaffected.
+   */
+  async uploadZipFile(file) {
+    await ensureBridgeAuth();
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers = {};
+    if (_csrfToken) headers['X-CSRF-Token'] = _csrfToken;
+
+    const response = await fetch(`${BRIDGE_SERVER_URL}/api/uploads/scratch-file`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: formData
+    });
+
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(body.error || `Upload failed (HTTP ${response.status})`);
+    }
+
+    return body.data;
   }
 
   /**

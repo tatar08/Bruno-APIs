@@ -11,6 +11,7 @@ import { importWorkspaceAction } from 'providers/ReduxStore/slices/workspaces/ac
 import { formatIpcError } from 'utils/common/error';
 import { multiLineMsg } from 'utils/common/index';
 import Help from 'components/Help';
+import { transport } from 'utils/common/ipc-transport';
 
 const ImportWorkspace = ({ onClose }) => {
   const dispatch = useDispatch();
@@ -18,6 +19,7 @@ const ImportWorkspace = ({ onClose }) => {
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
   const locationInputRef = useRef(null);
 
@@ -62,7 +64,7 @@ const ImportWorkspace = ({ onClose }) => {
     }
   };
 
-  const validateAndGetFilePath = (file) => {
+  const validateAndGetFilePath = async (file) => {
     if (!file) return null;
 
     const isZip = file.name.endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed';
@@ -71,22 +73,29 @@ const ImportWorkspace = ({ onClose }) => {
       return null;
     }
 
-    const filePath = window?.ipcRenderer?.getFilePath(file);
-    if (!filePath) {
-      toast.error('Could not get file path');
+    try {
+      setIsUploading(true);
+      const filePath = await transport.uploadZipFile(file);
+      if (!filePath) {
+        toast.error('Could not get file path');
+        return null;
+      }
+      return { name: file.name, path: filePath };
+    } catch (error) {
+      toast.error(multiLineMsg('Failed to read workspace zip file', formatIpcError(error)));
       return null;
+    } finally {
+      setIsUploading(false);
     }
-
-    return { name: file.name, path: filePath };
   };
 
-  const handleDrop = (e) => {
+  const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const fileInfo = validateAndGetFilePath(e.dataTransfer.files[0]);
+      const fileInfo = await validateAndGetFilePath(e.dataTransfer.files[0]);
       if (fileInfo) {
         setSelectedFile(fileInfo);
       }
@@ -97,9 +106,9 @@ const ImportWorkspace = ({ onClose }) => {
     fileInputRef.current.click();
   };
 
-  const handleFileInputChange = (e) => {
+  const handleFileInputChange = async (e) => {
     if (e.target.files && e.target.files[0]) {
-      const fileInfo = validateAndGetFilePath(e.target.files[0]);
+      const fileInfo = await validateAndGetFilePath(e.target.files[0]);
       if (fileInfo) {
         setSelectedFile(fileInfo);
       }
@@ -132,7 +141,7 @@ const ImportWorkspace = ({ onClose }) => {
     }
   }, [locationInputRef]);
 
-  const canSubmit = selectedFile && formik.values.workspaceLocation && !isSubmitting;
+  const canSubmit = selectedFile && formik.values.workspaceLocation && !isSubmitting && !isUploading;
 
   return (
     <Modal
@@ -182,17 +191,24 @@ const ImportWorkspace = ({ onClose }) => {
                   type="file"
                   className="hidden"
                   onChange={handleFileInputChange}
+                  disabled={isUploading}
                   accept=".zip,application/zip,application/x-zip-compressed"
                 />
                 <p className="text-gray-600 dark:text-gray-300 mb-2">
-                  Drop workspace zip file here or{' '}
-                  <button
-                    type="button"
-                    className="text-blue-500 underline cursor-pointer"
-                    onClick={handleBrowseFiles}
-                  >
-                    choose a file
-                  </button>
+                  {isUploading ? (
+                    'Uploading zip file…'
+                  ) : (
+                    <>
+                      Drop workspace zip file here or{' '}
+                      <button
+                        type="button"
+                        className="text-blue-500 underline cursor-pointer"
+                        onClick={handleBrowseFiles}
+                      >
+                        choose a file
+                      </button>
+                    </>
+                  )}
                 </p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   Supports exported Bruno workspace zip files

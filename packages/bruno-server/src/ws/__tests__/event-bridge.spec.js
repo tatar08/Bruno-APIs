@@ -197,6 +197,81 @@ describe('EventBridge', () => {
     });
   });
 
+  describe('subscribe-batch / unsubscribe-batch (reconnect resubscribe flood fix)', () => {
+    let bridge;
+    let server;
+
+    beforeEach(() => {
+      server = new http.Server();
+      bridge = new EventBridge();
+      bridge.attach(server);
+    });
+
+    afterEach(() => {
+      bridge._wss.close();
+    });
+
+    it('adds every channel in a single subscribe-batch message', () => {
+      const ws = new EventEmitter();
+      ws.send = jest.fn();
+      bridge._wss.emit('connection', ws, { headers: {} });
+
+      const channels = Array.from({ length: 60 }, (_, i) => `channel:${i}`);
+      ws.emit('message', Buffer.from(JSON.stringify({ type: 'subscribe-batch', channels })));
+
+      const subs = bridge._subscriptions.get(ws);
+      channels.forEach((channel) => expect(subs.has(channel)).toBe(true));
+    });
+
+    it('does not count a batch as more than one message against the rate limit', () => {
+      const ws = new EventEmitter();
+      ws.send = jest.fn();
+      bridge._wss.emit('connection', ws, { headers: {} });
+
+      const channels = Array.from({ length: 60 }, (_, i) => `channel:${i}`);
+      ws.emit('message', Buffer.from(JSON.stringify({ type: 'subscribe-batch', channels })));
+
+      expect(ws._messageTimestamps.length).toBe(1);
+    });
+
+    it('removes every channel in a single unsubscribe-batch message', () => {
+      const ws = new EventEmitter();
+      ws.send = jest.fn();
+      bridge._wss.emit('connection', ws, { headers: {} });
+
+      const channels = ['a', 'b', 'c'];
+      ws.emit('message', Buffer.from(JSON.stringify({ type: 'subscribe-batch', channels })));
+      ws.emit('message', Buffer.from(JSON.stringify({ type: 'unsubscribe-batch', channels: ['b'] })));
+
+      const subs = bridge._subscriptions.get(ws);
+      expect(subs.has('a')).toBe(true);
+      expect(subs.has('b')).toBe(false);
+      expect(subs.has('c')).toBe(true);
+    });
+
+    it('ignores a non-array channels field instead of throwing', () => {
+      const ws = new EventEmitter();
+      ws.send = jest.fn();
+      bridge._wss.emit('connection', ws, { headers: {} });
+
+      expect(() => {
+        ws.emit('message', Buffer.from(JSON.stringify({ type: 'subscribe-batch', channels: 'not-an-array' })));
+      }).not.toThrow();
+      expect(bridge._subscriptions.get(ws).size).toBe(0);
+    });
+
+    it('caps a single batch at MAX_BATCH_CHANNELS entries', () => {
+      const ws = new EventEmitter();
+      ws.send = jest.fn();
+      bridge._wss.emit('connection', ws, { headers: {} });
+
+      const channels = Array.from({ length: 600 }, (_, i) => `channel:${i}`);
+      ws.emit('message', Buffer.from(JSON.stringify({ type: 'subscribe-batch', channels })));
+
+      expect(bridge._subscriptions.get(ws).size).toBe(500);
+    });
+  });
+
   describe('close (Improvement.md P1.3 graceful shutdown)', () => {
     it('is a no-op when attach() was never called', async () => {
       const bridge = new EventBridge();

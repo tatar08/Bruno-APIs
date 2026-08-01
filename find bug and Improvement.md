@@ -849,6 +849,32 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P1.1 Transfer Center upload/download + WebSocket reconnect resubscribe flood bug — 2 สิงหาคม 2026
+
+ต่อจาก "P1.1 File Explorer — folder-picking modal first slice" ทำ increment ถัดไปตาม `Improvement.md` ที่เหลือ: upload จาก client ไป Bridge และ download จาก Bridge ไป client (เดิม export/save-response-to-file ยังใช้ `window.prompt()` เป็น placeholder) พอ implement เสร็จแล้วพยายาม live-verify ผ่าน Playwright จริง (build production + serve ผ่าน `bruno-server`) ตามข้อกำหนด UI-testing ของ session — ระหว่างนั้นเจอบั๊กใหม่ที่ทำให้ Browser mode ต่อ WebSocket ไม่ติดถาวร (สถานะค้างที่ "Offline") ซึ่งบล็อกการ verify และเป็นบั๊กจริงที่กระทบ Browser mode ทั้งหมดไม่ใช่แค่ feature ที่กำลังทดสอบ
+
+**สิ่งที่ทำ — ส่วนที่ 1 (upload/download):**
+- Backend: route ใหม่ `bruno-server/src/routes/uploads.js` (multer, รับไฟล์ไปเก็บ scratch dir ชั่วคราว คืน path ให้ IPC handler เดิมใช้ต่อ) และ `downloads.js` (`res.download()` สำหรับ channel ที่อยู่ใน allowlist `DOWNLOADABLE_CHANNELS`) ใช้ security primitive เดิมของระบบซ้ำ (ไม่สร้างใหม่) มี sweep ล้าง scratch dir เป็นระยะกันไฟล์ค้าง และเปิด CORS `exposedHeaders` ให้ client อ่าน `Content-Disposition` ได้ (จำเป็นสำหรับดึงชื่อไฟล์จริง)
+- Frontend: `ipc-transport.js` เพิ่ม `_downloadViaBridge()`/`_saveResponseToFileLocally()` (แทนที่ path เดิมที่ใช้ `window.prompt()` แล้วเขียนไฟล์ฝั่ง Bridge) และ `uploadZipFile()` (ฝั่ง `BrowserTransport`; `ElectronTransport.uploadZipFile()` เป็น no-op เพราะ Electron อ่านไฟล์ local ได้อยู่แล้วไม่ต้อง upload) แก้ `FileTab.js`/`ImportWorkspace/index.js` ให้เรียก path ใหม่นี้
+- Test: 9 test ใหม่ใน `uploads-downloads.spec.js`
+- **Live verification จริงในเบราว์เซอร์** (Playwright, production build, ผ่าน `bruno-server` จริง ไม่ mock): export-download — คลิก Share → Proceed จริง จับ Playwright `download` event จริง ได้ไฟล์ `Test.zip` 677 byte พร้อม `Content-Disposition` ถูกต้อง (พิสูจน์ว่า path นี้ไม่ใช้ `window.prompt()` แล้ว); upload-import — ป้อนไฟล์ zip ที่ download มาเข้า Import Collection modal จริง เห็น `POST /api/uploads/scratch-file` → 200 พร้อม scratch path จริง, `renderer:is-bruno-collection-zip` validate ผ่าน, wizard เลื่อนไปหน้า location step ถูกต้องพร้อมชื่อ collection ที่ derive จากชื่อไฟล์ที่ upload
+
+**สิ่งที่ทำ — ส่วนที่ 2 (บั๊กที่เจอระหว่าง verify: WebSocket reconnect resubscribe flood):**
+- อาการ: หลัง build ใหม่แล้วเปิดหน้าเว็บ สถานะค้างที่ "Offline" ตลอด แม้ backend รันอยู่ปกติ — เปิด `bruno-server` log ดูเห็น pattern วนซ้ำ: `Client connected` → `exceeded message rate limit, closing connection` → `Client disconnected` → `Client connected` ... วนไม่หยุด
+- Root cause: `BrowserTransport._connectWebSocket()`'s `onopen` handler เดิมส่ง `{type:'subscribe', channel}` ทีละข้อความแยกต่อ 1 channel เพื่อ restore subscription หลัง reconnect — แต่แอปทั้งแอปลงทะเบียน event channel ไว้ 63 channel (grep ยืนยันจริง) reconnect ครั้งเดียวจึงส่ง WS message burst 63 ข้อความ ชนกับ `event-bridge.js`'s `MESSAGE_RATE_LIMIT = 50` ข้อความ/`MESSAGE_RATE_WINDOW_MS = 10000` (10 วิ) ต่อ connection ทันที เกินลิมิตปุ๊บ server สั่ง `ws.close(1008, ...)` ทันที ซ้ำเติมด้วยอีกจุด: `this._reconnectAttempts = 0` ถูก reset ใน `onopen` **ก่อน**ที่จะรู้ว่า connection เสถียรจริง (ยังไม่ทันส่ง resubscribe เสร็จก็โดน close แล้ว) ทำให้ exponential backoff (1s ไป 30s แบบ double+jitter) ไม่เคยขยับเลย กลายเป็นวน reconnect ทุก ~1-2 วิ ไม่จบไม่สิ้น เป็นบั๊กระดับรุนแรงที่กระทบ Browser mode ทั้งหมด (ไม่ใช่แค่ feature upload/download ที่กำลังทดสอบอยู่) และไม่เคยถูกพบมาก่อนหน้านี้เพราะ live-verify ผ่านเบราว์เซอร์จริงไม่เคยรัน reconnect scenario แบบนี้มาก่อน
+- Fix: รวม resubscribe เป็น 1 ข้อความ (batch) แทนที่จะส่งทีละ channel
+  - `ipc-transport.js`'s `onopen`: ส่ง `{type: 'subscribe-batch', channels: [...]}` ครั้งเดียวคุม channel ที่ลงทะเบียนอยู่ทั้งหมด (จาก `this._listeners.keys()`) รวมถึง flush queued subscribe/unsubscribe ที่สะสมไว้ตอน offline ด้วย batch เดียวกันแทนการวน loop เดิม
+  - `event-bridge.js`: เพิ่ม message type `subscribe-batch`/`unsubscribe-batch` (คู่กับ `subscribe`/`unsubscribe` เดิมที่ยังใช้อยู่สำหรับ ad-hoc `on()`/`off()` runtime ซึ่ง rate-limit ตามธรรมชาติอยู่แล้วเพราะ user/component-driven ไม่ใช่ bulk) มี `MAX_BATCH_CHANNELS = 500` เป็น defensive cap กัน batch ใหญ่เกินสมควร
+  - ผลลัพธ์: reconnect หนึ่งครั้งใช้แค่ 1-2 ข้อความแทน 63+ ข้อความ ไม่ชน rate limit อีกต่อไป ไม่ว่าแอปจะลงทะเบียน channel เพิ่มอีกกี่ตัวในอนาคตก็ตาม
+- Test: เพิ่ม 5 test ใหม่ใน `event-bridge.spec.js` (`describe('subscribe-batch / unsubscribe-batch (reconnect resubscribe flood fix)')`): เพิ่มหลาย channel ในข้อความเดียว, ยืนยันว่า batch นับเป็นแค่ 1 message ต่อ rate limit (ไม่ใช่นับตาม channel), ลบหลาย channel ในข้อความเดียว, รับ input ที่ `channels` ไม่ใช่ array โดยไม่ throw, และ cap ที่ `MAX_BATCH_CHANNELS`
+- Verify: `npx eslint` ผ่านทั้ง `ipc-transport.js` (ไม่มี warning), full `bruno-server` test suite รันผ่านทั้งหมด 307/307 ไม่มี regression (302 เดิม + 5 ใหม่); rebuild production ใหม่แล้ว re-verify ด้วย Playwright/log อีกรอบ เห็น `[BrowserTransport] WebSocket connected` และหน้าเว็บแสดงสถานะ "Online" นิ่ง ไม่มี rate-limit log วนซ้ำอีกเลย
+
+**ยังไม่ทำ:**
+- search/recent/favorites, create-folder/rename/conflict-resolution, multi-select+preview สำหรับไฟล์, progress/cancel/checksum/resume ของ upload/download, label แยก Bridge machine vs Browser machine, opaque file handle API — ตามที่บันทึกไว้ใน `Improvement.md` P1.1 ว่ายังเหลือ
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

@@ -76,7 +76,7 @@ const FileTab = ({
   const processZipFile = async (zipFile) => {
     setIsLoading(true);
     try {
-      const filePath = transport.getFilePath(zipFile);
+      const filePath = await transport.uploadZipFile(zipFile);
       const isBrunoZip = await transport.invoke('renderer:is-bruno-collection-zip', filePath);
 
       if (isBrunoZip) {
