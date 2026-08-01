@@ -226,19 +226,20 @@ Browser version ในปัจจุบันมี functional parity กับ
 
 ## P1 — ทำให้ Browser ใช้งานจริงได้ดี (1–3 เดือน)
 
-### P1.1 Server File Explorer and Transfer Center
+### P1.1 Server File Explorer and Transfer Center 🟡 เสร็จบางส่วน (folder-picking modal แทน window.prompt แล้ว, upload/download ยังไม่ทำ)
 
 แทน `window.prompt()` ด้วย modal ที่มี:
 
-- browse เฉพาะ allowed roots
-- breadcrumb, search, recent paths และ favorites
-- create folder, rename และ conflict resolution
-- multi-select พร้อม preview
-- upload จาก client ไป Bridge และ download จาก Bridge ไป client
-- progress, cancel, checksum และ resume สำหรับไฟล์ใหญ่
-- แสดงให้ชัดว่า path เป็นของ **Bridge machine** หรือ **Browser machine**
+- ✅ browse ผ่าน modal จริง (point-and-click navigation) แทน `window.prompt()` — สำหรับ 3 ช่องทางที่เลือก path เป็น "โฟลเดอร์" (`renderer:browse-directory`, `renderer:open-collection`, `renderer:open-workspace-dialog`); backend เพิ่ม `renderer:list-directory` (read-only, อยู่ใน `READ_ONLY_SAFE_CHANNELS`) ที่ `bruno-electron/src/ipc/filesystem.js` คืน `{ path, parentPath, entries }`; frontend เป็น provider ใหม่ `providers/BrowseFolder` (mirror pattern เดียวกับ `PromptVariablesProvider`) + `components/BrowseFolderModal` ที่รองรับทั้ง single-select (browse-directory, open-workspace-dialog) และ multi-select ด้วย checkbox (open-collection คงความสามารถเลือกหลาย path พร้อมกันแบบเดิมไว้); ทดสอบผ่าน Playwright จริงบน built app ที่ serve ผ่าน bruno-server (navigate เข้า/ออกโฟลเดอร์, multi-select, cancel — ทำงานถูกต้องทุกจุด)
+- ⚠️ "browse เฉพาะ allowed roots" — ยังไม่ enforce ที่ตัว modal เอง (ถ้า `BRUNO_SERVER_ALLOWED_ROOTS` ตั้งไว้ sandbox ฝั่ง server จะ block การเรียกอยู่ดีผ่าน `findPathPolicyViolation`, แต่ modal ไม่ได้กรอง UI ให้ navigate ออกนอก root ไม่ได้ตั้งแต่แรก — UX gap ไม่ใช่ security gap)
+- ยังไม่ทำ — search, recent paths และ favorites
+- ยังไม่ทำ — create folder, rename และ conflict resolution
+- ยังไม่ทำ — multi-select พร้อม preview (ไฟล์, ไม่ใช่โฟลเดอร์ — `renderer:browse-files` ยังใช้ `window.prompt()` เดิมอยู่)
+- ยังไม่ทำ — upload จาก client ไป Bridge และ download จาก Bridge ไป client (export/save-response-to-file ช่องทางยังใช้ `window.prompt()` เดิม)
+- ยังไม่ทำ — progress, cancel, checksum และ resume สำหรับไฟล์ใหญ่
+- ยังไม่ทำ — แสดงให้ชัดว่า path เป็นของ **Bridge machine** หรือ **Browser machine** (modal ปัจจุบันแสดงแค่ path ตรงๆ ไม่มี label เครื่อง)
 
-API ควรใช้ opaque file handles แทนส่ง absolute path กลับ renderer ทุกครั้ง
+API ควรใช้ opaque file handles แทนส่ง absolute path กลับ renderer ทุกครั้ง — ยังไม่ทำ ตอนนี้ `renderer:list-directory` ยังคืน absolute path ตรงๆ เหมือน handler อื่นๆ ที่มีอยู่แล้วในระบบ (ไม่ใช่ regression เพราะ path เหล่านี้ก็ resolve ได้อยู่แล้วผ่าน `renderer:resolve-path`/`renderer:is-directory` เดิม แต่ยังไม่ใช่ opaque handle ตามที่ spec ต้องการ)
 
 ### P1.2 Connection and Recovery UX 🟡 เสร็จบางส่วน
 

@@ -824,6 +824,31 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P1.1 File Explorer — folder-picking modal first slice — 2 สิงหาคม 2026
+
+หลังปิด P0.5 ถามผู้ใช้ว่าจะเริ่มงานที่เหลือ (ทั้งหมดต้องการ product/architecture decision) จากจุดไหน ผู้ใช้เลือก **"P1.1 File Explorer UI"** และเลือก **"ยังไม่ push"** สำหรับคำถามเรื่อง push commit ที่ค้างสะสมไว้ สโคปเต็มของ P1.1 ตาม `Improvement.md` ใหญ่มาก (browse allowed roots, breadcrumb/search/recent/favorites, create/rename/conflict resolution, multi-select+preview, upload/download, progress/checksum/resume, dual-machine path label, opaque file handles) จึงตัดสินใจสโคปรอบแรกให้เล็กลงเอง (ไม่ได้ถามผู้ใช้ก่อน เพราะเป็น incremental self-scoping ปกติของ session นี้ ไม่ใช่ product-scope fork แบบ P0.5): ทำแค่ 3 ช่องทางที่เลือก path เป็น "โฟลเดอร์" (`renderer:browse-directory`, `renderer:open-collection`, `renderer:open-workspace-dialog`) ให้ใช้ modal จริงแทน `window.prompt()` ส่วน `renderer:browse-files`/export/save-response-to-file (ไฟล์เดี่ยว, ไม่ใช่โฟลเดอร์) ยังคงใช้ `window.prompt()` เดิมไว้ก่อน
+
+**สาเหตุที่ต้องมี modal:** `BrowserTransport.invoke()` (`ipc-transport.js`) ดักช่อง 8 channel ที่ปกติเปิด native OS dialog บน Electron แล้วแทนที่ด้วย `window.prompt()` เพราะ Bridge server รันคนละเครื่องกับ browser ที่ผู้ใช้เปิดอยู่ — native file dialog ของ browser จะเห็นแค่ filesystem ของเครื่อง browser ไม่ใช่เครื่อง Bridge ก่อนหน้านี้ dialog-shim (`bruno-server/src/adapters/dialog-shim.js`) ที่ mock `electron.dialog` เป็น dead code เพราะ interception เกิดฝั่ง client ก่อน HTTP call ไปถึงเลย
+
+**สิ่งที่ทำ:**
+- Backend: เพิ่ม `renderer:list-directory` handler ใน `bruno-electron/src/ipc/filesystem.js` — รับ path (default `os.homedir()`), `readdir` แบบ `withFileTypes`, คืน `{ path, parentPath, entries: [{name, path, isDirectory}] }` (เรียง directory ก่อน file, ตามด้วย alphabetical) เป็น read-only ล้วนๆ จึงเพิ่มเข้า `READ_ONLY_SAFE_CHANNELS` ใน `bruno-server/src/security/allowed-roots.js` ได้เลย (ผ่าน sandbox ได้แม้ root ที่ config เป็น `:ro`) รัน `npm run audit:parity --write` ที่ `bruno-rpc-contract` regenerate fixture สำเร็จ — diff มีแค่ channel ใหม่ตัวเดียวตามคาด ไม่ได้เพิ่ม `REQUEST_SCHEMAS` entry ให้ (เกณฑ์เดิมของไฟล์นั้นคือครอบเฉพาะ channel ที่ผิด shape แล้วผลเสียหายหนัก — read-only listing ไม่เข้าเกณฑ์)
+- Frontend: provider ใหม่ `providers/BrowseFolder/index.js` (mirror pattern ของ `PromptVariablesProvider` เป๊ะๆ — เก็บ modal state ใน `useState`, expose `browseFolder()` ที่คืน Promise, ผูก global `window.browseFolderOnBridge` ให้โค้ดนอก React tree อย่าง `ipc-transport.js` เรียกได้) + modal component `components/BrowseFolderModal/index.js` บน `Modal`/`Portal` เดิมของระบบ รองรับทั้ง single-select (คลิก "Select This Folder" เลือก path ปัจจุบันเลย ไม่ต้องคลิกที่ entry) และ multi-select ด้วย checkbox ต่อแถว (คลิกชื่อโฟลเดอร์ = navigate เข้าไป, คลิก checkbox = เลือกไว้โดยไม่ navigate) — เพื่อคง multi-path capability เดิมของ `renderer:open-collection` ไว้ (เดิมรับหลาย path คั่นด้วย newline ผ่าน prompt) ไม่ให้ regression
+- Mount `BrowseFolderProvider` ใน `pages/Main.js`'s provider stack (ต่อจาก `PromptVariablesProvider`)
+- แก้ 3 จุดใน `ipc-transport.js`'s `BrowserTransport.invoke()` ให้เรียก `window.browseFolderOnBridge(...)` แทน `promptForPath(...)` สำหรับ 3 channel ที่เลือก มี fallback กลับไปใช้ `window.prompt()` เดิมถ้า `window.browseFolderOnBridge` ยังไม่ถูก mount (defensive, กันกรณี invoke ถูกเรียกก่อน React tree mount เสร็จ)
+- Verify: `node --check` ผ่านทุกไฟล์ที่แก้, unit test เต็ม suite ผ่านหมด — `bruno-rpc-contract` 22/22, `bruno-server` 293/293 (รวม `allowed-roots.spec.js`), `bruno-app` 1387/1387 (76 suite, รวม `ipc-transport.spec.js` 15 test), `bruno-electron` 674/679 ผ่าน (5 suite ที่ fail เป็นปัญหาเดิมของ QuickJS WASM `--experimental-vm-modules` และ network test ไม่เกี่ยวกับ filesystem เลย — 3 filesystem suite ผ่านหมด)
+- **ทดสอบจริงในเบราว์เซอร์ตามข้อกำหนด UI-testing**: build `bruno-app` production, serve ผ่าน `bruno-server` (Browser Bridge mode จริง ไม่ใช่ mock), เขียน Playwright script คลิก "Open" ที่ sidebar (component `CreateOrOpenCollection`) → modal เปิดจริง แสดง 54 entries ของ `$HOME`, กด checkbox เลือกได้ (ปุ่ม confirm เปลี่ยนเป็น "Select (1)"), คลิกชื่อโฟลเดอร์แรก navigate เข้าไปจริง (`path-text` เปลี่ยนตาม), กดปุ่ม "Up" กลับ path เดิมได้ถูกต้อง, กด X ปิด modal สำเร็จ (`cancelled` reject ทำงานถูก) — ยืนยันด้วย HTTP call ตรงไปที่ `/api/ipc/renderer%3Alist-directory` ด้วยว่า handler คืนค่าถูกต้องทั้ง success case และ error case (path ไม่มีอยู่จริง → `HANDLER_ERROR` พร้อมข้อความชัดเจน)
+
+**ยังไม่ทำ (out of scope รอบนี้ตามที่บันทึกไว้ใน `Improvement.md`):**
+- browse จำกัดเฉพาะ allowed roots ที่ตัว modal เอง (server sandbox ยัง block ได้อยู่ผ่าน `findPathPolicyViolation` แต่ modal UI ไม่กัน navigate ออกนอก root ตั้งแต่แรก)
+- search, recent paths, favorites, create folder, rename, conflict resolution
+- multi-select พร้อม preview สำหรับไฟล์ (`renderer:browse-files` ยังใช้ `window.prompt()` เดิม)
+- upload/download ระหว่าง Bridge กับ client, progress/cancel/checksum/resume
+- label แยก Bridge machine vs Browser machine ให้ชัดใน UI
+- opaque file handle API (`renderer:list-directory` ยังคืน absolute path ตรงๆ)
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

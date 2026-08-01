@@ -414,9 +414,17 @@ class BrowserTransport {
     };
 
     if (channel === 'renderer:browse-directory') {
-      const selectedPath = promptForPath('Enter a directory path on the Bruno bridge server:');
-      if (!selectedPath) return false;
-      return (await this.invoke('renderer:is-directory', selectedPath)) ? selectedPath : false;
+      if (typeof window.browseFolderOnBridge !== 'function') {
+        const selectedPath = promptForPath('Enter a directory path on the Bruno bridge server:');
+        if (!selectedPath) return false;
+        return (await this.invoke('renderer:is-directory', selectedPath)) ? selectedPath : false;
+      }
+      try {
+        const [selectedPath] = await window.browseFolderOnBridge({ title: 'Select Directory' });
+        return selectedPath || false;
+      } catch (err) {
+        return false;
+      }
     }
 
     if (channel === 'renderer:browse-files') {
@@ -428,15 +436,32 @@ class BrowserTransport {
     }
 
     if (channel === 'renderer:open-collection') {
-      const value = promptForPath('Enter collection folder path(s) on the Bruno bridge server, separated by new lines:');
-      if (!value) return;
-      const paths = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
-      return this.invoke('renderer:open-multiple-collections', paths, args[0] || {});
+      if (typeof window.browseFolderOnBridge !== 'function') {
+        const value = promptForPath('Enter collection folder path(s) on the Bruno bridge server, separated by new lines:');
+        if (!value) return;
+        const paths = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+        return this.invoke('renderer:open-multiple-collections', paths, args[0] || {});
+      }
+      try {
+        const paths = await window.browseFolderOnBridge({ title: 'Select Collection Folder(s)', multiple: true });
+        if (!paths?.length) return;
+        return this.invoke('renderer:open-multiple-collections', paths, args[0] || {});
+      } catch (err) {
+        return;
+      }
     }
 
     if (channel === 'renderer:open-workspace-dialog') {
-      const selectedPath = promptForPath('Enter a workspace folder path on the Bruno bridge server:');
-      return selectedPath ? this.invoke('renderer:open-workspace', selectedPath) : null;
+      if (typeof window.browseFolderOnBridge !== 'function') {
+        const selectedPath = promptForPath('Enter a workspace folder path on the Bruno bridge server:');
+        return selectedPath ? this.invoke('renderer:open-workspace', selectedPath) : null;
+      }
+      try {
+        const [selectedPath] = await window.browseFolderOnBridge({ title: 'Select Workspace Folder' });
+        return selectedPath ? this.invoke('renderer:open-workspace', selectedPath) : null;
+      } catch (err) {
+        return null;
+      }
     }
 
     if (channel === 'renderer:open-api-spec') {

@@ -74,7 +74,8 @@ const READ_ONLY_SAFE_CHANNELS = new Set([
   'renderer:exists-sync',
   'renderer:resolve-path',
   'renderer:is-directory',
-  'renderer:find-unique-folder-name'
+  'renderer:find-unique-folder-name',
+  'renderer:list-directory'
 ]);
 
 const isReadOnlySafeChannel = (channel) => READ_ONLY_SAFE_CHANNELS.has(channel);

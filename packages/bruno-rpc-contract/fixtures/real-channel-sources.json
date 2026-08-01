@@ -8,6 +8,10 @@
     "sourceFile": "ipc/filesystem.js"
   },
   {
+    "channel": "renderer:list-directory",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
     "channel": "renderer:browse-pac-file",
     "sourceFile": "ipc/filesystem.js"
   },

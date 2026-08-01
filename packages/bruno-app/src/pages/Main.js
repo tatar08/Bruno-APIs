@@ -3,6 +3,7 @@ import { AppProvider } from 'providers/App';
 import { ToastProvider } from 'providers/Toaster';
 import { HotkeysProvider } from 'providers/Hotkeys';
 import { PromptVariablesProvider } from 'providers/PromptVariables';
+import { BrowseFolderProvider } from 'providers/BrowseFolder';
 
 import ReduxStore from 'providers/ReduxStore';
 import ThemeProvider from 'providers/Theme/index';
@@ -37,11 +38,13 @@ function Main({ children }) {
         <ThemeProvider>
           <ToastProvider>
             <PromptVariablesProvider>
-              <AppProvider>
-                <HotkeysProvider>
-                  {children}
-                </HotkeysProvider>
-              </AppProvider>
+              <BrowseFolderProvider>
+                <AppProvider>
+                  <HotkeysProvider>
+                    {children}
+                  </HotkeysProvider>
+                </AppProvider>
+              </BrowseFolderProvider>
             </PromptVariablesProvider>
           </ToastProvider>
         </ThemeProvider>

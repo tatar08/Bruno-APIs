@@ -1,5 +1,6 @@
 const { ipcMain, dialog } = require('electron');
 const path = require('node:path');
+const os = require('node:os');
 const { pathToFileURL } = require('node:url');
 const fs = require('fs-extra');
 
@@ -30,6 +31,37 @@ const registerFilesystemIpc = (mainWindow) => {
     } catch (error) {
       throw error;
     }
+  });
+
+  // Backs the Browser Bridge browse modal (Improvement.md P1.1): lists a
+  // directory's immediate children so the modal can offer point-and-click
+  // navigation instead of window.prompt(). Read-only — never touches disk
+  // beyond readdir/stat, so it's safe to add to READ_ONLY_SAFE_CHANNELS.
+  ipcMain.handle('renderer:list-directory', async (_, dirPath = null) => {
+    const targetPath = dirPath ? normalizeAndResolvePath(dirPath) : os.homedir();
+    if (!isDirectory(targetPath)) {
+      throw new Error(`Not a directory: ${targetPath}`);
+    }
+
+    const dirents = await fs.readdir(targetPath, { withFileTypes: true });
+    const entries = dirents
+      .filter((entry) => entry.isDirectory() || entry.isFile())
+      .map((entry) => ({
+        name: entry.name,
+        path: path.join(targetPath, entry.name),
+        isDirectory: entry.isDirectory()
+      }))
+      .sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+    const parentPath = path.dirname(targetPath);
+    return {
+      path: targetPath,
+      parentPath: parentPath === targetPath ? null : parentPath,
+      entries
+    };
   });
 
   ipcMain.handle('renderer:browse-pac-file', async (_, selectedPath = null) => {
