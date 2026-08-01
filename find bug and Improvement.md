@@ -753,6 +753,26 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P0.7 CI Pipeline — 1 สิงหาคม 2026
+
+หลังปิด B1-B13 แล้วสำรวจ `Improvement.md` ทั้งไฟล์อีกรอบ พบว่างานที่เหลือทั้งหมดใน P0/P1 ต้องการ (ก) การตัดสินใจเชิง product/architecture ที่ผู้ใช้ต้องเป็นคนเลือก (confirmation UX, HTTPS/WSS topology, external secret provider, popup UI ฯลฯ) หรือ (ข) infra ที่ไม่มีใน environment นี้ (Windows host, CI pipeline) — ถามผู้ใช้ว่าอยากให้ลุยอะไรต่อระหว่างสามตัวเลือก ผู้ใช้เลือก **"ตั้ง CI pipeline (GitHub Actions)"**
+
+**สิ่งที่ทำ:**
+- สร้าง `.github/workflows/ci.yml` — repo มี remote (`github.com/tatar08/Bruno-APIs`) แต่ไม่มี CI มาก่อนเลย (มีแค่ `.github/dependabot.yml`) trigger บน push ไป `main` และทุก pull request สามงานแบบ parallel:
+  - `lint` (`npm run lint`) — รันจริงก่อน commit พบว่า repo มี lint error ค้างอยู่ 54 จุด กระจายในไฟล์ที่ไม่เกี่ยวกับ session นี้เลย (เช่น `bruno-electron/src/ipc/collection.js`, `workspace.js` indent, quote style หลายไฟล์) ตั้งใจไม่ไล่แก้ทั้งหมดเพราะเป็น scope creep ที่ไม่เกี่ยวกับงาน "ตั้ง CI" — ตั้ง job นี้เป็น `continue-on-error: true` แทน เพื่อให้เห็นสถานะใน CI แต่ไม่บล็อก merge ด้วย debt เดิม
+  - `test` (`npm test --workspaces --if-present`) — รัน jest ของทุก workspace ที่มี `test` script, ข้าม workspace ที่ไม่มี (`bruno-docs`, `bruno-graphql-docs`, `bruno-schema-types`, `bruno-tests`) live-verified แล้วว่าผ่านทั้งหมดก่อน commit (ตัวอย่าง: `bruno-server` 286/286, `bruno-rpc-contract` 19/19)
+  - `rpc-contract-parity` (`npm run audit:parity --workspace=packages/bruno-rpc-contract`) — live-verified ผ่าน (229 channel ตรงกับ fixture) ก่อน commit
+- อัปเดต `Improvement.md`: P0.5's acceptance criteria (parity audit ตอนนี้ 🟡→✅ เพราะผูก CI แล้ว), P0.6's static parity audit line (ลบ 🟡 "ยังไม่ผูกเข้า CI"), P1.3's SBOM line (แก้ blocker reasoning จาก "ไม่มี CI" เป็น "มี CI แล้ว แต่ยังต้องเลือก tool/policy"), เพิ่ม section ใหม่ **P0.7 CI Pipeline** สรุป scope ที่ทำจริงและที่ยังไม่ทำ (Playwright e2e ใน CI, SBOM/signing, cross-platform matrix — ทั้งหมดเป็น decision/infra แยกที่ใหญ่กว่า)
+
+**ยังไม่ทำ (ตัดสินใจแล้ว ไม่ใช่ของที่ลืม):**
+- ไม่ push ขึ้น remote — สร้าง/commit ไว้ local เท่านั้น รอ user ยืนยันก่อน push เพราะเป็น action ที่ visible ต่อคนอื่นและ trigger การรันจริงบน GitHub
+- ไม่ผูก Playwright e2e/`browser-bridge` suite เข้า CI — ต้องมี browser binary install + headless boot strategy เพิ่ม เป็นงานแยก
+- ไม่ทำ SBOM/dependency scanning/signing — ยังไม่เลือก tool หรือ signing-key policy
+- ไม่ทำ cross-platform matrix (Windows/macOS) — รันแค่ `ubuntu-latest`
+- ไม่แก้ lint error ที่มีอยู่เดิม 54 จุด — นอกสโคปของ "ตั้ง CI", ปล่อยให้เห็นผลแบบ non-blocking แทน
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

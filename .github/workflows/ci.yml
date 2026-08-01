@@ -1,0 +1,63 @@
+# CI (Improvement.md P0.5/P0.6/P1.3): this repo previously had no CI
+# pipeline at all (only Dependabot), which is why several roadmap items
+# stayed at "🟡 — no CI to gate on" (the RPC contract parity audit, the
+# Browser-parity Playwright suite, SBOM/signing). This workflow only covers
+# the parts of those items that are actually well-scoped without further
+# product decisions: lint, unit tests across every workspace, and the
+# RPC contract parity audit. It intentionally does NOT run the Playwright
+# e2e/browser-bridge suites (needs browser binaries + a real display-less
+# boot strategy, a separate increment) or SBOM/signing (needs a chosen
+# tool and a signing-key decision).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # continue-on-error: `npm run lint` currently fails with 54
+      # pre-existing errors scattered across files this CI change didn't
+      # touch (verified 2026-08-02). Blocking merges on unrelated debt
+      # isn't this increment's job; this still surfaces the status on
+      # every run so the debt is visible instead of silently ignored.
+      - run: npm run lint
+        continue-on-error: true
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test --workspaces --if-present
+
+  rpc-contract-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run audit:parity --workspace=packages/bruno-rpc-contract

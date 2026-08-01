@@ -180,7 +180,7 @@ Browser version ในปัจจุบันมี functional parity กับ
 }
 ```
 
-**Acceptance criteria:** CI fail เมื่อ Desktop handler, Browser route หรือ renderer caller ไม่ตรง contract และไม่มี string channel ที่สำคัญกระจายโดยไม่มี type checking — 🟡 มี audit script รันได้จริงและ live-verify แล้วว่า detect drift ถูกต้อง (`npm run audit:parity`, มี `--write` heal) แต่ยังไม่ผูกเข้า CI merge gate เพราะ **repo นี้ไม่มี CI pipeline เลย** (ไม่มี `.github/workflows`/`.gitlab-ci`/ฯลฯ)
+**Acceptance criteria:** CI fail เมื่อ Desktop handler, Browser route หรือ renderer caller ไม่ตรง contract และไม่มี string channel ที่สำคัญกระจายโดยไม่มี type checking — ✅ มี audit script รันได้จริงและ live-verify แล้วว่า detect drift ถูกต้อง (`npm run audit:parity`, มี `--write` heal) และตอนนี้ผูกเข้า CI แล้ว (`.github/workflows/ci.yml`'s `rpc-contract-parity` job รันทุก push/PR ไป `main`)
 
 ### P0.6 Browser Parity CI ✅ เสร็จแล้ว
 
@@ -205,7 +205,19 @@ Browser version ในปัจจุบันมี functional parity กับ
 - two-session isolation — ยังไม่ทำ ใน Playwright (มี live-verification แบบ manual script แล้วสำหรับหลาย resource type ใน P0.4 แต่ไม่ใช่ automated Playwright suite)
 - ✅ security negative tests — `security-defaults.spec.ts` ครอบ origin allowlist, privileged-channel block, auth-off default, sandbox-off default
 
-เพิ่ม static parity audit ที่เปรียบเทียบ Electron handlers กับ RPC contract ทุก PR — ✅ script มีแล้ว (`scripts/audit-parity.js`, ดู P0.5) แต่ 🟡 ยังไม่ผูกเข้า "ทุก PR" เพราะไม่มี CI pipeline
+เพิ่ม static parity audit ที่เปรียบเทียบ Electron handlers กับ RPC contract ทุก PR — ✅ script มีแล้ว (`scripts/audit-parity.js`, ดู P0.5) และตอนนี้รันทุก push/PR ผ่าน `.github/workflows/ci.yml` แล้ว
+
+### P0.7 CI Pipeline 🟡 เสร็จบางส่วน (พื้นฐานเสร็จแล้ว — repo ไม่มี CI มาก่อนเลย)
+
+**เป้าหมาย:** ปิดช่องว่างที่หลาย item ข้างบน (P0.5, P0.6) ค้างอยู่ที่ 🟡 เพราะไม่มี CI pipeline ให้ผูก gate เข้าไป (repo มีแค่ `.github/dependabot.yml` ไม่มี `.github/workflows` มาก่อน)
+
+- ✅ สร้าง `.github/workflows/ci.yml` — รันทุก push เข้า `main` และทุก pull request, สามงาน (parallel jobs):
+  - `lint` — `npm run lint` ทั้ง repo; 🟡 ตั้งเป็น `continue-on-error: true` เพราะพบว่า repo มี lint error ค้างอยู่ 54 จุดกระจายในไฟล์ที่ไม่เกี่ยวกับงานนี้เลย (ยืนยันด้วยการรันจริงก่อน commit) — บล็อก merge ทันทีด้วย debt เดิมที่ไม่เกี่ยวกับ PR ที่กำลังรีวิวไม่ใช่ scope ของ item นี้ ตั้งใจให้เห็นผลใน CI แต่ไม่บล็อก จนกว่าจะมีคนแยกไป fix debt เดิม (หรือย้ายไป diff-only mode ด้วย `eslint-plugin-diff` ที่ตอนนี้ registered เป็น plugin ใน `eslint.config.js` อยู่แล้วแต่ยังไม่ได้ wire เข้า rule ใดๆ จริง — ยังไม่ active)
+  - `test` — `npm test --workspaces --if-present` รัน jest ของทุก workspace ที่มี `test` script (ข้าม workspace ที่ไม่มี เช่น `bruno-docs`, `bruno-schema-types`) — live-verified แล้วว่าผ่านทั้งหมดก่อน commit (เช่น `bruno-server` 286/286, `bruno-rpc-contract` 19/19)
+  - `rpc-contract-parity` — `npm run audit:parity --workspace=packages/bruno-rpc-contract` (ดู P0.5) — live-verified ผ่านก่อน commit
+- ยังไม่ทำ — Playwright e2e/`browser-bridge` suite (P0.6) ใน CI: ต้องมี browser binary install + headless boot strategy เป็นงานแยกที่ใหญ่กว่า
+- ยังไม่ทำ — SBOM, dependency scanning, signed artifacts (P1.3): ตอนนี้มี CI ให้ผูกแล้ว แต่ยังต้องเลือก tool/signing-key policy ก่อน เป็น decision แยก
+- ยังไม่ทำ — matrix ข้าม platform (Windows/macOS/Linux) หรือ Node version (P0.6's minimum test matrix): รันแค่ `ubuntu-latest` ตอนนี้
 
 ---
 
@@ -248,7 +260,7 @@ API ควรใช้ opaque file handles แทนส่ง absolute path ก�
 - ✅ `/health/live`, `/health/ready`, build info และ dependency readiness
 - ✅ graceful shutdown ที่ปิด watchers, terminals, sockets และ pending requests (มี ordering fix ยืนยันแล้วว่าไม่ hang รอ timeout)
 - ✅ configuration validation ตอน start; invalid config ต้อง fail fast
-- ยังไม่ทำ — SBOM, dependency scanning, signed images/artifacts และ provenance (ต้องมี CI pipeline ก่อน ซึ่ง repo นี้ยังไม่มี)
+- ยังไม่ทำ — SBOM, dependency scanning, signed images/artifacts และ provenance (ตอนนี้มี CI pipeline แล้ว — ดู P0.7 — แต่ยังต้องเลือก tool/policy ก่อนถึงจะทำได้ เป็น decision แยก)
 
 ### P1.4 Real Secret Storage 🟡 security bug ที่พบระหว่างสำรวจแก้แล้ว (external provider/rotation/lock-unlock ยังไม่ทำ — ตามการตัดสินใจ scope)
 
