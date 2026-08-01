@@ -199,5 +199,50 @@ describe('channel-policy', () => {
       expect(validateArgs('renderer:import-collection-zip', ['/tmp/in.zip', '/dest'])).toBeNull();
       expect(validateArgs('renderer:import-collection-zip', ['/tmp/in.zip'])).toMatch(/expects 2 argument/);
     });
+
+    it('validates renderer:save-folder-root (single object arg)', () => {
+      expect(validateArgs('renderer:save-folder-root', [{ name: 'f', root: {}, folderPathname: '/c/f', collectionPathname: '/c' }])).toBeNull();
+      expect(validateArgs('renderer:save-folder-root', ['not-an-object'])).toMatch(/argument 0 must be of type object/);
+      expect(validateArgs('renderer:save-folder-root', [])).toMatch(/expects 1 argument/);
+    });
+
+    it('validates renderer:save-collection-root (collectionPathname, collectionRoot, brunoConfig)', () => {
+      expect(validateArgs('renderer:save-collection-root', ['/c', {}, {}])).toBeNull();
+      expect(validateArgs('renderer:save-collection-root', ['/c', {}])).toMatch(/expects 3 argument/);
+      expect(validateArgs('renderer:save-collection-root', ['/c', 'not-an-object', {}])).toMatch(
+        /argument 1 must be of type object, got string/
+      );
+    });
+
+    it('validates renderer:save-request (pathname, request, format)', () => {
+      expect(validateArgs('renderer:save-request', ['/c/req.bru', { url: 'https://x' }, 'bru'])).toBeNull();
+      expect(validateArgs('renderer:save-request', ['/c/req.bru', { url: 'https://x' }])).toMatch(/expects 3 argument/);
+      expect(validateArgs('renderer:save-request', ['/c/req.bru', 'not-an-object', 'bru'])).toMatch(
+        /argument 1 must be of type object, got string/
+      );
+    });
+
+    it('validates renderer:save-dotenv-variables (collectionPathname, variables[], optional filename)', () => {
+      expect(validateArgs('renderer:save-dotenv-variables', ['/c', [{ name: 'FOO', value: 'bar' }]])).toBeNull();
+      expect(validateArgs('renderer:save-dotenv-variables', ['/c', [], '.env.local'])).toBeNull();
+      expect(validateArgs('renderer:save-dotenv-variables', ['/c', 'not-an-array'])).toMatch(
+        /argument 1 must be of type array, got string/
+      );
+      expect(validateArgs('renderer:save-dotenv-variables', ['/c'])).toMatch(/expects 2-3 argument/);
+    });
+
+    it('validates renderer:save-dotenv-raw (collectionPathname, content, optional filename)', () => {
+      expect(validateArgs('renderer:save-dotenv-raw', ['/c', 'FOO=bar'])).toBeNull();
+      expect(validateArgs('renderer:save-dotenv-raw', ['/c', 'FOO=bar', '.env.local'])).toBeNull();
+      expect(validateArgs('renderer:save-dotenv-raw', ['/c'])).toMatch(/expects 2-3 argument/);
+    });
+
+    it('validates renderer:save-api-spec (pathname, content)', () => {
+      expect(validateArgs('renderer:save-api-spec', ['/specs/api.yml', 'openapi: 3.0.0'])).toBeNull();
+      expect(validateArgs('renderer:save-api-spec', ['/specs/api.yml'])).toMatch(/expects 2 argument/);
+      expect(validateArgs('renderer:save-api-spec', ['/specs/api.yml', 123])).toMatch(
+        /argument 1 must be of type string, got number/
+      );
+    });
   });
 });

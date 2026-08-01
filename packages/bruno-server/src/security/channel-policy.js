@@ -10,9 +10,10 @@
  * CHANNEL_PATH_EXTRACTORS) populated for the channels where getting the
  * shape wrong has outsized consequences: the already-privileged git-mutate
  * channels, the terminal channels, the destructive collection-delete
- * channels, and the rename/move/save/import-export collection channels.
- * Everything else is fail-open (no schema registered → no additional
- * validation beyond "args is an array").
+ * channels, the rename/move/save/import-export collection channels, and
+ * the remaining save-* file-overwrite channels. Everything else is
+ * fail-open (no schema registered → no additional validation beyond
+ * "args is an array").
  */
 
 const { getCapability } = require('./channel-capabilities');
@@ -83,7 +84,20 @@ const CHANNEL_SCHEMAS = {
   'renderer:clone-folder': { minArgs: 3, maxArgs: 3, argTypes: ['object', 'string', 'string'] },
   'renderer:import-collection': { minArgs: 2, maxArgs: 3, argTypes: [['object', 'array'], 'string', 'object'] },
   'renderer:export-collection-zip': { minArgs: 2, maxArgs: 3, argTypes: ['string', 'string'] },
-  'renderer:import-collection-zip': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] }
+  'renderer:import-collection-zip': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+
+  // save-* siblings of renderer:save-file (ipc/collection.js, ipc/apiSpec.js)
+  // — same criterion again: every one of these does an unconditional
+  // writeFile() with no collision guard, so a wrong argument shape can
+  // overwrite the wrong file with attacker-controlled content. Signatures
+  // verified the same way as the group above (handler destructuring +
+  // real ipcRenderer.invoke() call sites in bruno-app).
+  'renderer:save-folder-root': { minArgs: 1, maxArgs: 1, argTypes: ['object'] },
+  'renderer:save-collection-root': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'object', 'object'] },
+  'renderer:save-request': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'object', 'string'] },
+  'renderer:save-dotenv-variables': { minArgs: 2, maxArgs: 3, argTypes: ['string', 'array', 'string'] },
+  'renderer:save-dotenv-raw': { minArgs: 2, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
+  'renderer:save-api-spec': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] }
 };
 
 /**
