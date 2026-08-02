@@ -33,6 +33,17 @@ const StyledWrapper = styled.div`
       flex: 1;
     }
 
+    .machine-badge {
+      flex-shrink: 0;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+      border: 1px solid ${(props) => props.theme.colors.text.yellow};
+      color: ${(props) => props.theme.colors.text.yellow};
+    }
+
     .new-folder-btn,
     .favorite-btn,
     .quick-access-btn {

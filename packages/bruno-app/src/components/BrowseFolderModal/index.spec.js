@@ -3,7 +3,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ThemeProvider } from 'styled-components';
 import BrowseFolderModal from './index';
-import { transport } from 'utils/common/ipc-transport';
+import { transport, isElectronMode } from 'utils/common/ipc-transport';
 
 const theme = {
   text: '#333',
@@ -25,7 +25,20 @@ jest.mock('utils/common/ipc-transport', () => ({
   // fire-and-forget add-recent-path call every navigate() makes) — the
   // component guards against an undefined response, so tests that don't
   // care about recent/favorites don't need to mock every extra call.
-  transport: { invoke: jest.fn(() => Promise.resolve(undefined)) }
+  transport: { invoke: jest.fn(() => Promise.resolve(undefined)) },
+  // Defaults to Browser Bridge mode (false) since that's the more complex
+  // path (machine-label badge rendered); tests that specifically care about
+  // Electron mode override this per-test.
+  isElectronMode: jest.fn(() => false)
+}));
+
+jest.mock('components/ToolHint', () => ({
+  // Real ToolHint reads from providers/Theme's ThemeContext (a separate
+  // context from the styled-components ThemeProvider this file wraps
+  // renderModal() with), which has no provider here — stub it out to a
+  // pass-through so it doesn't crash on `useTheme()` returning undefined.
+  __esModule: true,
+  default: ({ children }) => <>{children}</>
 }));
 
 jest.mock('components/Portal', () => ({
@@ -78,6 +91,7 @@ beforeEach(() => {
   // leave it to be picked up out of order by a later test's calls.
   jest.resetAllMocks();
   transport.invoke.mockImplementation(() => Promise.resolve(undefined));
+  isElectronMode.mockImplementation(() => false);
 });
 
 describe('BrowseFolderModal create-folder / rename (Improvement.md P1.1)', () => {
@@ -378,6 +392,25 @@ describe('BrowseFolderModal create-folder / rename (Improvement.md P1.1)', () =>
       await waitFor(() =>
         expect(screen.getByTestId('browse-folder-favorite-btn')).toHaveAttribute('aria-pressed', 'true')
       );
+    });
+  });
+
+  describe('Bridge vs local machine label (Improvement.md P1.1)', () => {
+    it('shows a "Bridge server" badge in Browser Bridge mode', async () => {
+      isElectronMode.mockImplementation(() => false);
+      transport.invoke.mockResolvedValueOnce(listing('/root', []));
+      renderModal();
+
+      expect(await screen.findByTestId('browse-folder-machine-label')).toHaveTextContent('Bridge server');
+    });
+
+    it('hides the machine-label badge in Electron desktop mode', async () => {
+      isElectronMode.mockImplementation(() => true);
+      transport.invoke.mockResolvedValueOnce(listing('/root', []));
+      renderModal();
+
+      await waitFor(() => expect(screen.getByTestId('browse-folder-new-folder-btn')).not.toBeDisabled());
+      expect(screen.queryByTestId('browse-folder-machine-label')).not.toBeInTheDocument();
     });
   });
 });

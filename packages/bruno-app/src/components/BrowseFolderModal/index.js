@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Portal from 'components/Portal';
 import Modal from 'components/Modal';
+import ToolHint from 'components/ToolHint';
 import StyledWrapper from './StyledWrapper';
 import {
   IconFolder,
@@ -16,7 +17,7 @@ import {
   IconClock,
   IconSearch
 } from '@tabler/icons';
-import { transport } from 'utils/common/ipc-transport';
+import { transport, isElectronMode } from 'utils/common/ipc-transport';
 
 const formatBytes = (bytes) => {
   if (typeof bytes !== 'number' || Number.isNaN(bytes)) return null;
@@ -280,6 +281,21 @@ export default function BrowseFolderModal({
             >
               <IconArrowUp size={16} strokeWidth={1.5} />
             </button>
+            {/* Browser Bridge mode always browses the Bridge server's own
+                filesystem, never the browser's local machine — this modal has
+                no way to reach the latter — so the label disambiguates which
+                machine `currentPath` actually lives on (Improvement.md P1.1). */}
+            {!isElectronMode() && (
+              <ToolHint
+                text="This path is on the Bridge server's machine, not this browser's computer."
+                toolhintId="browse-folder-machine-label"
+                place="top"
+              >
+                <span className="machine-badge" data-testid="browse-folder-machine-label">
+                  Bridge server
+                </span>
+              </ToolHint>
+            )}
             <span className="path-text" title={currentPath || ''}>
               {currentPath || '...'}
             </span>
