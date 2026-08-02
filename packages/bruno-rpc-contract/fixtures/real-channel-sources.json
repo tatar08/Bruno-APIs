@@ -12,6 +12,14 @@
     "sourceFile": "ipc/filesystem.js"
   },
   {
+    "channel": "renderer:create-directory",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:rename-directory",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
     "channel": "renderer:browse-pac-file",
     "sourceFile": "ipc/filesystem.js"
   },

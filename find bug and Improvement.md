@@ -904,6 +904,30 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P1.1 Browse modal create-folder / rename / conflict-resolution — 2 สิงหาคม 2026
+
+ต่อจาก "P1.1 Transfer Center upload/download progress + cancel" ปิด gap ที่บันทึกไว้ว่ายังไม่ทำ ("create folder, rename และ conflict resolution" ของ `BrowseFolderModal`)
+
+**สิ่งที่ทำ:**
+- Backend (`bruno-electron/src/ipc/filesystem.js`): เพิ่ม 2 `ipcMain.handle()` channel ใหม่ — `renderer:create-directory(parentPath, name)` คืน `{ path, name, parentPath }`, `renderer:rename-directory(oldPath, newName)` คืน shape เดียวกัน — ทั้งคู่ implement ด้วยการ reuse `createDirectory`/`validateName`/`safeToRename` ที่มีอยู่แล้วใน `utils/filesystem.js` (ตัวเดียวกับที่ `renderer:rename-item-filename` ใช้) ไม่เขียน validation/conflict logic ใหม่เลย — ได้ conflict guard, invalid-name rejection (path separator, control char, reserved Windows name, length>255), และ case-only-rename-on-case-insensitive-fs handling มาฟรี
+- ทั้งสอง channel ผ่าน `HandlerRegistry` auto-discovery (`bruno-server`) โดยไม่ต้องเขียน route เพิ่ม — security sandboxing (`allowed-roots.js`) และ capability-based rate/concurrency policy (`channel-policy.js`, capability `filesystem`) ใช้ของเดิมทั้งหมดเพราะ argument ที่เป็น path คือ parent/target directory ที่ validate อยู่แล้ว ส่วน leaf name ผ่าน `validateName()` ซึ่ง structurally กัน path-traversal segment ไม่ให้สมุกเข้ามาได้ (reject `/`, `\`, control char)
+- เพิ่ม `REQUEST_SCHEMAS` entry ให้ทั้งสอง channel ใน `bruno-rpc-contract/src/request-schemas.js` (`{minArgs: 2, maxArgs: 2, argTypes: ['string', 'string']}`) และ regenerate `real-channel-sources.json` fixture ผ่าน `npm run audit:parity -- --write`
+- Frontend (`BrowseFolderModal/index.js` + `StyledWrapper.js`): เพิ่มปุ่ม "New folder" ที่แถบ path บนสุด เปิด inline form (auto-focus ผ่าน `useRef`+`useEffect`) ยืนยันด้วย Enter/ปุ่ม check, ยกเลิกด้วย Escape/ปุ่ม X; เพิ่มปุ่ม rename แบบ hover-reveal ต่อแถวโฟลเดอร์ เปิด inline form แทนที่ชื่อโฟลเดอร์ในแถวเดิม (wrap ด้วย `.renaming-column` div กันโครงสร้าง layout เพี้ยนตอน multi-select checkbox ยังอยู่ข้างๆ) พฤติกรรมเดียวกันทั้ง 2 form — error แสดง inline ใต้ input โดยไม่ปนกับ error banner ของ directory-listing เดิม
+- Error message ของทั้งสอง flow เช็คด้วย substring `"already exists"` (ตาม convention เดิมของ `renderer:rename-item-filename`) เพราะ `ipc-proxy.js` (Browser Bridge) แปลง error object ทุกตัวเหลือแค่ `err.message` string ล้วนๆ ตอนส่งผ่าน HTTP ไม่มี custom `.code` property รอดมาด้วย
+- Test coverage ใหม่: `filesystem.spec.js` (backend, 8 tests — mock `electron`, เก็บ handler ผ่าน `ipcMain.handle.mock.calls`, ใช้ `fs.mkdtempSync` จริงต่อ test แทน mock `fs`) และ `BrowseFolderModal/index.spec.js` (frontend, 8 tests — mock `transport`/`Portal`/`Modal`, wrap ด้วย `ThemeProvider` เพราะ `StyledWrapper.js` อ่าน `props.theme.*` ตรงๆ): initial listing, create success/conflict/escape-cancel, rename success/conflict/escape-cancel/no-op-เมื่อชื่อไม่เปลี่ยน — รวม 16/16 ผ่าน, full `bruno-electron` suite ไม่มี regression ใหม่ (5 suite ที่ fail เป็น pre-existing quickjs/gRPC loader issue ไม่เกี่ยวกับไฟล์นี้), full `bruno-app` suite (77 suites / 1403 tests) ผ่านหมด, `npx eslint` ผ่านสะอาดทุกไฟล์ที่แก้/เพิ่ม
+
+**ปัญหาที่เจอระหว่างทำ (environment/tooling, ไม่ใช่ production bug):**
+- `npx eslint packages/bruno-app/src/components/BrowseFolderModal/index.js` รายงาน `Definition for rule 'react-hooks/exhaustive-deps' was not found` ชี้ไปที่ comment `// eslint-disable-next-line react-hooks/exhaustive-deps` ที่มีอยู่แล้วก่อนแก้ (บน mount-only `useEffect`) — ตรวจสอบด้วยการ `git stash` เฉพาะไฟล์นี้แล้ว lint ซ้ำ พบ error เดียวกันทุกตัวอักษรที่ original line (~36) ยืนยันว่าเป็นปัญหา environment/plugin-resolution ที่มีอยู่ก่อนแล้วทั้ง repo ไม่เกี่ยวกับ diff รอบนี้ — ไม่ใช่ blocker
+- ระหว่าง live-verify พบว่า workspace sidebar มี "Untitled Collection" inline creator เปิดค้างอยู่ตั้งแต่โหลดหน้าครั้งแรก (จาก state ที่ค้างจาก debug script รอบก่อนหน้าที่คลิก mouse coordinate ตรงๆ แทน locator ที่ถูกต้อง ทำให้ `handleCreate()`/`handleCancel()` ไม่ได้ถูกเรียกอย่างสมบูรณ์) — ไม่ใช่บั๊กของแอป เป็นผลจาก debug script เอง แก้โดยคลิก `.inline-action-btn.cancel` ให้ครบก่อนเริ่ม flow จริง; ยืนยันว่าไม่ใช่บั๊กจริงด้วยการโหลดหน้าสดใหม่แล้วเห็น state สะอาดปกติ
+
+**Live-verified ด้วย Playwright จริง** บน production build ที่ serve ผ่าน bruno-server (`npm run build` ใหม่ + restart server → 206 handlers registered ขึ้นจาก 204 เดิม ยืนยันว่า channel ใหม่ทั้งสองถูกโหลดจริง): เปิด sidebar "Create Collection" → คลิกปุ่ม cog "Advanced options" → เปิด `CreateCollection` modal → คลิก "Browse" → `BrowseFolderModal` เปิดสำเร็จ → สร้างโฟลเดอร์ใหม่ชื่อสุ่ม สำเร็จปรากฏใน listing ทันที → สร้างซ้ำชื่อเดิมได้ inline error `"... already exists"` ถูกต้อง form ไม่ปิด → cancel form สำเร็จ → hover แถวโฟลเดอร์เพื่อ rename สำเร็จ (ชื่อเก่าหายชื่อใหม่ปรากฏใน listing) → สร้างโฟลเดอร์ที่สอง แล้ว rename ชนชื่อโฟลเดอร์แรกที่ rename ไปแล้วได้ inline error `"... already exists"` ถูกต้อง → กด Escape ยกเลิก rename form สำเร็จ กลับไปแสดงชื่อเดิม — ทุก flow ทำงานถูกต้องตามที่ออกแบบไว้ ไม่พบบั๊กใหม่ระหว่าง live verification รอบนี้ (ลบโฟลเดอร์ทดสอบทั้งหมดออกจาก `$HOME` จริงหลัง verify เสร็จ)
+
+**ยังไม่ทำ:**
+- search/recent/favorites, multi-select+preview สำหรับไฟล์, checksum/resume ของ upload/download, label แยก Bridge machine vs Browser machine, opaque file handle API — ตามที่บันทึกไว้ใน `Improvement.md` P1.1 ว่ายังเหลือ
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

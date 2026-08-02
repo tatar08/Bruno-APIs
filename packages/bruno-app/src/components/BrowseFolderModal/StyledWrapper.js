@@ -30,6 +30,23 @@ const StyledWrapper = styled.div`
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      flex: 1;
+    }
+
+    .new-folder-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: ${(props) => props.theme.colors.text.yellow};
+
+      &:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
     }
   }
 
@@ -40,6 +57,55 @@ const StyledWrapper = styled.div`
     color: var(--color-danger, #d92c2c);
     font-size: 0.8rem;
     margin-bottom: 0.5rem;
+
+    &.inline-error {
+      margin-top: 0.25rem;
+      margin-bottom: 0;
+    }
+  }
+
+  .inline-form-row {
+    margin-bottom: 0.5rem;
+  }
+
+  .inline-form {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+
+    input[type='text'] {
+      flex: 1;
+      min-width: 0;
+      font-size: 0.85rem;
+      padding: 0.2rem 0.4rem;
+      border: 1px solid ${(props) => props.theme.modal.input.border};
+      background: ${(props) => props.theme.modal.input.bg};
+      color: ${(props) => props.theme.text};
+      border-radius: 3px;
+    }
+
+    .icon-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+
+      &.confirm {
+        color: var(--color-success, #2ea043);
+      }
+
+      &.cancel {
+        color: var(--color-danger, #d92c2c);
+      }
+
+      &:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+    }
   }
 
   .entry-list {
@@ -80,8 +146,29 @@ const StyledWrapper = styled.div`
       }
     }
 
+    .rename-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      opacity: 0;
+      color: ${(props) => props.theme.colors.text.muted};
+    }
+
+    .renaming-column {
+      flex: 1;
+      min-width: 0;
+    }
+
     &:hover {
       background: ${(props) => props.theme.table.striped};
+
+      .rename-btn {
+        opacity: 1;
+      }
     }
   }
 `;

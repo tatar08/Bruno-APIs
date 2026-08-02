@@ -162,7 +162,18 @@ const REQUEST_SCHEMAS = {
   // Browser Bridge transport (ipc-transport.js appends it via a prompt,
   // same pattern as export-collection-zip/export-workspace above) — hence
   // maxArgs 4 with argTypes only covering the required 3.
-  'renderer:save-response-to-file': { minArgs: 3, maxArgs: 4, argTypes: ['object', 'string', 'string'] }
+  'renderer:save-response-to-file': { minArgs: 3, maxArgs: 4, argTypes: ['object', 'string', 'string'] },
+
+  // Browse modal create-folder/rename (ipc/filesystem.js, Improvement.md
+  // P1.1) — the generic-filesystem counterparts of the rename/save group
+  // above: a wrong argument shape here would mkdir/rename at an
+  // unintended path. Both take a plain leaf name (never a path) as their
+  // second argument, so allowed-roots.js's generic recursive path scanner
+  // already covers containment via the first (absolute-path) argument
+  // alone — the leaf name can't itself carry a traversal segment past
+  // validateName()'s rejection of `/`/`\`/control characters.
+  'renderer:create-directory': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  'renderer:rename-directory': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] }
 };
 
 /**

@@ -9,7 +9,10 @@ const {
   browseFiles,
   normalizeAndResolvePath,
   isFile,
-  isDirectory
+  isDirectory,
+  createDirectory,
+  validateName,
+  safeToRename
 } = require('../utils/filesystem');
 const { findUniqueFolderName } = require('../utils/collection-import');
 const { parseRunnerDataset } = require('@usebruno/common').utils;
@@ -62,6 +65,48 @@ const registerFilesystemIpc = (mainWindow) => {
       parentPath: parentPath === targetPath ? null : parentPath,
       entries
     };
+  });
+
+  // Creates a subfolder inside dirPath for the Browse modal (Improvement.md
+  // P1.1). Reuses validateName()/createDirectory() from utils/filesystem.js
+  // — the same conflict/reserved-name rules already applied to Bruno
+  // collection folders elsewhere in this file — rather than inventing a
+  // second set of naming rules just for this modal.
+  ipcMain.handle('renderer:create-directory', async (_, dirPath, name) => {
+    const targetParent = normalizeAndResolvePath(dirPath);
+    if (!isDirectory(targetParent)) {
+      throw new Error(`Not a directory: ${targetParent}`);
+    }
+    if (typeof name !== 'string' || !validateName(name)) {
+      throw new Error(`"${name}" is not a valid folder name`);
+    }
+
+    const targetPath = path.join(targetParent, name);
+    await createDirectory(targetPath);
+    return { path: targetPath, name, parentPath: targetParent };
+  });
+
+  // Renames a folder in place (same parent directory) for the Browse modal.
+  // safeToRename() is the same collision guard used by
+  // renderer:rename-item-filename — it also allows case-only renames on
+  // case-insensitive filesystems by comparing inode/birthtime rather than
+  // just existsSync().
+  ipcMain.handle('renderer:rename-directory', async (_, dirPath, newName) => {
+    const oldPath = normalizeAndResolvePath(dirPath);
+    if (!isDirectory(oldPath)) {
+      throw new Error(`Not a directory: ${oldPath}`);
+    }
+    if (typeof newName !== 'string' || !validateName(newName)) {
+      throw new Error(`"${newName}" is not a valid folder name`);
+    }
+
+    const newPath = path.join(path.dirname(oldPath), newName);
+    if (!safeToRename(oldPath, newPath)) {
+      throw new Error(`"${newName}" already exists`);
+    }
+
+    await fs.rename(oldPath, newPath);
+    return { path: newPath, name: newName, parentPath: path.dirname(newPath) };
   });
 
   ipcMain.handle('renderer:browse-pac-file', async (_, selectedPath = null) => {
