@@ -3,6 +3,36 @@ jest.mock('electron', () => ({
   dialog: { showOpenDialog: jest.fn() }
 }));
 
+let mockGetCurrentSessionKey;
+jest.mock('electron-store', () => {
+  return jest.fn().mockImplementation(() => {
+    const data = {};
+    return {
+      get(key, defaultValue) {
+        const parts = key.split('.');
+        let node = data;
+        for (const part of parts) {
+          if (node == null || typeof node !== 'object' || !(part in node)) return defaultValue;
+          node = node[part];
+        }
+        return node;
+      },
+      set(key, value) {
+        const parts = key.split('.');
+        let node = data;
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (typeof node[parts[i]] !== 'object' || node[parts[i]] === null) node[parts[i]] = {};
+          node = node[parts[i]];
+        }
+        node[parts[parts.length - 1]] = value;
+      }
+    };
+  });
+});
+jest.mock('@usebruno/requests', () => ({
+  getCurrentSessionKey: (...args) => mockGetCurrentSessionKey(...args)
+}));
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -14,6 +44,7 @@ describe('renderer:create-directory / renderer:rename-directory (Improvement.md 
   beforeEach(() => {
     jest.resetModules();
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bruno-fs-ipc-test-'));
+    mockGetCurrentSessionKey = jest.fn(() => undefined);
 
     const { ipcMain } = require('electron');
     ipcMain.handle.mockClear();
@@ -127,6 +158,27 @@ describe('renderer:create-directory / renderer:rename-directory (Improvement.md 
 
     it('rejects a non-existent source path', async () => {
       await expect(invoke(path.join(tmpRoot, 'nope'), 'New Name')).rejects.toThrow(/Not a directory/);
+    });
+  });
+
+  describe('Browse modal recent/favorites paths (Improvement.md P1.1)', () => {
+    const getBrowsePaths = () => handlers.get('renderer:get-browse-paths')(null);
+    const addRecent = (dirPath) => handlers.get('renderer:add-recent-browse-path')(null, dirPath);
+    const toggleFavorite = (dirPath) => handlers.get('renderer:toggle-favorite-browse-path')(null, dirPath);
+
+    it('starts empty and records an added recent path', async () => {
+      expect(await getBrowsePaths()).toEqual({ recent: [], favorites: [] });
+
+      await addRecent('/a');
+      expect(await getBrowsePaths()).toEqual({ recent: ['/a'], favorites: [] });
+    });
+
+    it('toggles a path in and out of favorites', async () => {
+      await toggleFavorite('/a');
+      expect((await getBrowsePaths()).favorites).toEqual(['/a']);
+
+      await toggleFavorite('/a');
+      expect((await getBrowsePaths()).favorites).toEqual([]);
     });
   });
 });

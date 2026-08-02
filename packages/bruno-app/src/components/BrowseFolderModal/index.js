@@ -11,7 +11,10 @@ import {
   IconFolderPlus,
   IconPencil,
   IconCheck,
-  IconX
+  IconX,
+  IconStar,
+  IconClock,
+  IconSearch
 } from '@tabler/icons';
 import { transport } from 'utils/common/ipc-transport';
 
@@ -62,6 +65,15 @@ export default function BrowseFolderModal({
   const [renameError, setRenameError] = useState(null);
   const [renaming, setRenaming] = useState(false);
   const [previewEntry, setPreviewEntry] = useState(null);
+
+  // Recent/favorites (Improvement.md P1.1) — fetched once on mount and kept
+  // in sync locally from each IPC call's return value (the new list),
+  // rather than re-fetching, since the backend is the sole writer and
+  // always echoes the resulting list back.
+  const [recentPaths, setRecentPaths] = useState([]);
+  const [favoritePaths, setFavoritePaths] = useState([]);
+  const [quickAccessOpen, setQuickAccessOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const newFolderInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
@@ -69,6 +81,7 @@ export default function BrowseFolderModal({
     (path) => {
       setLoading(true);
       setError(null);
+      setSearchQuery('');
       transport
         .invoke('renderer:list-directory', path)
         .then((result) => {
@@ -81,6 +94,15 @@ export default function BrowseFolderModal({
           );
           setSelected(new Set());
           setPreviewEntry(null);
+          transport
+            .invoke('renderer:add-recent-browse-path', result.path)
+            // A malformed/undefined response (or an in-flight get-browse-paths
+            // fetch resolving after this) must not clobber already-known
+            // good state, so only apply a well-formed array response.
+            .then((recent) => {
+              if (Array.isArray(recent)) setRecentPaths(recent);
+            })
+            .catch(() => {});
         })
         .catch((err) => {
           setError(err?.message || 'Failed to list directory');
@@ -92,9 +114,32 @@ export default function BrowseFolderModal({
 
   useEffect(() => {
     navigate(null);
+    transport
+      .invoke('renderer:get-browse-paths')
+      .then((result) => {
+        setRecentPaths(result?.recent || []);
+        setFavoritePaths(result?.favorites || []);
+      })
+      .catch(() => {});
     // Only run once on mount — subsequent navigation is user-driven.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const isCurrentPathFavorited = Boolean(currentPath) && favoritePaths.includes(currentPath);
+
+  const toggleCurrentPathFavorite = () => {
+    if (!currentPath) return;
+    transport
+      .invoke('renderer:toggle-favorite-browse-path', currentPath)
+      .then((favorites) => {
+        if (Array.isArray(favorites)) setFavoritePaths(favorites);
+      })
+      .catch(() => {});
+  };
+
+  const visibleEntries = searchQuery.trim()
+    ? entries.filter((entry) => entry.name.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    : entries;
 
   useEffect(() => {
     if (creatingFolder) newFolderInputRef.current?.focus();
@@ -240,6 +285,80 @@ export default function BrowseFolderModal({
             </span>
             <button
               type="button"
+              className="favorite-btn"
+              onClick={toggleCurrentPathFavorite}
+              disabled={!currentPath || loading}
+              aria-label={isCurrentPathFavorited ? 'Remove from favorites' : 'Add to favorites'}
+              aria-pressed={isCurrentPathFavorited}
+              title={isCurrentPathFavorited ? 'Remove from favorites' : 'Add to favorites'}
+              data-testid="browse-folder-favorite-btn"
+            >
+              <IconStar size={16} strokeWidth={1.5} fill={isCurrentPathFavorited ? 'currentColor' : 'none'} />
+            </button>
+            <div className="quick-access">
+              <button
+                type="button"
+                className="quick-access-btn"
+                onClick={() => setQuickAccessOpen((prev) => !prev)}
+                aria-label="Recent and favorite folders"
+                title="Recent & favorites"
+                data-testid="browse-folder-quick-access-btn"
+              >
+                <IconClock size={16} strokeWidth={1.5} />
+              </button>
+              {quickAccessOpen && (
+                <div className="quick-access-panel" data-testid="browse-folder-quick-access-panel">
+                  <div className="quick-access-section">
+                    <div className="quick-access-heading">Favorites</div>
+                    {favoritePaths.length === 0 ? (
+                      <div className="quick-access-empty">No favorites yet</div>
+                    ) : (
+                      favoritePaths.map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          className="quick-access-item"
+                          onClick={() => {
+                            navigate(p);
+                            setQuickAccessOpen(false);
+                          }}
+                          title={p}
+                          data-testid="browse-folder-favorite-item"
+                        >
+                          <IconStar size={12} strokeWidth={1.5} fill="currentColor" />
+                          <span>{p}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  <div className="quick-access-section">
+                    <div className="quick-access-heading">Recent</div>
+                    {recentPaths.length === 0 ? (
+                      <div className="quick-access-empty">No recent folders</div>
+                    ) : (
+                      recentPaths.map((p) => (
+                        <button
+                          key={p}
+                          type="button"
+                          className="quick-access-item"
+                          onClick={() => {
+                            navigate(p);
+                            setQuickAccessOpen(false);
+                          }}
+                          title={p}
+                          data-testid="browse-folder-recent-item"
+                        >
+                          <IconClock size={12} strokeWidth={1.5} />
+                          <span>{p}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
               className="new-folder-btn"
               onClick={startCreatingFolder}
               disabled={!currentPath || loading || creatingFolder}
@@ -249,6 +368,28 @@ export default function BrowseFolderModal({
             >
               <IconFolderPlus size={16} strokeWidth={1.5} />
             </button>
+          </div>
+
+          <div className="search-row">
+            <IconSearch size={14} strokeWidth={1.5} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search this folder"
+              data-testid="browse-folder-search-input"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear search"
+                data-testid="browse-folder-search-clear"
+              >
+                <IconX size={14} strokeWidth={1.5} />
+              </button>
+            )}
           </div>
 
           {error && (
@@ -311,10 +452,16 @@ export default function BrowseFolderModal({
                 <IconLoader2 size={16} strokeWidth={1.5} className="animate-spin" />
                 <span>Loading...</span>
               </div>
-            ) : entries.length === 0 ? (
-              <div className="empty-row">{isFileMode ? 'No matching files or subfolders' : 'No subfolders'}</div>
+            ) : visibleEntries.length === 0 ? (
+              <div className="empty-row">
+                {searchQuery.trim()
+                  ? 'No matching results'
+                  : isFileMode
+                    ? 'No matching files or subfolders'
+                    : 'No subfolders'}
+              </div>
             ) : (
-              entries.map((entry) => {
+              visibleEntries.map((entry) => {
                 const isRenaming = renamingPath === entry.path;
                 return (
                   <div key={entry.path} className="entry-row" data-testid="browse-folder-entry">

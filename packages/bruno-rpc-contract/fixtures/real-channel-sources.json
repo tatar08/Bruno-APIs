@@ -20,6 +20,18 @@
     "sourceFile": "ipc/filesystem.js"
   },
   {
+    "channel": "renderer:get-browse-paths",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:add-recent-browse-path",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
+    "channel": "renderer:toggle-favorite-browse-path",
+    "sourceFile": "ipc/filesystem.js"
+  },
+  {
     "channel": "renderer:browse-pac-file",
     "sourceFile": "ipc/filesystem.js"
   },

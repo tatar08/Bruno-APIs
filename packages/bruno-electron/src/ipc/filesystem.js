@@ -16,10 +16,12 @@ const {
 } = require('../utils/filesystem');
 const { findUniqueFolderName } = require('../utils/collection-import');
 const { parseRunnerDataset } = require('@usebruno/common').utils;
+const RecentBrowsePaths = require('../store/recent-browse-paths');
 
 const MAX_RUNNER_DATASET_BYTES = 10 * 1024 * 1024;
 
 const registerFilesystemIpc = (mainWindow) => {
+  const recentBrowsePaths = new RecentBrowsePaths();
   ipcMain.handle('renderer:browse-directory', async (event, pathname, request) => {
     try {
       return await browseDirectory(mainWindow);
@@ -117,6 +119,22 @@ const registerFilesystemIpc = (mainWindow) => {
 
     await fs.rename(oldPath, newPath);
     return { path: newPath, name: newName, parentPath: path.dirname(newPath) };
+  });
+
+  // Recent/Favorites lists for the Browse modal (Improvement.md P1.1). Backed
+  // by RecentBrowsePaths, which session-scopes in Browser Bridge mode the
+  // same way LastOpenedWorkspaces does, so one browser session's history
+  // doesn't leak into another's.
+  ipcMain.handle('renderer:get-browse-paths', async () => {
+    return { recent: recentBrowsePaths.getRecent(), favorites: recentBrowsePaths.getFavorites() };
+  });
+
+  ipcMain.handle('renderer:add-recent-browse-path', async (_, dirPath) => {
+    return recentBrowsePaths.addRecent(dirPath);
+  });
+
+  ipcMain.handle('renderer:toggle-favorite-browse-path', async (_, dirPath) => {
+    return recentBrowsePaths.toggleFavorite(dirPath);
   });
 
   ipcMain.handle('renderer:browse-pac-file', async (_, selectedPath = null) => {

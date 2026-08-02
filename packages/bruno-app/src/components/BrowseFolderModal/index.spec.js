@@ -20,7 +20,12 @@ const renderModal = (props = {}) =>
   );
 
 jest.mock('utils/common/ipc-transport', () => ({
-  transport: { invoke: jest.fn() }
+  // Default resolves undefined for any call not given a specific
+  // mockResolvedValueOnce (e.g. the recent/favorites fetch and the
+  // fire-and-forget add-recent-path call every navigate() makes) — the
+  // component guards against an undefined response, so tests that don't
+  // care about recent/favorites don't need to mock every extra call.
+  transport: { invoke: jest.fn(() => Promise.resolve(undefined)) }
 }));
 
 jest.mock('components/Portal', () => ({
@@ -65,7 +70,14 @@ const mixedListing = (path, dirNames = [], files = []) => ({
 });
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  // resetAllMocks (not clearAllMocks) so a test's queued mockResolvedValueOnce
+  // values can never leak into the next test: the modal now fires more than
+  // one transport.invoke call per navigate() (list-directory, the mount-time
+  // get-browse-paths fetch, and the fire-and-forget add-recent-browse-path),
+  // so any test that doesn't consume every queued value would otherwise
+  // leave it to be picked up out of order by a later test's calls.
+  jest.resetAllMocks();
+  transport.invoke.mockImplementation(() => Promise.resolve(undefined));
 });
 
 describe('BrowseFolderModal create-folder / rename (Improvement.md P1.1)', () => {
@@ -274,6 +286,98 @@ describe('BrowseFolderModal create-folder / rename (Improvement.md P1.1)', () =>
       fireEvent.click(screen.getByTestId('modal-confirm-btn'));
 
       expect(onSubmit).toHaveBeenCalledWith(['/root/a.txt', '/root/b.txt']);
+    });
+  });
+
+  describe('search (Improvement.md P1.1)', () => {
+    it('filters the visible entries by the search query', async () => {
+      transport.invoke.mockResolvedValueOnce(listing('/root', ['Alpha', 'Beta']));
+      renderModal();
+
+      expect(await screen.findAllByTestId('browse-folder-entry')).toHaveLength(2);
+
+      fireEvent.change(screen.getByTestId('browse-folder-search-input'), { target: { value: 'alp' } });
+
+      expect(screen.getAllByTestId('browse-folder-entry')).toHaveLength(1);
+      expect(screen.getByText('Alpha')).toBeInTheDocument();
+      expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+    });
+
+    it('shows a "no matching results" message when the search has no matches', async () => {
+      transport.invoke.mockResolvedValueOnce(listing('/root', ['Alpha']));
+      renderModal();
+      await screen.findAllByTestId('browse-folder-entry');
+
+      fireEvent.change(screen.getByTestId('browse-folder-search-input'), { target: { value: 'zzz' } });
+
+      expect(screen.queryByTestId('browse-folder-entry')).not.toBeInTheDocument();
+      expect(screen.getByText('No matching results')).toBeInTheDocument();
+    });
+
+    it('clears the search query via the clear button', async () => {
+      transport.invoke.mockResolvedValueOnce(listing('/root', ['Alpha', 'Beta']));
+      renderModal();
+      await screen.findAllByTestId('browse-folder-entry');
+
+      fireEvent.change(screen.getByTestId('browse-folder-search-input'), { target: { value: 'alp' } });
+      expect(screen.getAllByTestId('browse-folder-entry')).toHaveLength(1);
+
+      fireEvent.click(screen.getByTestId('browse-folder-search-clear'));
+      expect(screen.getAllByTestId('browse-folder-entry')).toHaveLength(2);
+    });
+  });
+
+  describe('recent & favorites (Improvement.md P1.1)', () => {
+    it('fetches recent/favorite paths on mount and lists them in the quick-access panel', async () => {
+      transport.invoke.mockResolvedValueOnce(listing('/root', ['Alpha']));
+      transport.invoke.mockResolvedValueOnce({ recent: ['/root/Old'], favorites: ['/fav'] });
+      renderModal();
+
+      await screen.findAllByTestId('browse-folder-entry');
+      await waitFor(() => expect(transport.invoke).toHaveBeenCalledWith('renderer:get-browse-paths'));
+      fireEvent.click(screen.getByTestId('browse-folder-quick-access-btn'));
+
+      expect(await screen.findByTestId('browse-folder-favorite-item')).toHaveTextContent('/fav');
+      expect(screen.getByTestId('browse-folder-recent-item')).toHaveTextContent('/root/Old');
+    });
+
+    it('navigates when a recent-path item is clicked', async () => {
+      transport.invoke.mockResolvedValueOnce(listing('/root', ['Alpha']));
+      transport.invoke.mockResolvedValueOnce({ recent: ['/other'], favorites: [] });
+      renderModal();
+      await screen.findAllByTestId('browse-folder-entry');
+
+      fireEvent.click(screen.getByTestId('browse-folder-quick-access-btn'));
+      transport.invoke.mockResolvedValueOnce(listing('/other', ['Beta']));
+      fireEvent.click(await screen.findByTestId('browse-folder-recent-item'));
+
+      await waitFor(() => expect(transport.invoke).toHaveBeenCalledWith('renderer:list-directory', '/other'));
+    });
+
+    it('records the current path as recent after navigating', async () => {
+      transport.invoke.mockResolvedValueOnce(listing('/root', []));
+      renderModal();
+
+      await waitFor(() =>
+        expect(transport.invoke).toHaveBeenCalledWith('renderer:add-recent-browse-path', '/root')
+      );
+    });
+
+    it('toggles favorite for the current path and reflects the pressed state', async () => {
+      transport.invoke.mockResolvedValueOnce(listing('/root', []));
+      renderModal();
+      await waitFor(() => expect(screen.getByTestId('browse-folder-favorite-btn')).not.toBeDisabled());
+      expect(screen.getByTestId('browse-folder-favorite-btn')).toHaveAttribute('aria-pressed', 'false');
+
+      transport.invoke.mockResolvedValueOnce(['/root']);
+      fireEvent.click(screen.getByTestId('browse-folder-favorite-btn'));
+
+      await waitFor(() =>
+        expect(transport.invoke).toHaveBeenCalledWith('renderer:toggle-favorite-browse-path', '/root')
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId('browse-folder-favorite-btn')).toHaveAttribute('aria-pressed', 'true')
+      );
     });
   });
 });
