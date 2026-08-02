@@ -1159,6 +1159,31 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 - `Improvement.md`'s P0.2 section header ยังเป็น 🟡 เพราะ schema-validation coverage (ข้อถัดไปในหัวข้อเดียวกัน) ยังไม่ครบทั้ง ~203 handler — ตั้งใจ ไม่ใช่ของที่ลืม
 - ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
 
+### P1.1 Opaque file handle API — 2 สิงหาคม 2026
+
+`Improvement.md`'s P1.1 เดิม mark ข้อ "opaque file handles แทน absolute path" ว่ายังไม่ทำ ตาม **"ไม่ต้องเลื่อน ทำให้ครับไปเลย"** ทำเป็น backend capability ที่ additive ล้วนๆ (ไม่ตัด `path`/`parentPath` เดิมออกเลย เพราะ UI ยังต้องแสดง path จริงให้ผู้ใช้เห็น):
+
+- **`bruno-electron/src/utils/file-handles.js`** (ไฟล์ใหม่): `encodeFileHandle(absolutePath)` เข้ารหัส path ด้วย AES-256-GCM ต่อ process (key random สุ่มใหม่ทุกครั้งที่ process start ไม่ persist ข้าม restart) คืน string prefix `bruno-fh:` ที่ decode กลับได้เฉพาะ process เดียวกันเท่านั้น; `decodeFileHandle()` throw ถ้า handle ผิดรูปแบบหรือถูกแก้ไข (GCM auth tag ป้องกัน tamper); `resolvePathOrHandle(value)` เป็น dispatcher เดียวที่ handler เรียกใช้ — เช็ค prefix แล้วเลือก decode หรือคืนค่าเดิมถ้าเป็น raw path
+- **`ipc/filesystem.js`**: `renderer:list-directory` เพิ่ม `handle` ต่อ entry และ `handle`/`parentHandle` ของ directory ที่ list (คู่กับ `path`/`parentPath` เดิมที่ยังอยู่ครบ), `renderer:create-directory`/`renderer:rename-directory`'s `dirPath` argument รับได้ทั้ง raw path เดิมหรือ handle จาก list-directory ก่อนหน้า ผ่าน `resolvePathOrHandle()` เดียวกัน — ผลคือ flow list → create → rename ทำได้จบครบวงจรโดยไม่ต้องส่ง raw path เลยแม้แต่ครั้งเดียวถ้า caller เลือกใช้ handle ตลอด
+- **บั๊ก/gap ที่พบระหว่างออกแบบ (แก้ก่อนจะกลายเป็นบั๊กจริง ไม่ใช่บั๊กที่เคย ship)**: `security/allowed-roots.js`'s generic scanner (`findPathsInValue`) จับ path candidate จาก regex ที่ต้องขึ้นต้นด้วย `/`/`C:`/`\\` เท่านั้น — handle ที่ขึ้นต้นด้วย `bruno-fh:` ไม่ตรง pattern นี้เลย แปลว่าถ้าไม่แก้อะไรเพิ่ม การเรียก 3 channel นี้ด้วย handle จะข้าม `BRUNO_SERVER_ALLOWED_ROOTS` sandbox ไปฟรีๆ แม้ path จริงที่ decode ออกมาจะอยู่นอก allowed root ก็ตาม (สังเกตได้จากการอ่าน `CHANNEL_PATH_EXTRACTORS`'s doc comment เรื่อง "extractor เฉพาะ channel" ก่อนเริ่ม implement จริง ไม่ใช่เจอตอน live-verify) — แก้ด้วยการเพิ่ม extractor entry ให้ทั้ง 3 channel decode handle กลับเป็น real path ก่อนส่งเข้า `checkPathPolicy()` เสมอ (handle malformed/tamper ตกไปเช็คเป็น string เดิมแทน ซึ่งแทบจะ fail แน่ๆ อยู่แล้ว — fail-safe ไม่ใช่ fail-open ตาม posture เดิมของไฟล์นี้ทั้งไฟล์)
+
+**Test coverage ใหม่**:
+- `file-handles.spec.js` (9 tests): round-trip encode/decode, IV สุ่มใหม่ทุกครั้งจึง handle ไม่ซ้ำแม้ path เดิม, ไม่ confuse handle กับ raw path string, tamper detection (แก้ 4 ตัวท้าย base64 แล้วต้อง throw), malformed/สั้นเกินไปต้อง throw, `resolvePathOrHandle` ผ่าน handle/raw-path/null/undefined ครบ
+- `filesystem.spec.js` (+5 tests): `list-directory` คืน `handle` ต่อ entry และ `handle`/`parentHandle` ของ directory, `parentHandle` เป็น `null` ที่จุดเดียวกับที่ `parentPath` เป็น `null` (filesystem root), `create-directory`/`rename-directory` ยอมรับ handle จาก list-directory ก่อนหน้าแทน raw path ได้จริง, `list-directory` เองก็ navigate ด้วย handle แทน raw path ได้
+- `allowed-roots.spec.js` (+5 tests): handle ที่ decode แล้วอยู่ *ใน* allowed root ผ่านทั้ง 3 channel, อยู่ *นอก* root โดนบล็อกทั้ง 3 channel (พิสูจน์ gap ที่พบถูกปิดแล้ว), raw path ยังทำงานเหมือนเดิมทุกอย่าง (ไม่ regression), malformed handle ไม่ throw แต่ตกไปเช็คแบบ fail-safe, `list-directory` ที่ไม่มี `dirPath` arg เลย (home-directory default) ไม่โดน false-positive
+- full suite ทั้งสอง package ผ่านหลังเพิ่ม: `bruno-electron` (`file-handles.spec.js` + `filesystem.spec.js` รวม 25/25), `bruno-server` (330/330, ขึ้นจาก 325) — lint clean ทุกไฟล์ที่แตะ
+
+**Live-verified ด้วย server process จริง 2 ตัว** (ไม่ใช่ mock):
+- **ไม่ตั้ง `BRUNO_SERVER_ALLOWED_ROOTS`**: `curl POST /api/ipc/renderer:list-directory` คืน `handle`/`parentHandle` จริงในรูปแบบ `bruno-fh:...`; ใช้ handle นั้นเรียก `create-directory` สร้างโฟลเดอร์จริงบน disk สำเร็จ (200) แล้วเอา handle ที่ได้กลับมาต่อเรียก `rename-directory` สำเร็จต่อเนื่อง (200) — **ไม่มีการส่ง raw path เลยแม้แต่ครั้งเดียวตลอด flow** พิสูจน์ผ่าน `ls` ตรงๆ ว่าโฟลเดอร์ถูกสร้าง/rename จริง; ยิง raw path คู่ขนานยืนยันว่ายังทำงานเหมือนเดิมทุกประการ (regression check)
+- **ตั้ง `BRUNO_SERVER_ALLOWED_ROOTS`** ชี้ไปที่ root เดียว: raw path นอก root โดน `403 PATH_OUTSIDE_ALLOWED_ROOT` ตามเดิม; handle ปลอม/handle จาก server process อื่น (คนละ key ถอดไม่ออก) โดน `403` เหมือนกัน (fail-safe); handle ที่ decode แล้วอยู่ *ใน* root เรียก `create-directory` ผ่านสำเร็จ (200) — พิสูจน์ว่า bypass gap ที่พบและแก้ระหว่างออกแบบถูกปิดจริงในระบบที่รันจริง ไม่ใช่แค่ผ่าน unit test เฉยๆ
+
+**ไม่พบบั๊ก product code ที่เคย ship ระหว่างทำ increment นี้** — bypass gap ที่พบเป็น gap ที่จะเกิดขึ้น "ถ้า" ทำ opaque handle แบบไม่ครบ ไม่ใช่บั๊กที่มีอยู่แล้วในโค้ดก่อนหน้านี้ (เพราะ `list-directory` ยังไม่เคยคืน handle มาก่อน) — พบและแก้ก่อนจะ merge เข้าไปเลย
+
+**ยังไม่ทำ (ตัดสินใจแล้ว ไม่ใช่ของที่ลืม):**
+- frontend ยังไม่เปลี่ยนไปใช้ `handle` เลย — `BrowseFolderModal`/`providers/BrowseFolder` ยังส่ง/รับ raw `path` เหมือนเดิม 100% เป็น follow-up แยกต่างหาก (pattern เดียวกับ P0.2's confirm-dialog UI และ P1.5's OAuth popup UI ที่ยังค้างเช่นกัน)
+- handle ไม่ persist ข้าม process restart — ตั้งใจ (ดู rationale ใน `file-handles.js`'s comment) ไม่ใช่ของที่ลืมทำ
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
 ---
 
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา

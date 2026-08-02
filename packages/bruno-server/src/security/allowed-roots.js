@@ -47,6 +47,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { resolvePathOrHandle } = require(path.join(__dirname, '../../../bruno-electron/src/utils/file-handles'));
 
 const MAX_SCAN_DEPTH = 3;
 
@@ -237,9 +238,30 @@ function findPathsInValue(value, depth = 0, found = []) {
   return found;
 }
 
-// Extension point for channel-specific precision. Empty today; see module
-// doc comment above for how/why to add entries incrementally.
-const CHANNEL_PATH_EXTRACTORS = {};
+// renderer:list-directory/create-directory/rename-directory (Improvement.md
+// P1.1) accept either a raw path or an opaque handle minted by
+// bruno-electron's utils/file-handles.js. A handle is an encrypted blob, not
+// an absolute-path-shaped string, so the generic findPathsInValue() scanner
+// below would never flag it as a candidate — silently exempting handle-based
+// calls from the sandbox entirely. Decoding it back to the real path here
+// closes that gap; a garbage/tampered handle decodes to nothing usable and
+// falls through to checkPathPolicy() as-is, which will reject it same as
+// any other malformed path (fail-safe, not fail-open).
+const decodeIfHandle = (value) => {
+  try {
+    return resolvePathOrHandle(value);
+  } catch {
+    return value;
+  }
+};
+
+// Extension point for channel-specific precision. See module doc comment
+// above for how/why to add entries incrementally.
+const CHANNEL_PATH_EXTRACTORS = {
+  'renderer:list-directory': (args) => (args[0] ? [decodeIfHandle(args[0])] : []),
+  'renderer:create-directory': (args) => [decodeIfHandle(args[0])],
+  'renderer:rename-directory': (args) => [decodeIfHandle(args[0])]
+};
 
 function extractCandidatePaths(channel, args) {
   const extractor = CHANNEL_PATH_EXTRACTORS[channel];

@@ -70,9 +70,17 @@ describe('renderer:create-directory / renderer:rename-directory (Improvement.md 
       expect(fs.existsSync(path.join(tmpRoot, 'New Folder'))).toBe(true);
       expect(result).toEqual({
         path: path.join(tmpRoot, 'New Folder'),
+        handle: expect.any(String),
         name: 'New Folder',
         parentPath: tmpRoot
       });
+    });
+
+    it('accepts an opaque parent handle (from a prior list-directory call) instead of a raw path', async () => {
+      const { handle: parentHandle } = await handlers.get('renderer:list-directory')(null, tmpRoot);
+      const result = await invoke(parentHandle, 'Via Handle');
+      expect(fs.existsSync(path.join(tmpRoot, 'Via Handle'))).toBe(true);
+      expect(result.path).toBe(path.join(tmpRoot, 'Via Handle'));
     });
 
     it('rejects when a folder with the same name already exists (conflict)', async () => {
@@ -119,6 +127,33 @@ describe('renderer:create-directory / renderer:rename-directory (Improvement.md 
       fs.writeFileSync(filePath, 'x');
       await expect(invoke(filePath)).rejects.toThrow(/Not a directory/);
     });
+
+    it('includes an opaque handle per entry and for the listed/parent directory (Improvement.md P1.1 opaque file handle API)', async () => {
+      fs.mkdirSync(path.join(tmpRoot, 'Sub'));
+
+      const result = await invoke(tmpRoot);
+      expect(typeof result.handle).toBe('string');
+      expect(result.handle).toMatch(/^bruno-fh:/);
+      expect(typeof result.parentHandle).toBe('string');
+
+      const subEntry = result.entries.find((e) => e.name === 'Sub');
+      expect(subEntry.handle).toMatch(/^bruno-fh:/);
+    });
+
+    it('reports a null parentHandle at the same point it reports a null parentPath (filesystem root)', async () => {
+      const result = await invoke('/');
+      expect(result.parentPath).toBeNull();
+      expect(result.parentHandle).toBeNull();
+    });
+
+    it('accepts an opaque handle as dirPath to navigate without ever sending a raw path', async () => {
+      fs.mkdirSync(path.join(tmpRoot, 'Sub'));
+      const rootListing = await invoke(tmpRoot);
+      const subHandle = rootListing.entries.find((e) => e.name === 'Sub').handle;
+
+      const subListing = await invoke(subHandle);
+      expect(subListing.path).toBe(path.join(tmpRoot, 'Sub'));
+    });
   });
 
   describe('renderer:rename-directory', () => {
@@ -134,9 +169,21 @@ describe('renderer:create-directory / renderer:rename-directory (Improvement.md 
       expect(fs.existsSync(path.join(tmpRoot, 'New Name'))).toBe(true);
       expect(result).toEqual({
         path: path.join(tmpRoot, 'New Name'),
+        handle: expect.any(String),
         name: 'New Name',
         parentPath: tmpRoot
       });
+    });
+
+    it('accepts an opaque handle (from a prior list-directory call) as the source instead of a raw path', async () => {
+      const oldPath = path.join(tmpRoot, 'Old Via Handle');
+      fs.mkdirSync(oldPath);
+      const { entries } = await handlers.get('renderer:list-directory')(null, tmpRoot);
+      const oldHandle = entries.find((e) => e.name === 'Old Via Handle').handle;
+
+      const result = await invoke(oldHandle, 'New Via Handle');
+      expect(fs.existsSync(oldPath)).toBe(false);
+      expect(result.path).toBe(path.join(tmpRoot, 'New Via Handle'));
     });
 
     it('rejects when the target name already exists (conflict)', async () => {

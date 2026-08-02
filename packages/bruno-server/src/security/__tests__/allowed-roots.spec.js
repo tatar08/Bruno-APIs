@@ -108,6 +108,66 @@ describe('allowed-roots filesystem sandbox', () => {
     });
   });
 
+  // Improvement.md P1.1's opaque file handle API: renderer:list-directory /
+  // create-directory / rename-directory accept either a raw path or an
+  // encrypted handle minted by bruno-electron's utils/file-handles.js. A
+  // handle is not an absolute-path-shaped string, so without a dedicated
+  // CHANNEL_PATH_EXTRACTORS entry the generic scanner would never see it and
+  // the sandbox would silently do nothing for handle-based calls.
+  describe('opaque file handle args (renderer:list-directory / create-directory / rename-directory)', () => {
+    let sandbox;
+    let encodeFileHandle;
+
+    // allowed-roots.js reads file-handles.js's HANDLE_KEY at require time
+    // (see file-handles.js's module doc comment — a fresh per-process key,
+    // regenerated on every require). loadModule()'s jest.isolateModules()
+    // gives allowed-roots.js a fresh, isolated copy of file-handles.js per
+    // test, so encodeFileHandle must come from that *same* isolated copy —
+    // requiring file-handles.js at the describe-block level like the rest
+    // of this file's requires would mint handles with a different key that
+    // the isolated allowed-roots.js instance can never decrypt.
+    beforeEach(() => {
+      process.env.BRUNO_SERVER_ALLOWED_ROOTS = allowedRoot;
+      let fileHandles;
+      jest.isolateModules(() => {
+        sandbox = require('../allowed-roots');
+        fileHandles = require(path.join(__dirname, '../../../../bruno-electron/src/utils/file-handles'));
+      });
+      encodeFileHandle = fileHandles.encodeFileHandle;
+    });
+
+    it('decodes a handle pointing inside the allowed root and allows it', () => {
+      const insideHandle = encodeFileHandle(path.join(allowedRoot, 'sub'));
+      expect(sandbox.findDisallowedPath('renderer:create-directory', [insideHandle, 'New Folder'])).toBeNull();
+      expect(sandbox.findDisallowedPath('renderer:rename-directory', [insideHandle, 'New Name'])).toBeNull();
+      expect(sandbox.findDisallowedPath('renderer:list-directory', [insideHandle])).toBeNull();
+    });
+
+    it('decodes a handle pointing outside the allowed root and rejects it', () => {
+      const outsideHandle = encodeFileHandle(outsideDir);
+      expect(sandbox.findDisallowedPath('renderer:create-directory', [outsideHandle, 'New Folder'])).toBe(outsideDir);
+      expect(sandbox.findDisallowedPath('renderer:rename-directory', [outsideHandle, 'New Name'])).toBe(outsideDir);
+      expect(sandbox.findDisallowedPath('renderer:list-directory', [outsideHandle])).toBe(outsideDir);
+    });
+
+    it('still enforces a raw (non-handle) path the same as before', () => {
+      const insidePath = path.join(allowedRoot, 'sub');
+      expect(sandbox.findDisallowedPath('renderer:create-directory', [insidePath, 'New Folder'])).toBeNull();
+      expect(sandbox.findDisallowedPath('renderer:create-directory', [outsideDir, 'New Folder'])).toBe(outsideDir);
+    });
+
+    it('falls through to policy rejection for a malformed/tampered handle instead of throwing', () => {
+      const tampered = 'bruno-fh:not-a-real-handle';
+      expect(() => sandbox.findDisallowedPath('renderer:create-directory', [tampered, 'New Folder'])).not.toThrow();
+      expect(sandbox.findDisallowedPath('renderer:create-directory', [tampered, 'New Folder'])).toBe(tampered);
+    });
+
+    it('renderer:list-directory with no dirPath arg (home-directory default) is not flagged', () => {
+      expect(sandbox.findDisallowedPath('renderer:list-directory', [null])).toBeNull();
+      expect(sandbox.findDisallowedPath('renderer:list-directory', [])).toBeNull();
+    });
+  });
+
   describe('read-only root (`:ro` suffix)', () => {
     let sandbox;
     let readOnlyRoot;
