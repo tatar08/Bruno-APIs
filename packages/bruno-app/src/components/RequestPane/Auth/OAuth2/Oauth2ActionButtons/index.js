@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import toast from 'react-hot-toast';
 import { cloneDeep, find, get } from 'lodash';
@@ -9,7 +9,9 @@ import { responseReceived } from 'providers/ReduxStore/slices/collections';
 import { updateResponsePaneTab } from 'providers/ReduxStore/slices/tabs';
 import { getAllVariables } from 'utils/collections/index';
 import { formatIpcError } from 'utils/common/error';
+import { transport } from 'utils/common/ipc-transport';
 import Button from 'ui/Button';
+import Oauth2PopupBlockedModal from './PopupBlockedModal';
 
 const Oauth2ActionButtons = ({ item, request, collection, url: accessTokenUrl, credentialsId }) => {
   const { uid: collectionUid } = collection;
@@ -19,8 +21,55 @@ const Oauth2ActionButtons = ({ item, request, collection, url: accessTokenUrl, c
   const [fetchingToken, toggleFetchingToken] = useState(false);
   const [refreshingToken, toggleRefreshingToken] = useState(false);
   const [fetchingAuthorizationCode, toggleFetchingAuthorizationCode] = useState(false);
+  const [popupBlocked, setPopupBlocked] = useState(false);
+  const popupWindowRef = useRef(null);
+  const pendingAuthorizeUrlRef = useRef(null);
 
   const useSystemBrowser = get(preferences, 'request.oauth2.useSystemBrowser', false);
+
+  // Improvement.md P1.5 — under the Browser Bridge, `oauth2:authorization-required`
+  // is a WS push telling this tab to open the IdP's authorization URL itself
+  // (the desktop equivalent is main-process shell.openExternal(), which
+  // doesn't apply when there's no local OS to hand a URL to). window.open()
+  // never throws when blocked; a null/immediately-closed return value is the
+  // only signal available, so that's what drives the fallback modal below.
+  useEffect(() => {
+    const removeListener = transport.on('oauth2:authorization-required', ({ authorizeUrl }) => {
+      const popup = window.open(authorizeUrl, 'bruno-oauth2-authorize', 'width=600,height=700');
+      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+        pendingAuthorizeUrlRef.current = authorizeUrl;
+        setPopupBlocked(true);
+        return;
+      }
+      popupWindowRef.current = popup;
+      pendingAuthorizeUrlRef.current = null;
+      setPopupBlocked(false);
+    });
+
+    return () => removeListener();
+  }, []);
+
+  const closeAuthorizationPopup = () => {
+    if (popupWindowRef.current && !popupWindowRef.current.closed) {
+      popupWindowRef.current.close();
+    }
+    popupWindowRef.current = null;
+    pendingAuthorizeUrlRef.current = null;
+    setPopupBlocked(false);
+  };
+
+  const handleOpenAuthorizationPopupManually = () => {
+    const authorizeUrl = pendingAuthorizeUrlRef.current;
+    if (!authorizeUrl) return;
+    // A click handler is always a fresh user gesture, so this window.open()
+    // is never blocked (unlike the WS-event-triggered one above).
+    const popup = window.open(authorizeUrl, 'bruno-oauth2-authorize', 'width=600,height=700');
+    if (popup) {
+      popupWindowRef.current = popup;
+      pendingAuthorizeUrlRef.current = null;
+      setPopupBlocked(false);
+    }
+  };
 
   // Check for pending authorization when component mounts or when fetching starts
   useEffect(() => {
@@ -97,6 +146,7 @@ const Oauth2ActionButtons = ({ item, request, collection, url: accessTokenUrl, c
     } finally {
       toggleFetchingToken(false);
       toggleFetchingAuthorizationCode(false);
+      closeAuthorizationPopup();
     }
   };
 
@@ -153,11 +203,19 @@ const Oauth2ActionButtons = ({ item, request, collection, url: accessTokenUrl, c
     } catch (err) {
       console.error('Error cancelling authorization:', err);
       toast.error('Failed to cancel authorization');
+    } finally {
+      closeAuthorizationPopup();
     }
   };
 
   return (
     <div className="flex flex-row gap-2 mt-4">
+      {popupBlocked ? (
+        <Oauth2PopupBlockedModal
+          onOpen={handleOpenAuthorizationPopupManually}
+          onCancel={handleCancelAuthorization}
+        />
+      ) : null}
       <Button
         size="sm"
         color="secondary"
