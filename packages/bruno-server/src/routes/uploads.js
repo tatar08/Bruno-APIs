@@ -17,6 +17,17 @@
  * The sha256 digest is computed server-side from the bytes actually written
  * to the scratch file, so the caller can confirm nothing was corrupted or
  * truncated in transit (Improvement.md P1.1 Transfer Center checksums).
+ *
+ * Every consumer of this route (uploadZipFile() in bruno-app) only ever
+ * uploads zip archives, so this route rejects anything else outright rather
+ * than trusting the client: the extension is checked (Content-Type is
+ * client-controlled and not trustworthy) and, once the bytes are on disk,
+ * the file's magic bytes are checked against the real ZIP local/central
+ * directory signatures — a mismatch means either a spoofed extension or a
+ * corrupt archive, and either way downstream handlers (AdmZip via
+ * renderer:is-bruno-collection-zip / renderer:import-collection-zip /
+ * renderer:import-workspace) should never see the file (Improvement.md P0.3
+ * filesystem sandbox: upload size/extension/magic-byte validation).
  */
 
 const os = require('os');
@@ -42,9 +53,24 @@ fs.mkdirSync(SCRATCH_DIR, { recursive: true });
 // downstream handlers that sniff by extension, e.g. AdmZip via
 // renderer:is-bruno-collection-zip, see a real .zip suffix) — the on-disk
 // name itself is always a random UUID, never the caller-supplied filename.
+// (This is also this route's filename-normalization story: the caller's
+// name never reaches the filesystem in any form beyond a whitelisted
+// extension, so there's no traversal/control-character surface to sanitize.)
 function sanitizeExtension(originalName) {
   const ext = path.extname(String(originalName || '')).toLowerCase();
   return /^\.[a-z0-9]{1,8}$/.test(ext) ? ext : '';
+}
+
+class UploadRejectedError extends Error {}
+
+// Content-Type is client-controlled and not trustworthy; the extension is
+// at least consistent with what every real caller sends (uploadZipFile()
+// always names the field from a .zip File/Blob).
+function fileFilter(req, file, cb) {
+  if (!/\.zip$/i.test(String(file.originalname || ''))) {
+    return cb(new UploadRejectedError('Only .zip files are accepted.'));
+  }
+  cb(null, true);
 }
 
 const storage = multer.diskStorage({
@@ -52,7 +78,32 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}${sanitizeExtension(file.originalname)}`)
 });
 
-const upload = multer({ storage, limits: { fileSize: UPLOAD_MAX_BYTES, files: 1 } });
+const upload = multer({ storage, fileFilter, limits: { fileSize: UPLOAD_MAX_BYTES, files: 1 } });
+
+// Real ZIP archives (including empty ones) always start with one of these
+// four-byte signatures — the extension check above only rules out an
+// obviously wrong Content-Type/name, this rules out a spoofed extension or
+// a truncated/corrupt upload before any downstream handler unzips it.
+const ZIP_MAGIC_SIGNATURES = [
+  Buffer.from([0x50, 0x4b, 0x03, 0x04]), // local file header (non-empty archive)
+  Buffer.from([0x50, 0x4b, 0x05, 0x06]), // end of central directory (empty archive)
+  Buffer.from([0x50, 0x4b, 0x07, 0x08]) // data descriptor (spanned archive)
+];
+
+function looksLikeZip(header) {
+  return ZIP_MAGIC_SIGNATURES.some((magic) => header.length >= magic.length && header.subarray(0, magic.length).equals(magic));
+}
+
+async function readHeaderBytes(filePath, length) {
+  const fh = await fs.promises.open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await fh.read(buffer, 0, length, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
 
 function hashFile(filePath) {
   return new Promise((resolve, reject) => {
@@ -101,11 +152,25 @@ const createUploadsRouter = () => {
           : err.message;
         return res.status(413).json({ code: ERROR_CODES.PAYLOAD_TOO_LARGE, error: message });
       }
+      if (err instanceof UploadRejectedError) {
+        return res.status(400).json({ code: ERROR_CODES.INVALID_ARGS, error: err.message });
+      }
       if (err) {
         return res.status(500).json({ code: ERROR_CODES.HANDLER_ERROR, error: err.message || 'Upload failed' });
       }
       if (!req.file) {
         return res.status(400).json({ code: ERROR_CODES.INVALID_ARGS, error: 'No file uploaded (expected multipart field "file").' });
+      }
+
+      try {
+        const header = await readHeaderBytes(req.file.path, 4);
+        if (!looksLikeZip(header)) {
+          fs.unlink(req.file.path, () => {});
+          return res.status(400).json({ code: ERROR_CODES.INVALID_ARGS, error: 'Uploaded file is not a valid zip archive (magic bytes do not match).' });
+        }
+      } catch (readErr) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(500).json({ code: ERROR_CODES.HANDLER_ERROR, error: readErr.message || 'Failed to inspect uploaded file' });
       }
 
       try {

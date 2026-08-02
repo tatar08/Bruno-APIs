@@ -1035,6 +1035,33 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P0.3 Upload validation — size/extension/magic-bytes/filename normalization — 2 สิงหาคม 2026
+
+หลังทำ checksum เสร็จ กลับไปดู `Improvement.md` P0.3's bullet ที่ค้างไว้นานว่า "upload ต้องตรวจ size, extension, magic bytes และ filename normalization — ยังไม่ทำ (ยังไม่มี upload flow จริงในระบบจนกว่าจะทำ P1.1 file explorer)" — ตอนนี้ P1.1's upload flow (`routes/uploads.js`) มีอยู่จริงและโตเต็มที่แล้ว (มี rate-limit, concurrency-limit, checksum ครบ) จึงปลดบล็อกข้อนี้ได้ เลือกทำเป็น increment ถัดไปเพราะเป็น security-hardening gap ที่ระบุไว้ชัดเจนแล้ว ไม่ต้องรอ product/UX decision ใดๆ
+
+**สิ่งที่ทำ:**
+- **Size**: ไม่ต้องแก้ — `multer`'s `limits.fileSize` (`BRUNO_SERVER_UPLOAD_MAX_MB`) enforce อยู่แล้วตั้งแต่รอบก่อน
+- **Extension**: เพิ่ม `fileFilter` ใหม่ใน `multer()` config รับเฉพาะ `.zip` (case-insensitive) — ตรวจจาก `file.originalname` เพราะ caller จริงทุกตัวในระบบ (`uploadZipFile()` ใน `ipc-transport.js`, เรียกจาก `FileTab.js`/`ImportWorkspace/index.js`) อัพโหลดแต่ zip เท่านั้นอยู่แล้ว ไม่ใช้ `Content-Type` เช็คเพราะ client กำหนดเองได้ ไม่น่าเชื่อถือ — reject ด้วย error class ใหม่ `UploadRejectedError` แมพเป็น 400 `INVALID_ARGS`
+- **Magic bytes**: หลัง `multer` เขียนไฟล์ลง scratch dir เสร็จ (ก่อนคำนวณ sha256) อ่าน 4 byte แรกของไฟล์จริงบน disk ผ่าน `fs.promises.open().read()` แล้วเทียบกับ ZIP signature ทั้ง 3 แบบที่เป็นไปได้จริง (`PK\x03\x04` local file header, `PK\x05\x06` end-of-central-directory สำหรับ archive ว่าง, `PK\x07\x08` data descriptor สำหรับ spanned archive) — ไม่ตรงกันทั้งหมด unlink ไฟล์ทิ้งแล้วตอบ 400 `INVALID_ARGS` ก่อนที่ handler ปลายทาง (AdmZip ผ่าน `renderer:is-bruno-collection-zip`/`renderer:import-collection-zip`) จะได้เปิดไฟล์เลย — จับได้ทั้ง extension ปลอม (ไฟล์ไม่ใช่ zip จริงแต่ตั้งชื่อ `.zip`) และไฟล์ zip ที่เสีย/ถูก truncate กลางทาง
+- **Filename normalization**: ตรวจแล้วพบว่าดีไซน์เดิมของ route นี้ (ตั้งแต่รอบ P1.1 แรกที่สร้างไฟล์นี้) ทำสิ่งนี้ไว้ครบอยู่แล้วโดยไม่รู้ตัว — ชื่อไฟล์บน disk เป็น `crypto.randomUUID()` เสมอ ไม่เคยใช้ `originalname` จาก client เลยนอกจากผ่าน `sanitizeExtension()` ที่ whitelist เฉพาะ `\.[a-z0-9]{1,8}` เท่านั้น จึงไม่มีช่องให้ path traversal/control character/null byte จาก filename หลุดไปถึง filesystem ได้เลย — ไม่ต้องเขียนโค้ดใหม่ แค่บันทึกไว้ว่าเช็คแล้ว
+
+**Test coverage ใหม่ (`uploads-downloads.spec.js`, +2 tests จากเดิม 11 เป็น 13):**
+- แก้ 2 test เดิมที่ attach `Buffer.from('hello bruno')` เป็น `.zip` (ผ่านมาได้เพราะยังไม่มี magic-byte check) ให้เปลี่ยนไปใช้ `MINIMAL_ZIP_BYTES` (22-byte real empty-ZIP EOCD record ที่เขียนมือ ไม่ต้องพึ่ง dependency ใหม่) แทน เพื่อให้ยังคงผ่าน magic-byte check ใหม่
+- เพิ่ม test ใหม่ 2 ตัว: reject ไฟล์นามสกุลไม่ใช่ `.zip` (ใช้ `MINIMAL_ZIP_BYTES` จริงตั้งชื่อ `.exe` — ยืนยันว่า extension check ทำงานแยกจาก magic-byte check), reject ไฟล์ตั้งชื่อ `.zip` แต่เนื้อหาไม่ใช่ zip จริง (ยืนยัน magic-byte check ทำงาน)
+- รวม `bruno-server`: 311/311 ผ่าน (จาก 309 เดิม), `npx eslint` สะอาด
+
+**Live-verified ด้วยทั้ง curl และ Playwright จริง** บน production build เดิมที่ serve ผ่าน bruno-server (ไม่ต้อง rebuild bruno-app เพราะแก้แค่ backend):
+- curl 3 เคส ตรงๆ ต่อ `/api/uploads/scratch-file`: zip จริง (จาก `tests/interpolation/collection` ที่ zip สดๆ) → 200 พร้อม `sha256` ตรงกับ `sha256sum` เป๊ะ; ไฟล์ปลอมตั้งชื่อ `.zip` → 400 "magic bytes do not match"; zip จริงตั้งชื่อ `.exe` → 400 "Only .zip files are accepted."
+- Playwright (Chromium จริง) ผ่าน Import Collection modal's file input จริง: อัพโหลด zip จริง → wizard advance ไป Name/Location step ตามปกติ ไม่มี console error เลย (golden path ไม่ regression); อัพโหลดไฟล์ปลอม → toast แสดงข้อความ error จาก server ("not a valid zip archive") ผ่าน `FileTab.js`'s catch block ที่มีอยู่แล้ว (ไม่ต้องแก้ frontend เลย) — มี network-level console log ของ HTTP 400 (พฤติกรรมปกติของ browser เวลา XHR ได้ status ที่ไม่ใช่ 2xx ไม่ใช่ application error) แต่ไม่มี unhandled JS error/pageerror ใดๆ
+
+**ไม่พบบั๊ก product code ใหม่** ระหว่าง implement หรือ verify รอบนี้เลย — ส่วนที่ต้องแก้จริงมีแค่ test fixture เดิมที่ไม่เคยใช้ byte จริงของ zip (เพราะตอนเขียนตอนแรกยังไม่มี magic-byte check ให้ต้องสนใจ)
+
+**ยังไม่ทำ:**
+- ทำความสะอาด scratch artifacts หลัง verify เสร็จแล้ว (ลบ zip ทดสอบ, script, log, kill server process) — ทำเสร็จแล้วในรอบนี้ ไม่มีของค้าง
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

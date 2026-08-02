@@ -18,6 +18,19 @@ const { WindowShim, createFakeEvent } = require('../../adapters/window-shim');
 const { HandlerRegistry } = require('../../handler-registry');
 const { EventBridge } = require('../../ws/event-bridge');
 
+// A minimal-but-real empty ZIP archive (just an End Of Central Directory
+// record, no entries) — small enough to inline, but real enough to pass the
+// route's magic-byte check (Improvement.md P0.3 upload validation), unlike
+// an arbitrary text buffer named "*.zip".
+const MINIMAL_ZIP_BYTES = Buffer.from([
+  0x50, 0x4b, 0x05, 0x06,
+  0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00
+]);
+
 // uploads.js/downloads.js/auth.js all read env vars (BRUNO_SERVER_UPLOAD_MAX_MB,
 // BRUNO_SERVER_ALLOWED_ROOTS via allowed-roots.js, BRUNO_SERVER_REQUIRE_AUTH)
 // at module-require time, so each scenario that needs a non-default value
@@ -70,12 +83,12 @@ describe('POST /api/uploads/scratch-file', () => {
 
     const res = await request(app)
       .post('/api/uploads/scratch-file')
-      .attach('file', Buffer.from('hello bruno'), 'collection.zip');
+      .attach('file', MINIMAL_ZIP_BYTES, 'collection.zip');
 
     expect(res.status).toBe(200);
     expect(typeof res.body.data).toBe('string');
     expect(fs.existsSync(res.body.data)).toBe(true);
-    expect(fs.readFileSync(res.body.data, 'utf8')).toBe('hello bruno');
+    expect(fs.readFileSync(res.body.data)).toEqual(MINIMAL_ZIP_BYTES);
     expect(path.extname(res.body.data)).toBe('.zip');
 
     fs.unlinkSync(res.body.data);
@@ -87,13 +100,39 @@ describe('POST /api/uploads/scratch-file', () => {
 
     const res = await request(app)
       .post('/api/uploads/scratch-file')
-      .attach('file', Buffer.from('hello bruno'), 'collection.zip');
+      .attach('file', MINIMAL_ZIP_BYTES, 'collection.zip');
 
     expect(res.status).toBe(200);
-    const expected = crypto.createHash('sha256').update('hello bruno').digest('hex');
+    const expected = crypto.createHash('sha256').update(MINIMAL_ZIP_BYTES).digest('hex');
     expect(res.body.sha256).toBe(expected);
 
     fs.unlinkSync(res.body.data);
+  });
+
+  test('rejects a file whose extension is not .zip (Improvement.md P0.3 upload validation)', async () => {
+    const routes = loadRoutes();
+    const app = buildApp(routes);
+
+    const res = await request(app)
+      .post('/api/uploads/scratch-file')
+      .attach('file', MINIMAL_ZIP_BYTES, 'collection.exe');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_ARGS');
+    expect(res.body.error).toMatch(/\.zip/i);
+  });
+
+  test('rejects a .zip-named file whose bytes are not a real zip archive (spoofed extension)', async () => {
+    const routes = loadRoutes();
+    const app = buildApp(routes);
+
+    const res = await request(app)
+      .post('/api/uploads/scratch-file')
+      .attach('file', Buffer.from('not actually a zip file'), 'collection.zip');
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_ARGS');
+    expect(res.body.error).toMatch(/magic bytes/i);
   });
 
   test('rejects a request with no file attached', async () => {
