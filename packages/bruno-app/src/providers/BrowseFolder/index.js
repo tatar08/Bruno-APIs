@@ -3,17 +3,25 @@ import React, { createContext, useCallback, useState } from 'react';
 
 const BrowseFolderContext = createContext();
 
+const CLOSED_STATE = { open: false, mode: 'folders', options: null, resolve: null, reject: null };
+
 export function BrowseFolderProvider({ children }) {
-  const [modalState, setModalState] = useState({ open: false, options: null, resolve: null, reject: null });
+  const [modalState, setModalState] = useState(CLOSED_STATE);
 
   const browseFolder = useCallback((options = {}) => {
     return new Promise((resolve, reject) => {
-      setModalState({ open: true, options, resolve, reject });
+      setModalState({ open: true, mode: 'folders', options, resolve, reject });
+    });
+  }, []);
+
+  const browseFiles = useCallback((options = {}) => {
+    return new Promise((resolve, reject) => {
+      setModalState({ open: true, mode: 'files', options, resolve, reject });
     });
   }, []);
 
   // Expose globally for non-component code (e.g. ipc-transport.js's Browser
-  // Bridge folder-picking channels, which run outside any React tree).
+  // Bridge folder/file-picking channels, which run outside any React tree).
   if (typeof window !== 'undefined') {
     window.browseFolderOnBridge = async (options) => {
       try {
@@ -23,25 +31,35 @@ export function BrowseFolderProvider({ children }) {
         throw err;
       }
     };
+    window.browseFilesOnBridge = async (options) => {
+      try {
+        return await browseFiles(options);
+      } catch (err) {
+        if (err !== 'cancelled') console.error('window.browseFilesOnBridge encountered an error:', err);
+        throw err;
+      }
+    };
   }
 
   const handleSubmit = (selectedPaths) => {
     modalState.resolve(selectedPaths);
-    setModalState({ open: false, options: null, resolve: null, reject: null });
+    setModalState(CLOSED_STATE);
   };
 
   const handleCancel = () => {
     modalState.reject('cancelled');
-    setModalState({ open: false, options: null, resolve: null, reject: null });
+    setModalState(CLOSED_STATE);
   };
 
   return (
-    <BrowseFolderContext.Provider value={{ browseFolder }}>
+    <BrowseFolderContext.Provider value={{ browseFolder, browseFiles }}>
       {children}
       {modalState.open && (
         <BrowseFolderModal
-          title={modalState.options?.title || 'Select Folder'}
+          title={modalState.options?.title || (modalState.mode === 'files' ? 'Select File' : 'Select Folder')}
           multiple={Boolean(modalState.options?.multiple)}
+          mode={modalState.mode}
+          filters={modalState.options?.filters || []}
           onSubmit={handleSubmit}
           onCancel={handleCancel}
         />

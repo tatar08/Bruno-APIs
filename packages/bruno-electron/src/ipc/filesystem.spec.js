@@ -61,6 +61,35 @@ describe('renderer:create-directory / renderer:rename-directory (Improvement.md 
     });
   });
 
+  describe('renderer:list-directory', () => {
+    const invoke = (...args) => handlers.get('renderer:list-directory')(null, ...args);
+
+    it('lists directories before files, and includes size/mtimeMs for files (Improvement.md P1.1 file picker preview)', async () => {
+      fs.mkdirSync(path.join(tmpRoot, 'Sub'));
+      fs.writeFileSync(path.join(tmpRoot, 'notes.txt'), 'hello');
+
+      const result = await invoke(tmpRoot);
+
+      expect(result.path).toBe(tmpRoot);
+      expect(result.entries.map((e) => e.name)).toEqual(['Sub', 'notes.txt']);
+
+      const dirEntry = result.entries.find((e) => e.name === 'Sub');
+      expect(dirEntry.isDirectory).toBe(true);
+      expect(dirEntry.size).toBeUndefined();
+
+      const fileEntry = result.entries.find((e) => e.name === 'notes.txt');
+      expect(fileEntry.isDirectory).toBe(false);
+      expect(fileEntry.size).toBe(5);
+      expect(typeof fileEntry.mtimeMs).toBe('number');
+    });
+
+    it('rejects a non-directory path', async () => {
+      const filePath = path.join(tmpRoot, 'a-file.txt');
+      fs.writeFileSync(filePath, 'x');
+      await expect(invoke(filePath)).rejects.toThrow(/Not a directory/);
+    });
+  });
+
   describe('renderer:rename-directory', () => {
     const invoke = (...args) => handlers.get('renderer:rename-directory')(null, ...args);
 

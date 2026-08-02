@@ -456,11 +456,24 @@ class BrowserTransport {
     }
 
     if (channel === 'renderer:browse-files') {
-      const value = promptForPath('Enter file path(s) on the Bruno bridge server, separated by new lines:');
-      if (!value) return [];
-      const paths = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
-      const valid = await Promise.all(paths.map(async (filePath) => (await this.invoke('renderer:exists-sync', filePath)) ? filePath : null));
-      return valid.filter(Boolean);
+      const [filters, properties] = args;
+      if (typeof window.browseFilesOnBridge !== 'function') {
+        const value = promptForPath('Enter file path(s) on the Bruno bridge server, separated by new lines:');
+        if (!value) return [];
+        const paths = value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean);
+        const valid = await Promise.all(paths.map(async (filePath) => (await this.invoke('renderer:exists-sync', filePath)) ? filePath : null));
+        return valid.filter(Boolean);
+      }
+      try {
+        const selectedPaths = await window.browseFilesOnBridge({
+          title: 'Select File(s)',
+          multiple: Array.isArray(properties) && properties.includes('multiSelections'),
+          filters: Array.isArray(filters) ? filters : []
+        });
+        return selectedPaths || [];
+      } catch (err) {
+        return [];
+      }
     }
 
     if (channel === 'renderer:open-collection') {

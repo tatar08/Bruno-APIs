@@ -49,6 +49,21 @@ const listing = (path, entries = []) => ({
   entries: entries.map((name) => ({ name, path: `${path}/${name}`, isDirectory: true }))
 });
 
+const mixedListing = (path, dirNames = [], files = []) => ({
+  path,
+  parentPath: path === '/root' ? null : '/root',
+  entries: [
+    ...dirNames.map((name) => ({ name, path: `${path}/${name}`, isDirectory: true })),
+    ...files.map((f) => ({
+      name: f.name,
+      path: `${path}/${f.name}`,
+      isDirectory: false,
+      size: f.size,
+      mtimeMs: f.mtimeMs
+    }))
+  ]
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
 });
@@ -184,6 +199,81 @@ describe('BrowseFolderModal create-folder / rename (Improvement.md P1.1)', () =>
         expect.anything(),
         expect.anything()
       );
+    });
+  });
+
+  describe('file picker mode (Improvement.md P1.1 multi-select + preview)', () => {
+    it('does not show files when mode is the default "folders"', async () => {
+      transport.invoke.mockResolvedValueOnce(
+        mixedListing('/root', ['Docs'], [{ name: 'notes.txt', size: 12 }])
+      );
+      renderModal();
+
+      expect(await screen.findAllByTestId('browse-folder-entry')).toHaveLength(1);
+      expect(screen.queryByTestId('browse-file-entry')).not.toBeInTheDocument();
+    });
+
+    it('lists both folders and files in file mode', async () => {
+      transport.invoke.mockResolvedValueOnce(
+        mixedListing('/root', ['Docs'], [{ name: 'notes.txt', size: 12 }, { name: 'photo.png', size: 2048 }])
+      );
+      renderModal({ mode: 'files' });
+
+      expect(await screen.findAllByTestId('browse-folder-entry')).toHaveLength(3);
+      expect(screen.getAllByTestId('browse-file-entry')).toHaveLength(2);
+    });
+
+    it('filters files by extension using the filters prop', async () => {
+      transport.invoke.mockResolvedValueOnce(
+        mixedListing('/root', [], [{ name: 'notes.txt', size: 12 }, { name: 'photo.png', size: 2048 }])
+      );
+      renderModal({ mode: 'files', filters: [{ name: 'Images', extensions: ['png'] }] });
+
+      const fileEntries = await screen.findAllByTestId('browse-file-entry');
+      expect(fileEntries).toHaveLength(1);
+      expect(screen.getByText('photo.png')).toBeInTheDocument();
+      expect(screen.queryByText('notes.txt')).not.toBeInTheDocument();
+    });
+
+    it('selects a single file and enables Select, showing it in the preview panel', async () => {
+      transport.invoke.mockResolvedValueOnce(
+        mixedListing('/root', [], [{ name: 'notes.txt', size: 12, mtimeMs: 1700000000000 }])
+      );
+      renderModal({ mode: 'files' });
+
+      await screen.findByTestId('browse-file-entry');
+      expect(screen.getByTestId('modal-confirm-btn')).toBeDisabled();
+
+      fireEvent.click(screen.getByTestId('browse-file-checkbox'));
+
+      expect(screen.getByTestId('modal-confirm-btn')).not.toBeDisabled();
+      expect(screen.getByTestId('browse-file-preview')).toHaveTextContent('notes.txt');
+    });
+
+    it('submits the selected file paths on confirm', async () => {
+      const onSubmit = jest.fn();
+      transport.invoke.mockResolvedValueOnce(mixedListing('/root', [], [{ name: 'notes.txt', size: 12 }]));
+      renderModal({ mode: 'files', onSubmit });
+
+      fireEvent.click(await screen.findByTestId('browse-file-checkbox'));
+      fireEvent.click(screen.getByTestId('modal-confirm-btn'));
+
+      expect(onSubmit).toHaveBeenCalledWith(['/root/notes.txt']);
+    });
+
+    it('selects multiple files when multiple is true', async () => {
+      const onSubmit = jest.fn();
+      transport.invoke.mockResolvedValueOnce(
+        mixedListing('/root', [], [{ name: 'a.txt', size: 1 }, { name: 'b.txt', size: 2 }])
+      );
+      renderModal({ mode: 'files', multiple: true, onSubmit });
+
+      const checkboxes = await screen.findAllByTestId('browse-file-checkbox');
+      fireEvent.click(checkboxes[0]);
+      fireEvent.click(checkboxes[1]);
+      fireEvent.click(screen.getByTestId('modal-confirm-btn'));
+
+      expect(onSubmit).toHaveBeenCalledWith(['/root/a.txt', '/root/b.txt']);
     });
   });
 });

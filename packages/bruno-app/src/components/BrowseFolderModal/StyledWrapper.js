@@ -144,6 +144,13 @@ const StyledWrapper = styled.div`
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+
+      .entry-size {
+        flex-shrink: 0;
+        font-size: 0.7rem;
+        opacity: 0.6;
+        margin-left: auto;
+      }
     }
 
     .rename-btn {
@@ -169,6 +176,37 @@ const StyledWrapper = styled.div`
       .rename-btn {
         opacity: 1;
       }
+    }
+  }
+
+  .file-preview {
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid ${(props) => props.theme.modal.input.border};
+    font-size: 0.75rem;
+
+    .preview-name {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      color: ${(props) => props.theme.colors.text.yellow};
+
+      span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+
+    .preview-meta {
+      display: flex;
+      gap: 0.75rem;
+      margin-top: 0.2rem;
+      opacity: 0.65;
+    }
+
+    .preview-empty {
+      opacity: 0.6;
     }
   }
 `;

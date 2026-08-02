@@ -47,17 +47,27 @@ const registerFilesystemIpc = (mainWindow) => {
     }
 
     const dirents = await fs.readdir(targetPath, { withFileTypes: true });
-    const entries = dirents
-      .filter((entry) => entry.isDirectory() || entry.isFile())
-      .map((entry) => ({
-        name: entry.name,
-        path: path.join(targetPath, entry.name),
-        isDirectory: entry.isDirectory()
-      }))
-      .sort((a, b) => {
-        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
+    const entries = await Promise.all(
+      dirents
+        .filter((entry) => entry.isDirectory() || entry.isFile())
+        .map(async (entry) => {
+          const entryPath = path.join(targetPath, entry.name);
+          const base = { name: entry.name, path: entryPath, isDirectory: entry.isDirectory() };
+          if (base.isDirectory) return base;
+          // Preview info (Improvement.md P1.1 file picker) — best-effort only,
+          // a stat failure (e.g. broken symlink) shouldn't hide the entry.
+          try {
+            const stats = await fs.stat(entryPath);
+            return { ...base, size: stats.size, mtimeMs: stats.mtimeMs };
+          } catch (error) {
+            return base;
+          }
+        })
+    );
+    entries.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
 
     const parentPath = path.dirname(targetPath);
     return {

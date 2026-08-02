@@ -4,6 +4,7 @@ import Modal from 'components/Modal';
 import StyledWrapper from './StyledWrapper';
 import {
   IconFolder,
+  IconFile,
   IconArrowUp,
   IconLoader2,
   IconAlertTriangle,
@@ -14,7 +15,33 @@ import {
 } from '@tabler/icons';
 import { transport } from 'utils/common/ipc-transport';
 
-export default function BrowseFolderModal({ title = 'Select Folder', multiple = false, onSubmit, onCancel }) {
+const formatBytes = (bytes) => {
+  if (typeof bytes !== 'number' || Number.isNaN(bytes)) return null;
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** exponent;
+  return `${exponent === 0 ? value : value.toFixed(1)} ${units[exponent]}`;
+};
+
+// Matches an entry's extension against Electron dialog-style `filters`
+// (`[{ name, extensions: ['png', 'jpg'] }]`) so the same filter shape works
+// for both the Electron file dialog and this Browser Bridge file picker.
+const matchesFilters = (entry, filters) => {
+  if (!filters || filters.length === 0) return true;
+  const ext = entry.name.includes('.') ? entry.name.split('.').pop().toLowerCase() : '';
+  return filters.some((filter) => (filter.extensions || []).some((e) => e === '*' || e.toLowerCase() === ext));
+};
+
+export default function BrowseFolderModal({
+  title = 'Select Folder',
+  multiple = false,
+  mode = 'folders',
+  filters = [],
+  onSubmit,
+  onCancel
+}) {
+  const isFileMode = mode === 'files';
   const [currentPath, setCurrentPath] = useState(null);
   const [parentPath, setParentPath] = useState(null);
   const [entries, setEntries] = useState([]);
@@ -34,25 +61,34 @@ export default function BrowseFolderModal({ title = 'Select Folder', multiple = 
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState(null);
   const [renaming, setRenaming] = useState(false);
+  const [previewEntry, setPreviewEntry] = useState(null);
   const newFolderInputRef = useRef(null);
   const renameInputRef = useRef(null);
 
-  const navigate = useCallback((path) => {
-    setLoading(true);
-    setError(null);
-    transport
-      .invoke('renderer:list-directory', path)
-      .then((result) => {
-        setCurrentPath(result.path);
-        setParentPath(result.parentPath);
-        setEntries(result.entries.filter((entry) => entry.isDirectory));
-        setSelected(new Set());
-      })
-      .catch((err) => {
-        setError(err?.message || 'Failed to list directory');
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const navigate = useCallback(
+    (path) => {
+      setLoading(true);
+      setError(null);
+      transport
+        .invoke('renderer:list-directory', path)
+        .then((result) => {
+          setCurrentPath(result.path);
+          setParentPath(result.parentPath);
+          // Directories are always shown (for navigation); files only show
+          // in file-picker mode, filtered by the caller's `filters`.
+          setEntries(
+            result.entries.filter((entry) => entry.isDirectory || (isFileMode && matchesFilters(entry, filters)))
+          );
+          setSelected(new Set());
+          setPreviewEntry(null);
+        })
+        .catch((err) => {
+          setError(err?.message || 'Failed to list directory');
+        })
+        .finally(() => setLoading(false));
+    },
+    [isFileMode, filters]
+  );
 
   useEffect(() => {
     navigate(null);
@@ -77,6 +113,22 @@ export default function BrowseFolderModal({ title = 'Select Folder', multiple = 
         next.add(path);
       }
       return next;
+    });
+  };
+
+  const selectFile = (entry) => {
+    setPreviewEntry(entry);
+    setSelected((prev) => {
+      if (multiple) {
+        const next = new Set(prev);
+        if (next.has(entry.path)) {
+          next.delete(entry.path);
+        } else {
+          next.add(entry.path);
+        }
+        return next;
+      }
+      return prev.has(entry.path) ? new Set() : new Set([entry.path]);
     });
   };
 
@@ -142,7 +194,10 @@ export default function BrowseFolderModal({ title = 'Select Folder', multiple = 
   };
 
   const handleConfirm = () => {
-    if (multiple) {
+    if (isFileMode) {
+      if (selected.size === 0) return;
+      onSubmit(Array.from(selected));
+    } else if (multiple) {
       if (selected.size === 0) return;
       onSubmit(Array.from(selected));
     } else {
@@ -151,14 +206,18 @@ export default function BrowseFolderModal({ title = 'Select Folder', multiple = 
     }
   };
 
-  const confirmDisabled = multiple ? selected.size === 0 : !currentPath || loading;
+  const confirmDisabled = isFileMode || multiple ? selected.size === 0 : !currentPath || loading;
 
   return (
     <Portal>
       <Modal
         size="md"
         title={title}
-        confirmText={multiple ? `Select${selected.size ? ` (${selected.size})` : ''}` : 'Select This Folder'}
+        confirmText={
+          isFileMode || multiple
+            ? `Select${selected.size ? ` (${selected.size})` : ''}`
+            : 'Select This Folder'
+        }
         cancelText="Cancel"
         confirmDisabled={confirmDisabled}
         handleConfirm={handleConfirm}
@@ -253,20 +312,35 @@ export default function BrowseFolderModal({ title = 'Select Folder', multiple = 
                 <span>Loading...</span>
               </div>
             ) : entries.length === 0 ? (
-              <div className="empty-row">No subfolders</div>
+              <div className="empty-row">{isFileMode ? 'No matching files or subfolders' : 'No subfolders'}</div>
             ) : (
               entries.map((entry) => {
                 const isRenaming = renamingPath === entry.path;
                 return (
                   <div key={entry.path} className="entry-row" data-testid="browse-folder-entry">
-                    {multiple && !isRenaming && (
+                    {entry.isDirectory && multiple && !isRenaming && (
                       <input
                         type="checkbox"
                         checked={selected.has(entry.path)}
                         onChange={() => toggleSelected(entry.path)}
                       />
                     )}
-                    {isRenaming ? (
+                    {!entry.isDirectory && (
+                      <input
+                        type={multiple ? 'checkbox' : 'radio'}
+                        checked={selected.has(entry.path)}
+                        onChange={() => selectFile(entry)}
+                        aria-label={`Select ${entry.name}`}
+                        data-testid="browse-file-checkbox"
+                      />
+                    )}
+                    {!entry.isDirectory ? (
+                      <div className="entry-name" onClick={() => selectFile(entry)} data-testid="browse-file-entry">
+                        <IconFile size={16} strokeWidth={1.5} />
+                        <span>{entry.name}</span>
+                        {formatBytes(entry.size) && <span className="entry-size">{formatBytes(entry.size)}</span>}
+                      </div>
+                    ) : isRenaming ? (
                       <div className="renaming-column">
                         <div className="inline-form">
                           <IconFolder size={16} strokeWidth={1.5} />
@@ -336,6 +410,27 @@ export default function BrowseFolderModal({ title = 'Select Folder', multiple = 
               })
             )}
           </div>
+
+          {isFileMode && (
+            <div className="file-preview" data-testid="browse-file-preview">
+              {previewEntry ? (
+                <>
+                  <div className="preview-name">
+                    <IconFile size={14} strokeWidth={1.5} />
+                    <span title={previewEntry.path}>{previewEntry.name}</span>
+                  </div>
+                  <div className="preview-meta">
+                    {formatBytes(previewEntry.size) && <span>{formatBytes(previewEntry.size)}</span>}
+                    {previewEntry.mtimeMs && <span>{new Date(previewEntry.mtimeMs).toLocaleString()}</span>}
+                  </div>
+                </>
+              ) : (
+                <span className="preview-empty">
+                  {selected.size ? `${selected.size} file(s) selected` : 'No file selected'}
+                </span>
+              )}
+            </div>
+          )}
         </StyledWrapper>
       </Modal>
     </Portal>
