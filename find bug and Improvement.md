@@ -1288,6 +1288,17 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P1.2 Offline read-only cache สำหรับ UI state — 2 สิงหาคม 2026
+
+ทำ sub-item ที่เหลือของ P1.2 ต่อจาก idempotency key ตาม **"ไม่ต้องเลื่อน ทำให้ครับไปเลย"** — item นี้ note เดิมเคย flag ไว้ว่า "ควรถามผู้ใช้ก่อน" เพราะเป็น product decision (storage scope + invalidation policy) ตัดสินใจเองแทนที่จะหยุดถามตาม directive เดียวกันนี้ รายละเอียด implementation เต็มอยู่ใน `Improvement.md`'s P1.2 entry ส่วนนี้บันทึกเฉพาะ design decision ที่สำคัญและ pitfall ที่เจอระหว่างทำ/verify:
+
+- **ทำไมไม่ hydrate เข้า `workspaces`/`collections` slice จริง**: ตอนแรกออกแบบไว้แบบนั้น (ใช้ reducer เดิมอย่าง `createWorkspace`/`createCollection` ยัด cached data เข้า live state ตรงๆ) แต่พบว่าเสี่ยงมาก เพราะ component จำนวนมากทั่วแอปอ่าน field ของ collection object ที่ cached snapshot (ตั้งใจ strip ทิ้ง) ไม่มี เช่น `brunoConfig`, `environments`, `mountStatus`, `settingsSelectedTab` — ถ้ายัดเข้า live state โดยไม่มี field พวกนี้ ผู้ใช้เปิดแอปตอน offline แล้วคลิกอะไรก็อาจเจอ crash ที่ไม่คาดคิดเพราะ component สมมติว่า field มีครบเสมอ (ไม่มี guard เพราะปกติมันมาจาก live IPC เสมอ) — แก้โดยแยก state คนละ slice เด็ดขาด (`offlineCache` แยกจาก `workspaces`/`collections`) แล้วให้มีแค่ component เดียว (`OfflineBanner`) ที่อ่าน slice นี้ ทำให้ข้อมูล partial ไม่มีทางไหลเข้า component อื่นที่ไม่ได้ออกแบบมารองรับมันเลย
+- **ทำไม global environment variable values ไม่ถูก cache** (แม้ metadata เช่น `uid`/`name` จะ cache): ตรวจ `globalEnvironments` slice แล้วพบว่า `variables` array มักมี secret/token จริง (เช่น API key, bearer token) — cache เป็น snapshot ที่อยู่ใน IndexedDB นานเป็นชม./วันจะกลายเป็นที่เก็บ credential แบบ plaintext เพิ่มอีกจุดหนึ่งที่ไม่มี TTL/encryption โดยไม่มีประโยชน์คุ้มความเสี่ยง (offline view ไม่ได้ต้องการ "ใช้งาน" secret เหล่านี้ได้จริงอยู่แล้ว เพราะ read-only) — ตัดสินใจ strip ทิ้งทั้งหมด เหลือแค่ชื่อ environment ให้เห็นว่ามีอยู่
+- **pitfall ตอน live-verify — kill process ทั้งตัวใช้ทดสอบไม่ได้ตามแผนเดิม**: แผนแรกคือ copy pattern จาก download-resume's live-verify (kill `bruno-server` process จริงแล้ว reload หน้าดูว่า banner ขึ้นไหม) แต่ deployment แบบ same-origin ที่ใช้ทดสอบ (bruno-server serve ทั้ง static build และ API จาก process เดียวกัน) พอ kill แล้ว reload จะได้ `ERR_CONNECTION_REFUSED` ทันที (fetch `index.html` เองก็ไม่ได้) ซึ่งไม่ใช่ scenario ที่ feature นี้ป้องกันจริงๆ (feature นี้ตั้งใจแก้เคส "static shell ยังถึงได้ แต่ API/backend ล่ม" แบบ CDN+backend แยก deployment หรือ reverse-proxy หน้า backend ตาย) — แก้โดยใช้ Playwright's `page.route()` บล็อก `/api/**` และ `page.routeWebSocket()` ปิด WS connection ทันทีที่ connect (ระดับ network layer จริงในเบราว์เซอร์ ไม่ได้ mock โค้ดตัวเองเลย) โดยปล่อยให้ server process ที่ serve static asset ยังรันอยู่ปกติ — ได้ผลตรงตามที่ตั้งใจ: banner ขึ้น, ปลด block แล้ว banner หายเมื่อ reconnect
+- **ข้อสังเกตระหว่าง live-verify**: default workspace บนเครื่องจริงมี collection จริงอยู่แล้ว (`Test`, `bruno-testbench`) ทำให้ verify เห็น snapshot จริงที่มีข้อมูลจริงเขียนลง IndexedDB โดยไม่ต้องสร้าง fixture collection ปลอมเลย — serialize snapshot แล้วตรวจว่าไม่มีคำว่า "secret"/"Bearer" หลงเหลือ ยืนยัน strip logic ทำงานถูกต้องกับข้อมูลจริง ไม่ใช่แค่ fixture ที่ควบคุมเอง
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

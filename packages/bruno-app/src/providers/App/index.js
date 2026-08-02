@@ -8,6 +8,8 @@ import useTelemetry from './useTelemetry';
 import StyledWrapper from './StyledWrapper';
 import useOpenAPISyncPolling from './useOpenAPISyncPolling';
 import useChangelogOnUpdate from './useChangelogOnUpdate';
+import useOfflineCacheSync from './useOfflineCacheSync';
+import OfflineBanner from 'components/OfflineBanner';
 import { version } from '../../../package.json';
 
 export const AppContext = React.createContext();
@@ -17,6 +19,7 @@ export const AppProvider = (props) => {
   useIpcEvents();
   useOpenAPISyncPolling();
   useChangelogOnUpdate();
+  useOfflineCacheSync();
   const dispatch = useDispatch();
 
   useEffect(() => {
@@ -61,6 +64,7 @@ export const AppProvider = (props) => {
     <AppContext.Provider {...props} value={{ version }}>
       <StyledWrapper>
         <ConfirmAppClose />
+        <OfflineBanner />
         {props.children}
       </StyledWrapper>
     </AppContext.Provider>
