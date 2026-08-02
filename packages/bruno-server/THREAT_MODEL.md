@@ -97,7 +97,7 @@ event หรือควบคุม resource (เช่น terminal process) �
 | client ยิง `POST /api/auth/session` (token exchange) รัวๆ ไม่จำกัด — ไม่ใช่ปัญหาเรื่อง brute-force (token สุ่ม 256 บิต เดาไม่ได้อยู่แล้ว) แต่เป็น availability/DoS: แต่ละ attempt เสีย CPU/response cycle ฟรีไม่จำกัดจำนวน | rate limit เฉพาะ endpoint นี้ แยกจาก IPC rate limit เดิม (คีย์ด้วย IP เพราะยังไม่มี session ตอนเรียก), ดีฟอลต์ 10 ครั้ง/5 นาที ปรับได้ผ่าน `BRUNO_SERVER_AUTH_RATE_LIMIT`/`BRUNO_SERVER_AUTH_RATE_WINDOW_MS` | `security/auth-rate-limit.js` |
 | client เรียก `GET`/`DELETE /api/admin/allowed-roots` เพื่ออ่าน/แก้ filesystem sandbox config ระหว่างรัน (attack surface ใหม่ — ก่อนหน้านี้ config นี้อ่านจาก env var ตอน start เท่านั้น ไม่มี endpoint ให้ mutate ได้เลย) | mount หลัง `requireAuth` เหมือน `/api/ipc` ทุกประการ (ต้องมี session + CSRF header ถ้าเปิด auth); ออกแบบเป็น **revoke-only** โดยตั้งใจ — เรียกได้แค่ narrow allowed roots ให้แคบลง (ไม่มี un-revoke, ไม่มี add-root ผ่าน API) ทางเดียวที่จะขยายสิทธิ์กลับคือแก้ env var แล้ว restart process เอง ดังนั้นแม้ endpoint นี้ถูกเรียกโดยไม่ได้ตั้งใจหรือถูกละเมิด ผลลัพธ์แย่สุดคือ access แคบลง ไม่ใช่กว้างขึ้น; ทุกครั้งที่ revoke สำเร็จ log audit event ผูกกับ session | `routes/admin.js`, `security/allowed-roots.js`, `security/audit-log.js` |
 | `GET /api/oauth2/callback` เป็น endpoint ใหม่ที่**ไม่ผ่าน `requireAuth`** เลย (จำเป็น — IdP redirect ไม่มี session cookie/CSRF token ให้แนบอยู่แล้ว, เหมือน desktop's custom-protocol handler เดิมทุกประการ) — client ใดๆ ที่เดา/รู้ `state` ที่ถูกต้องของ flow ที่กำลัง pending อยู่จะ resolve/reject แทนผู้ใช้จริงได้ | ป้องกันด้วย `state` unguessability เท่านั้น (128-bit random ผ่าน `generateState()`, เหมือน desktop เดิมทุกประการ ไม่ใช่ของใหม่); callback ที่ `state` ไม่ตรงกับ pending request ใดเลยถูกปฏิเสธ (fail closed, ไม่เดาว่าเป็นของ flow ไหน); ทุก resolve/reject log แค่ state + outcome (ไม่ log `code`); rate limit แยกต่างหาก (30 req/นาที/IP ดีฟอลต์); response HTML เป็น static ล้วนไม่ echo query param ดิบกลับเลยแม้แต่ตัวเดียว กัน XSS จาก input ที่ unauthenticated | `routes/oauth2.js`, `bruno-electron/src/utils/oauth2-protocol-handler.js`, `security/audit-log.js` |
-| request/response ถูกดักฟังบนเครือข่าย (MITM) | **ไม่มี TLS ในตัว — accepted risk ดูข้อ 5** | — |
+| request/response ถูกดักฟังบนเครือข่าย (MITM) | opt-in TLS termination ในตัว server เอง — ตั้ง `BRUNO_SERVER_TLS_CERT_FILE`/`BRUNO_SERVER_TLS_KEY_FILE` (คู่กัน, validate ตอน start ผ่าน `config-validation.js`) ให้ REST เป็น HTTPS และ WS เป็น WSS อัตโนมัติ (ใช้ `http.Server`/`https.Server` object เดียวกัน); ดีฟอลต์ยังไม่ตั้งค่า (**accepted risk เมื่อไม่ได้เปิดใช้ — ดูข้อ 5**), certificate provisioning/renewal (ACME ฯลฯ) ไม่ใช่ scope ของ Bridge เอง เป็น operator responsibility เหมือน reverse-proxy path เดิม | `src/index.js`, `src/config-validation.js` |
 | client ยิง IPC รัวๆ จนตัด availability ของผู้ใช้อื่น/handler ค้าง | per-client rate limit (200 req/10s), concurrency limit (40 in-flight), handler timeout (30s) — ปรับได้ผ่าน env var | `security/ipc-limits.js` |
 | WebSocket client ส่ง frame ใหญ่/ถี่ผิดปกติ, connection ค้างไม่ปิด | `maxPayload` 64KB, message rate limit (50 msg/10s ต่อ connection), ping/pong heartbeat 30s ตัด connection ที่ไม่ตอบ | `ws/event-bridge.js` |
 | request body ใหญ่เกินจำเป็นสำหรับ channel ที่ควรมี payload เล็ก (เช่น UI toggle) | per-capability payload cap สำหรับ capability กลุ่ม `ui`/`system`/`notifications` (8-16KB) ก่อนถึง handler | `security/channel-policy.js` |
@@ -153,9 +153,13 @@ event หรือควบคุม resource (เช่น terminal process) �
 รายการนี้คือสิ่งที่ตั้งใจ "ยังไม่ทำ" ในตอนนี้ พร้อมเหตุผล ไม่ใช่สิ่งที่ถูกมองข้าม — ใครก็ตามที่จะ
 deploy Browser Bridge นอกเครื่อง local ของตัวเองควรอ่านหัวข้อนี้ก่อน
 
-1. **ไม่มี TLS ในตัว** — server ฟัง plain HTTP/WS เสมอ ถ้า `BRUNO_SERVER_HOST` ถูกตั้งให้ไม่ใช่
-   loopback ต้องมี reverse proxy (nginx/caddy) ทำ TLS termination ให้เองเสมอ ไม่มีแผนทำ TLS
-   ในตัว server เพราะ certificate management ไม่ใช่ concern ของ IPC bridge
+1. **TLS เป็น opt-in ไม่ใช่ default** — server ฟัง plain HTTP/WS ตามเดิมถ้าไม่ได้ตั้ง
+   `BRUNO_SERVER_TLS_CERT_FILE`/`BRUNO_SERVER_TLS_KEY_FILE` (Improvement.md P1.3) deploy ที่ตั้ง
+   `BRUNO_SERVER_HOST=0.0.0.0` โดยไม่ตั้ง TLS env var คู่นี้ (หรือไม่ได้วาง reverse proxy ที่ทำ TLS
+   termination เองไว้ข้างหน้า) จะยังคุยกันแบบ plain text อยู่ — **เป็นการตัดสินใจ opt-in โดยตั้งใจ**
+   (สอดคล้อง pattern เดิมทั้งไฟล์ที่ไม่เปลี่ยนพฤติกรรมดีฟอลต์) ไม่ใช่ของที่ลืมทำ Bridge เองรับผิดชอบแค่
+   TLS termination (bring-your-own certificate) เท่านั้น ไม่รวม certificate provisioning/renewal
+   (ACME, Let's Encrypt ฯลฯ) เป็น operator responsibility เหมือนกับตอนใช้ reverse proxy
 2. **Bootstrap token ไม่ใช่ single-use** — `verifyBootstrapToken` เป็น static timing-safe
    compare ไม่มี consumption/burn logic เพราะฉะนั้น token เดียวแลก session ใหม่ได้หลายครั้งไม่จำกัด
    (เอาไปใช้ประโยชน์ตอน live-verify terminal isolation ด้วยตัวมันเอง) ถ้า token หลุดในช่วงที่ auth
@@ -227,7 +231,9 @@ deploy Browser Bridge นอกเครื่อง local ของตัวเ
 - อย่าเปิด port ของ Bridge สู่ Internet สาธารณะโดยตรง (มีคำเตือนนี้อยู่แล้วใน `Installation.md`)
 - ถ้าต้องให้เข้าถึงนอกเครื่อง local: เปิด `BRUNO_SERVER_REQUIRE_AUTH=true`,
   `BRUNO_SERVER_ALLOWED_ORIGINS` ให้ตรง origin จริงเท่านั้น, `BRUNO_SERVER_ALLOWED_ROOTS` ให้แคบ
-  ที่สุดเท่าที่ยังใช้งานได้จริง, วาง TLS-terminating reverse proxy ไว้ข้างหน้าเสมอ
+  ที่สุดเท่าที่ยังใช้งานได้จริง, และเปิด TLS เสมอ — จะให้ Bridge terminate เองผ่าน
+  `BRUNO_SERVER_TLS_CERT_FILE`/`BRUNO_SERVER_TLS_KEY_FILE` หรือวาง TLS-terminating reverse proxy
+  ไว้ข้างหน้าก็ได้ (ห้ามไม่ทำทั้งสองอย่าง)
 - คง `BRUNO_SERVER_ENABLE_PRIVILEGED_CHANNELS=false` (ค่าดีฟอลต์) ไว้ เว้นแต่ผู้ใช้ที่เข้าถึง
   Bridge ทุกคนควรมีสิทธิ์รัน shell command บนเครื่องนั้นจริงๆ
 - ถ้า deploy ผ่าน container/orchestrator ที่ filesystem เป็น ephemeral (rebuild image ทุกครั้งที่

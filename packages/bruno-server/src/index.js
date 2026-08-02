@@ -20,6 +20,7 @@ if (process.env.BRUNO_RPC_CONTRACT_DUMP === 'true') {
 }
 
 const http = require('http');
+const https = require('https');
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -58,6 +59,24 @@ const PORT = process.env.BRUNO_SERVER_PORT || 4000;
 const HOST = process.env.BRUNO_SERVER_HOST || '127.0.0.1';
 const JSON_BODY_LIMIT = process.env.BRUNO_SERVER_JSON_LIMIT || '25mb';
 
+// Opt-in HTTPS/WSS (Improvement.md P1.3): bring-your-own certificate, no
+// ACME/CA integration decision needed. validateStartupConfig() above already
+// guarantees CERT_FILE/KEY_FILE are either both set (and both readable) or
+// both unset, so it's safe to key off CERT_FILE alone here. Read once at
+// startup (not lazily) so a cert that's revoked/replaced on disk mid-run
+// doesn't change the running server's identity without a restart.
+const TLS_CERT_FILE = process.env.BRUNO_SERVER_TLS_CERT_FILE;
+const TLS_OPTIONS = TLS_CERT_FILE
+  ? {
+      cert: fs.readFileSync(TLS_CERT_FILE),
+      key: fs.readFileSync(process.env.BRUNO_SERVER_TLS_KEY_FILE),
+      ...(process.env.BRUNO_SERVER_TLS_CA_FILE ? { ca: fs.readFileSync(process.env.BRUNO_SERVER_TLS_CA_FILE) } : {}),
+      ...(process.env.BRUNO_SERVER_TLS_PASSPHRASE ? { passphrase: process.env.BRUNO_SERVER_TLS_PASSPHRASE } : {})
+    }
+  : null;
+const PROTOCOL = TLS_OPTIONS ? 'https' : 'http';
+const WS_PROTOCOL = TLS_OPTIONS ? 'wss' : 'ws';
+
 // Reverse proxy base path (Improvement.md P1.3) — when the Bridge is mounted
 // under a path prefix (e.g. https://host/bridge/...) instead of the origin
 // root, every API/health/WS route and the static frontend below need to
@@ -75,7 +94,7 @@ const BASE_PATH = process.env.BRUNO_SERVER_BASE_PATH || '';
 // whether auth is enabled), since redirect-URI forcing and the
 // window.webContents.send() delivery path both apply either way.
 const OAUTH2_CALLBACK_URL =
-  process.env.BRUNO_SERVER_OAUTH2_CALLBACK_URL || `http://${HOST}:${PORT}${BASE_PATH}/api/oauth2/callback`;
+  process.env.BRUNO_SERVER_OAUTH2_CALLBACK_URL || `${PROTOCOL}://${HOST}:${PORT}${BASE_PATH}/api/oauth2/callback`;
 
 // Same directory bruno-electron's store/*.js files (ai-keys.json, oauth2.json,
 // cookies.json, ...) resolve via app.getPath('userData') below.
@@ -93,7 +112,11 @@ const safeStorageShim = createSafeStorageShim(masterKey);
 // --- Initialize core components ---
 
 const app = express();
-const server = http.createServer(app);
+// eventBridge.attach() below works generically against whatever `server`
+// object it's handed — an https.Server is also a net.Server with the same
+// 'upgrade' event, so switching to TLS here makes the WS layer WSS too with
+// no separate WS-specific TLS wiring (Improvement.md P1.3).
+const server = TLS_OPTIONS ? https.createServer(TLS_OPTIONS, app) : http.createServer(app);
 
 // Event bridge for WebSocket push events
 const eventBridge = new EventBridge();
@@ -600,10 +623,10 @@ if (process.env.BRUNO_RPC_CONTRACT_DUMP === 'true') {
 }
 
 server.listen(PORT, HOST, () => {
-  console.log(`\n✅ Bruno Bridge Server running on http://${HOST}:${PORT}${BASE_PATH}`);
-  console.log(`   WebSocket events on ws://${HOST}:${PORT}${BASE_PATH}/ws/events`);
-  console.log(`   Health check: http://${HOST}:${PORT}${BASE_PATH}/api/health`);
-  console.log(`   IPC channels: http://${HOST}:${PORT}${BASE_PATH}/api/ipc/channels\n`);
+  console.log(`\n✅ Bruno Bridge Server running on ${PROTOCOL}://${HOST}:${PORT}${BASE_PATH}${TLS_OPTIONS ? ' (TLS)' : ''}`);
+  console.log(`   WebSocket events on ${WS_PROTOCOL}://${HOST}:${PORT}${BASE_PATH}/ws/events`);
+  console.log(`   Health check: ${PROTOCOL}://${HOST}:${PORT}${BASE_PATH}/api/health`);
+  console.log(`   IPC channels: ${PROTOCOL}://${HOST}:${PORT}${BASE_PATH}/api/ipc/channels\n`);
 
   if (isAuthRequired()) {
     console.log('🔐 Authentication is REQUIRED (BRUNO_SERVER_REQUIRE_AUTH=true)');

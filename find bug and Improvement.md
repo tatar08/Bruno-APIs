@@ -1110,6 +1110,32 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P1.3 HTTPS/WSS แบบ opt-in bring-your-own certificate — 2 สิงหาคม 2026
+
+`Improvement.md`'s P1.3 เดิม mark ข้อนี้ว่า "ยังไม่ทำ — deployment-topology decision ที่ควรถามผู้ใช้ก่อน" ตาม **"ไม่ต้องเลื่อน ทำให้ครับไปเลย"** เลือก design เองที่ไม่ผูก topology ใดๆ ไว้ล่วงหน้า (ไม่บังคับ reverse proxy, ไม่ผูก ACME tool ใดๆ) — แค่เพิ่มความสามารถให้ server terminate TLS เองได้ถ้า operator เลือกใช้:
+
+- **`config-validation.js`** เพิ่ม `validateTlsConfig()` ตาม pattern เดิม 100% (array/regex ผ่าน `validateStartupConfig()`, คืน human-readable error string): `BRUNO_SERVER_TLS_CERT_FILE`/`BRUNO_SERVER_TLS_KEY_FILE` ต้องตั้งคู่กันเสมอ (ตั้งแค่ตัวเดียว → fail fast กันเคส "ตั้งใจเปิด TLS แต่ typo ชื่อ env var ตัวหนึ่งแล้วเงียบๆ กลับไปเป็น plain HTTP") ทั้งสอง path (และ optional `BRUNO_SERVER_TLS_CA_FILE`) ต้องเป็นไฟล์จริงที่อ่านได้ (`fs.accessSync` + `fs.statSync().isFile()`) เช็คตอน start ไม่ใช่รอ error จาก `tls.createSecureContext()` ตอน `https.createServer()` ที่ error message จะอ่านยากกว่ามาก
+- **`index.js`**: อ่าน TLS env var ครั้งเดียวตอน start (ไม่ lazy) แล้ว `const server = TLS_OPTIONS ? https.createServer(TLS_OPTIONS, app) : http.createServer(app)` — **WSS ได้มาฟรีทั้งหมด**: ยืนยันจากการอ่านโค้ดก่อนเริ่ม implement ว่า `eventBridge.attach(server, BASE_PATH)` ทำงานกับ `server` object เดิมไม่ว่าจะเป็น `http.Server` หรือ `https.Server` เพราะ WebSocket upgrade เกาะอยู่กับ `'upgrade'` event ของ underlying `net.Server` ไม่ใช่ HTTP-vs-HTTPS-specific เลย — ไม่ต้องแตะ `ws/event-bridge.js` แม้แต่บรรทัดเดียว; `OAUTH2_CALLBACK_URL` default และ startup log lines (`http://`→`${PROTOCOL}://`, `ws://`→`${WS_PROTOCOL}://`) เปลี่ยนตาม scheme ที่ active โดยอัตโนมัติ ยัง override ได้ผ่าน `BRUNO_SERVER_OAUTH2_CALLBACK_URL` เหมือนเดิมสำหรับ deployment ที่มี TLS-terminating reverse proxy อยู่หน้า Bridge (ซึ่ง Bridge เองยังฟัง plain HTTP กรณีนั้น)
+- ไม่ใช่ breaking change: ไม่ตั้ง TLS env var เลยก็ทำงานเหมือนเดิม 100% (`TLS_OPTIONS` เป็น `null`, `PROTOCOL`/`WS_PROTOCOL` เป็น `http`/`ws` เหมือนเดิม)
+
+**Test coverage ใหม่**: 9 tests ใน `config-validation.spec.js` (`describe('TLS ...')`) — cert+key คู่ที่ถูกต้อง, cert+key+ca ครบ, ไม่ตั้งอะไรเลย (plain HTTP), ตั้งแค่ cert, ตั้งแค่ key, cert path ไม่มีจริง, key path ไม่มีจริง, ca path ไม่มีจริง, cert path ชี้ไปที่ directory แทนไฟล์ — full bruno-server suite ผ่านทั้งหมด (320/320 tests, 20 suites) หลังเพิ่ม
+
+**Live-verified ด้วย self-signed certificate จริง** (ไม่ใช่ mock): generate ด้วย `openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 1 -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"` แล้วบูต server จริง:
+- HTTPS: `curl -sk https://127.0.0.1:4444/api/health` → `{"status":"ok","mode":"bridge-server","channels":209,"wsClients":0}` (ยืนยัน REST ทำงานผ่าน TLS จริง)
+- WSS: node script ต่อ `ws` client ไปที่ `wss://127.0.0.1:4444/ws/events` (`rejectUnauthorized: false` เพราะ self-signed) → เปิด connection สำเร็จและปิดสะอาด (`WSS OPEN` → `WSS CLOSED cleanly`) — ยืนยันว่า WSS ทำงานได้จริงโดยไม่ต้องแก้ WS code เลยตามที่วิเคราะห์ไว้
+- Fail-fast: ตั้ง `BRUNO_SERVER_TLS_CERT_FILE` เป็น path ที่ไม่มีจริงโดยไม่ตั้ง `_KEY_FILE` → server พิมพ์ error message ที่คาดไว้แล้ว `process.exit(1)` ก่อน `server.listen()` ถูกเรียกเลย (ไม่มี partial-start)
+- Regression check: บูต server แบบไม่ตั้ง TLS env var เลย (`BRUNO_SERVER_PORT=4446`) → ยัง log `running on http://127.0.0.1:4446` (ไม่มี `(TLS)` suffix) และ `curl http://127.0.0.1:4446/api/health` ตอบปกติ — ยืนยันไม่มี regression กับ plain-HTTP mode เดิม
+
+**อัปเดตเอกสาร**: `Installation.md` (ทั้ง Thai/English) เพิ่ม section 5.7.1 ใหม่ (ตัวอย่าง `docker run` พร้อม mount cert เข้า `/certs:ro`) และเพิ่ม 3 env var ใหม่ในรายการที่มีอยู่แล้ว; `packages/bruno-server/THREAT_MODEL.md` แก้ 3 จุด — boundary 1 table's MITM row (จาก "ไม่มี TLS ในตัว — accepted risk" เป็นอธิบาย mitigation ใหม่), accepted-risk ข้อ 1 (จาก "ไม่มีแผนทำ TLS ในตัว" เป็น "TLS เป็น opt-in ไม่ใช่ default" พร้อมเหตุผลว่าทำไมยังไม่บังคับ), และ deploy recommendation ข้อ 6 (เพิ่มตัวเลือก terminate TLS เองเป็นทางเลือกคู่กับ reverse proxy เดิม)
+
+**ไม่พบบั๊ก product code ใหม่ระหว่างทำ increment นี้** — เป็นฟีเจอร์ใหม่ล้วนๆ (opt-in, ดีฟอลต์ปิด) ไม่ได้แก้ path ที่มีอยู่แล้วนอกจาก scheme string ที่ใช้ log/OAuth2 callback default
+
+**ยังไม่ทำ (ตัดสินใจแล้ว ไม่ใช่ของที่ลืม):**
+- ไม่ผูก ACME/Let's Encrypt หรือ CA เฉพาะเจ้าใดๆ — certificate provisioning/renewal ยังเป็น operator responsibility เหมือน reverse-proxy path เดิมทุกประการ (สอดคล้องกับ P1.3's SBOM/signing ที่ก็ยังรอ tool decision แยกต่างหากเหมือนกัน)
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

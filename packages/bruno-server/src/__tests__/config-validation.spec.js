@@ -1,3 +1,6 @@
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { validateStartupConfig } = require('../config-validation');
 
 describe('validateStartupConfig', () => {
@@ -89,6 +92,88 @@ describe('validateStartupConfig', () => {
     it.each(['bridge', '/bridge/', '/bridge//v2', '/bri dge', '/bridge?', '//'])('rejects "%s"', (value) => {
       const errors = validateStartupConfig({ BRUNO_SERVER_BASE_PATH: value });
       expect(errors).toEqual([expect.stringContaining('BRUNO_SERVER_BASE_PATH')]);
+    });
+  });
+
+  describe('TLS (BRUNO_SERVER_TLS_CERT_FILE / _KEY_FILE / _CA_FILE)', () => {
+    let tmpDir, certFile, keyFile, caFile, missingFile;
+
+    beforeAll(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bruno-tls-test-'));
+      certFile = path.join(tmpDir, 'cert.pem');
+      keyFile = path.join(tmpDir, 'key.pem');
+      caFile = path.join(tmpDir, 'ca.pem');
+      missingFile = path.join(tmpDir, 'does-not-exist.pem');
+      fs.writeFileSync(certFile, 'fake cert contents');
+      fs.writeFileSync(keyFile, 'fake key contents');
+      fs.writeFileSync(caFile, 'fake ca contents');
+    });
+
+    afterAll(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('accepts a valid cert+key pair', () => {
+      expect(
+        validateStartupConfig({ BRUNO_SERVER_TLS_CERT_FILE: certFile, BRUNO_SERVER_TLS_KEY_FILE: keyFile })
+      ).toEqual([]);
+    });
+
+    it('accepts a valid cert+key+ca trio', () => {
+      expect(
+        validateStartupConfig({
+          BRUNO_SERVER_TLS_CERT_FILE: certFile,
+          BRUNO_SERVER_TLS_KEY_FILE: keyFile,
+          BRUNO_SERVER_TLS_CA_FILE: caFile
+        })
+      ).toEqual([]);
+    });
+
+    it('is not validated when both unset (plain HTTP)', () => {
+      expect(validateStartupConfig({})).toEqual([]);
+    });
+
+    it('rejects cert set without key', () => {
+      const errors = validateStartupConfig({ BRUNO_SERVER_TLS_CERT_FILE: certFile });
+      expect(errors).toEqual([expect.stringContaining('must both be set')]);
+    });
+
+    it('rejects key set without cert', () => {
+      const errors = validateStartupConfig({ BRUNO_SERVER_TLS_KEY_FILE: keyFile });
+      expect(errors).toEqual([expect.stringContaining('must both be set')]);
+    });
+
+    it('rejects a cert path that does not exist', () => {
+      const errors = validateStartupConfig({
+        BRUNO_SERVER_TLS_CERT_FILE: missingFile,
+        BRUNO_SERVER_TLS_KEY_FILE: keyFile
+      });
+      expect(errors).toEqual([expect.stringContaining('BRUNO_SERVER_TLS_CERT_FILE')]);
+    });
+
+    it('rejects a key path that does not exist', () => {
+      const errors = validateStartupConfig({
+        BRUNO_SERVER_TLS_CERT_FILE: certFile,
+        BRUNO_SERVER_TLS_KEY_FILE: missingFile
+      });
+      expect(errors).toEqual([expect.stringContaining('BRUNO_SERVER_TLS_KEY_FILE')]);
+    });
+
+    it('rejects a ca path that does not exist', () => {
+      const errors = validateStartupConfig({
+        BRUNO_SERVER_TLS_CERT_FILE: certFile,
+        BRUNO_SERVER_TLS_KEY_FILE: keyFile,
+        BRUNO_SERVER_TLS_CA_FILE: missingFile
+      });
+      expect(errors).toEqual([expect.stringContaining('BRUNO_SERVER_TLS_CA_FILE')]);
+    });
+
+    it('rejects a cert path that points at a directory', () => {
+      const errors = validateStartupConfig({
+        BRUNO_SERVER_TLS_CERT_FILE: tmpDir,
+        BRUNO_SERVER_TLS_KEY_FILE: keyFile
+      });
+      expect(errors).toEqual([expect.stringContaining('BRUNO_SERVER_TLS_CERT_FILE')]);
     });
   });
 

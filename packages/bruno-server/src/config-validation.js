@@ -9,6 +9,8 @@
  * fails loudly instead of silently no-op'ing.
  */
 
+const fs = require('node:fs');
+
 const POSITIVE_INTEGER_ENV_VARS = [
   'BRUNO_SERVER_AUTH_RATE_LIMIT',
   'BRUNO_SERVER_AUTH_RATE_WINDOW_MS',
@@ -69,6 +71,51 @@ const validateStartupConfig = (env = process.env) => {
     errors.push(
       `BRUNO_SERVER_BASE_PATH="${env.BRUNO_SERVER_BASE_PATH}" must be empty or a path like "/bridge" (no trailing slash, alphanumeric/hyphen/underscore segments only)`
     );
+  }
+
+  errors.push(...validateTlsConfig(env));
+
+  return errors;
+};
+
+// Opt-in HTTPS/WSS (Improvement.md P1.3): bring-your-own certificate, no
+// ACME/CA integration. Cert and key are a pair — accepting one without the
+// other would silently boot in plaintext HTTP instead of failing loudly, so
+// they're required together. Files are checked for existence/readability
+// here (not just presence of the env var) so a typo'd path fails at startup
+// instead of surfacing as an opaque EACCES/ENOENT from tls.createSecureContext
+// deep inside `https.createServer()`.
+const isReadableFile = (filePath) => {
+  try {
+    fs.accessSync(filePath, fs.constants.R_OK);
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const validateTlsConfig = (env) => {
+  const errors = [];
+  const certPath = env.BRUNO_SERVER_TLS_CERT_FILE;
+  const keyPath = env.BRUNO_SERVER_TLS_KEY_FILE;
+  const caPath = env.BRUNO_SERVER_TLS_CA_FILE;
+
+  if ((certPath !== undefined) !== (keyPath !== undefined)) {
+    errors.push(
+      'BRUNO_SERVER_TLS_CERT_FILE and BRUNO_SERVER_TLS_KEY_FILE must both be set to enable HTTPS/WSS, or both left unset to run plain HTTP'
+    );
+  }
+
+  if (certPath !== undefined && !isReadableFile(certPath)) {
+    errors.push(`BRUNO_SERVER_TLS_CERT_FILE="${certPath}" does not exist or is not a readable file`);
+  }
+
+  if (keyPath !== undefined && !isReadableFile(keyPath)) {
+    errors.push(`BRUNO_SERVER_TLS_KEY_FILE="${keyPath}" does not exist or is not a readable file`);
+  }
+
+  if (caPath !== undefined && !isReadableFile(caPath)) {
+    errors.push(`BRUNO_SERVER_TLS_CA_FILE="${caPath}" does not exist or is not a readable file`);
   }
 
   return errors;

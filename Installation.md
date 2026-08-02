@@ -286,8 +286,29 @@ Environment variable ที่เกี่ยวข้อง (ดู `packages/b
 - `BRUNO_SERVER_ALLOWED_ORIGINS` — allowlist origin สำหรับ CORS
 - `BRUNO_SERVER_BASE_PATH` — path prefix เมื่อ mount Bridge ไว้หลัง reverse proxy (เช่น `/bridge`) แทน origin root
 - `BRUNO_SERVER_MASTER_KEY` / `BRUNO_SERVER_MASTER_KEY_PATH` — master key สำหรับเข้ารหัสข้อมูลที่ rest
+- `BRUNO_SERVER_TLS_CERT_FILE` / `BRUNO_SERVER_TLS_KEY_FILE` — เปิด HTTPS/WSS แบบ bring-your-own certificate (ต้องตั้งคู่กันทั้งสองตัว ไม่งั้น server จะ fail fast ตอน start); ไม่ตั้งค่าทั้งคู่ก็ยังรันเป็น plain HTTP/WS เหมือนเดิม (ดูข้อ 5.7.1)
+- `BRUNO_SERVER_TLS_CA_FILE` — certificate chain/intermediate เพิ่มเติม (optional, ใช้เมื่อ cert ไม่ใช่ self-signed และ client ต้องการ chain เต็ม)
+- `BRUNO_SERVER_TLS_PASSPHRASE` — passphrase สำหรับ private key ที่เข้ารหัสไว้ (optional)
 
 ค่า default ของ image ตั้ง `BRUNO_SERVER_HOST=0.0.0.0` (ต่างจาก default `127.0.0.1` ตอนรันแบบ bare-metal) เพราะขอบเขตความปลอดภัยของ container คือ network namespace ของตัว container เอง — จะเข้าถึงได้ก็ต่อเมื่อ operator เปิด port ออกมาอย่างชัดเจนด้วย `-p`/`--expose` เท่านั้น
+
+#### 5.7.1 เปิด HTTPS/WSS (bring-your-own certificate)
+
+Bridge รองรับ TLS แบบ opt-in — ไม่ตั้งค่าอะไรก็ยังรันเป็น plain HTTP/WS เหมือนเดิม (เหมาะกับตอนที่มี TLS-terminating reverse proxy อยู่ด้านหน้าอยู่แล้ว) ถ้าต้องการให้ Bridge เอง terminate TLS โดยตรง ให้ตั้ง `BRUNO_SERVER_TLS_CERT_FILE`/`BRUNO_SERVER_TLS_KEY_FILE` เป็น path ของไฟล์ certificate/private key (ต้องตั้งคู่กันทั้งสองตัว) WebSocket (`/ws/events`) จะกลายเป็น WSS โดยอัตโนมัติเพราะใช้ HTTP(S) server object เดียวกัน ไม่ต้องตั้งค่าเพิ่ม:
+
+```text
+docker run -d --name bruno-bridge \
+  -p 4000:4000 \
+  -v bruno-bridge-data:/home/node/.config/bruno \
+  -v /home/alice/Documents/bruno:/collections \
+  -v /home/alice/certs:/certs:ro \
+  -e BRUNO_SERVER_ALLOWED_ROOTS=/collections \
+  -e BRUNO_SERVER_TLS_CERT_FILE=/certs/fullchain.pem \
+  -e BRUNO_SERVER_TLS_KEY_FILE=/certs/privkey.pem \
+  bruno-bridge
+```
+
+Bridge ตรวจสอบ path ทั้งสองตอน start (fail fast ถ้าไฟล์อ่านไม่ได้ หรือตั้งค่าแค่ตัวใดตัวหนึ่ง) — ดู `packages/bruno-server/src/config-validation.js` ตัวเดียวกับที่ validate ค่า env var อื่นทั้งหมด รับผิดชอบเฉพาะการ terminate TLS เท่านั้น ไม่รวม certificate provisioning/renewal (ACME, Let's Encrypt ฯลฯ) เป็น decision ที่ตั้งใจปล่อยให้ operator เลือก tool เอง (เช่น reverse proxy ที่ทำ ACME renewal แล้ว mount cert เข้ามาให้ Bridge อ่าน)
 
 ### 5.8 หยุด Browser
 
@@ -777,8 +798,29 @@ Relevant environment variables (see `packages/bruno-server/THREAT_MODEL.md` for 
 - `BRUNO_SERVER_ALLOWED_ORIGINS` — CORS origin allowlist
 - `BRUNO_SERVER_BASE_PATH` — path prefix when the Bridge is mounted behind a reverse proxy (e.g. `/bridge`) instead of the origin root
 - `BRUNO_SERVER_MASTER_KEY` / `BRUNO_SERVER_MASTER_KEY_PATH` — master key for encrypting data at rest
+- `BRUNO_SERVER_TLS_CERT_FILE` / `BRUNO_SERVER_TLS_KEY_FILE` — enable HTTPS/WSS with a bring-your-own certificate (both must be set together, or the server fails fast at startup); leaving both unset keeps plain HTTP/WS behavior (see 5.7.1)
+- `BRUNO_SERVER_TLS_CA_FILE` — additional certificate chain/intermediate (optional, for non-self-signed certs where clients need the full chain)
+- `BRUNO_SERVER_TLS_PASSPHRASE` — passphrase for an encrypted private key (optional)
 
 The image defaults to `BRUNO_SERVER_HOST=0.0.0.0` (unlike the `127.0.0.1` default for a bare-metal install) because the container's own network namespace is the security boundary — it is only reachable once the operator explicitly publishes the port with `-p`/`--expose`.
+
+#### 5.7.1 Enable HTTPS/WSS (bring-your-own certificate)
+
+TLS is opt-in — with nothing set, the Bridge still runs plain HTTP/WS (the right choice when a TLS-terminating reverse proxy already sits in front of it). To have the Bridge terminate TLS itself, set `BRUNO_SERVER_TLS_CERT_FILE`/`BRUNO_SERVER_TLS_KEY_FILE` to the certificate/private key file paths (both must be set together). The WebSocket endpoint (`/ws/events`) automatically becomes WSS with no extra config, since it shares the same underlying HTTP(S) server object:
+
+```text
+docker run -d --name bruno-bridge \
+  -p 4000:4000 \
+  -v bruno-bridge-data:/home/node/.config/bruno \
+  -v /home/alice/Documents/bruno:/collections \
+  -v /home/alice/certs:/certs:ro \
+  -e BRUNO_SERVER_ALLOWED_ROOTS=/collections \
+  -e BRUNO_SERVER_TLS_CERT_FILE=/certs/fullchain.pem \
+  -e BRUNO_SERVER_TLS_KEY_FILE=/certs/privkey.pem \
+  bruno-bridge
+```
+
+The Bridge validates both paths at startup (fails fast if either file is unreadable, or only one of the pair is set) — the same `packages/bruno-server/src/config-validation.js` module that validates every other env var. This covers TLS termination only, not certificate provisioning/renewal (ACME, Let's Encrypt, etc.) — that's intentionally left to the operator's own tooling (e.g. a reverse proxy that handles ACME renewal and mounts the resulting cert for the Bridge to read).
 
 ### 5.8 Stop Browser Mode
 
