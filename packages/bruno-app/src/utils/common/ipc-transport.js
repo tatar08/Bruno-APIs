@@ -161,6 +161,12 @@ const IDEMPOTENT_CHANNELS = new Set([
 export const RETRYABLE_INVOKE_MAX_ATTEMPTS = 3;
 export const RETRYABLE_INVOKE_RETRY_DELAY_MS = 500;
 
+// A stream-read failure during downloadWithProgress() (Improvement.md P1.1
+// resumable downloads) gets this many retries via the server's resume-token
+// mechanism (see bruno-server/src/security/download-resume.js) before the
+// original error is allowed to propagate to the caller.
+export const MAX_DOWNLOAD_RESUME_ATTEMPTS = 3;
+
 // fetch() itself throws a TypeError (e.g. "Failed to fetch") for a genuine
 // network-level failure (DNS, connection refused, offline) as opposed to
 // an HTTP error response, which resolves normally instead of throwing.
@@ -844,21 +850,42 @@ class BrowserTransport {
     let blob;
     if (onProgress && response.body?.getReader) {
       const total = Number(response.headers.get('content-length')) || 0;
-      const reader = response.body.getReader();
+      const resumeToken = response.headers.get('x-resume-token');
+      let reader = response.body.getReader();
       const chunks = [];
       let received = 0;
+      let resumeAttempts = 0;
 
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-          received += value.length;
-          onProgress(total ? Math.round((received / total) * 100) : null);
+      while (true) {
+        let step;
+        try {
+          step = await reader.read();
+        } catch (err) {
+          if (signal?.aborted || err.name === 'AbortError') throw new TransferCancelledError();
+
+          // A stream-read failure (dropped connection, etc.) can be retried
+          // by asking the server to resume the SAME already-generated file
+          // from the last byte we received — see download-resume.js for why
+          // a naive "just retry the whole request" would be unsafe here. If
+          // resuming isn't possible (no token, out of attempts, or the
+          // resume attempt itself fails) the original error propagates
+          // unchanged, matching the pre-resume-support failure behavior.
+          if (!resumeToken || resumeAttempts >= MAX_DOWNLOAD_RESUME_ATTEMPTS) throw err;
+          resumeAttempts += 1;
+
+          try {
+            reader = await this._resumeDownloadStream({ channel, args, resumeToken, received, signal });
+          } catch (resumeErr) {
+            if (signal?.aborted || resumeErr.name === 'AbortError') throw new TransferCancelledError();
+            throw err;
+          }
+          continue;
         }
-      } catch (err) {
-        if (signal?.aborted || err.name === 'AbortError') throw new TransferCancelledError();
-        throw err;
+
+        if (step.done) break;
+        chunks.push(step.value);
+        received += step.value.length;
+        onProgress(total ? Math.round((received / total) * 100) : null);
       }
       blob = new Blob(chunks);
     } else {
@@ -880,6 +907,45 @@ class BrowserTransport {
     URL.revokeObjectURL(objectUrl);
 
     return { success: true, filePath: fileName };
+  }
+
+  /**
+   * Re-issues a downloadWithProgress() request with a Range header and the
+   * resume token from the original response, asking the server to re-serve
+   * the exact same already-generated file (Improvement.md P1.1) starting
+   * from the last byte we successfully received. Expects HTTP 206 Partial
+   * Content; anything else (410 Gone for an expired/unknown token, a plain
+   * network failure, etc.) throws and the caller falls back to surfacing the
+   * original stream-read error.
+   */
+  async _resumeDownloadStream({ channel, args, resumeToken, received, signal }) {
+    const requestId = generateRequestId();
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Request-Id': requestId,
+      'Range': `bytes=${received}-`
+    };
+    if (_csrfToken) headers['X-CSRF-Token'] = _csrfToken;
+
+    const response = await fetch(`${BRIDGE_SERVER_URL}/api/downloads/${encodeURIComponent(channel)}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: JSON.stringify({ args, resumeToken }),
+      signal
+    });
+
+    if (response.status !== 206) {
+      let message = `Resume failed (HTTP ${response.status})`;
+      try {
+        const body = await response.json();
+        message = body.error || message;
+      } catch (err) {}
+      throw new Error(message);
+    }
+
+    if (!response.body?.getReader) throw new Error('Resume response has no readable stream.');
+    return response.body.getReader();
   }
 
   /**

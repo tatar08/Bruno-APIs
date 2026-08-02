@@ -42,6 +42,7 @@ const {
   withTimeout,
   IpcTimeoutError
 } = require('../security/ipc-limits');
+const { createResumeToken, getResumeEntry, discardResumeToken } = require('../security/download-resume');
 const { ERROR_CODES } = require('@usebruno/rpc-contract');
 
 const SCRATCH_DIR = path.join(os.tmpdir(), 'bruno-bridge-transfers');
@@ -73,6 +74,59 @@ const createDownloadsRouter = (handlerRegistry, windowShim, createFakeEvent) => 
       });
     }
 
+    const clientKey = req.brunoSessionId || req.ip;
+    const { resumeToken } = req.body;
+
+    // Resuming an interrupted download re-serves the exact file a prior
+    // request on this route already generated — it never re-invokes the
+    // export handler (see download-resume.js for why that matters: two
+    // independent export runs aren't guaranteed byte-identical), so none of
+    // the args/path-policy checks below apply to this branch at all.
+    if (resumeToken) {
+      const entry = getResumeEntry(resumeToken, clientKey);
+      if (!entry) {
+        return res.status(410).json({
+          code: ERROR_CODES.HANDLER_ERROR,
+          error: 'This download can no longer be resumed (token expired or unknown). Start a new download.'
+        });
+      }
+
+      if (!checkRateLimit(clientKey)) {
+        return res.status(429).json({ code: ERROR_CODES.RATE_LIMITED, error: 'Too many requests, slow down.' });
+      }
+      if (!acquireConcurrencySlot(clientKey)) {
+        return res.status(429).json({ code: ERROR_CODES.CONCURRENCY_LIMITED, error: 'Too many concurrent requests in flight.' });
+      }
+
+      res.setHeader('X-Content-SHA256', entry.sha256);
+      res.setHeader('X-Resume-Token', resumeToken);
+      // res.download() (via the `send` package) honors an incoming `Range`
+      // header automatically, responding 206 Partial Content from the
+      // client's last received byte — that's the actual resume mechanism,
+      // nothing custom needed here beyond re-pointing at the same file.
+      //
+      // The concurrency slot is released right after kicking off the
+      // stream, not inside its completion callback — res.download() runs
+      // asynchronously, so waiting for the callback would hold the slot for
+      // the entire transfer. This matches the timing the fresh-generation
+      // branch below already uses (release in an outer scope immediately
+      // after res.download() is invoked).
+      res.download(entry.tempPath, entry.downloadName, (err) => {
+        if (err) {
+          if (!res.headersSent) {
+            console.error(`[Downloads] Error resuming "${channel}":`, redactSecrets(err.message));
+          }
+          // Leave the token/file alive — another resume attempt may still
+          // succeed before DOWNLOAD_RESUME_TTL_MS elapses.
+          return;
+        }
+        discardResumeToken(resumeToken);
+        fs.unlink(entry.tempPath, () => {});
+      });
+      releaseConcurrencySlot(clientKey);
+      return;
+    }
+
     const { args = [] } = req.body;
     const argsError = validateArgs(channel, args);
     if (argsError) {
@@ -100,7 +154,6 @@ const createDownloadsRouter = (handlerRegistry, windowShim, createFakeEvent) => 
       });
     }
 
-    const clientKey = req.brunoSessionId || req.ip;
     if (!checkRateLimit(clientKey)) {
       return res.status(429).json({ code: ERROR_CODES.RATE_LIMITED, error: 'Too many requests, slow down.' });
     }
@@ -124,12 +177,24 @@ const createDownloadsRouter = (handlerRegistry, windowShim, createFakeEvent) => 
       }
 
       const downloadName = `${String(args[1] || 'export').replace(/[^a-zA-Z0-9._-]/g, '_')}.zip`;
-      res.setHeader('X-Content-SHA256', await hashFile(tempPath));
+      const sha256 = await hashFile(tempPath);
+      const newResumeToken = createResumeToken({ tempPath, sessionKey: clientKey, sha256, downloadName });
+
+      res.setHeader('X-Content-SHA256', sha256);
+      res.setHeader('X-Resume-Token', newResumeToken);
       res.download(tempPath, downloadName, (err) => {
-        cleanup();
-        if (err && !res.headersSent) {
-          console.error(`[Downloads] Error streaming "${channel}":`, redactSecrets(err.message));
+        if (err) {
+          if (!res.headersSent) {
+            console.error(`[Downloads] Error streaming "${channel}":`, redactSecrets(err.message));
+          }
+          // Don't cleanup here — a client that lost the stream mid-way can
+          // retry with X-Resume-Token and pick up where it left off. The
+          // token's TTL (or the existing SCRATCH_DIR sweep, worst case)
+          // reclaims the file if nobody ever resumes it.
+          return;
         }
+        discardResumeToken(newResumeToken);
+        cleanup();
       });
     } catch (err) {
       cleanup();

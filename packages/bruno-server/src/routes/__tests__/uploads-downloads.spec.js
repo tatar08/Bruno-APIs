@@ -11,6 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const http = require('http');
 const express = require('express');
 const request = require('supertest');
 
@@ -48,7 +49,9 @@ const loadRoutes = () => {
   return {
     createUploadsRouter: uploadsMod.createUploadsRouter,
     createDownloadsRouter: downloadsMod.createDownloadsRouter,
-    requireAuth: authMod.requireAuth
+    requireAuth: authMod.requireAuth,
+    createSession: authMod.createSession,
+    SESSION_COOKIE_NAME: authMod.SESSION_COOKIE_NAME
   };
 };
 
@@ -284,6 +287,151 @@ describe('POST /api/downloads/:channel', () => {
         .send({ args: ['/some/collection/path', 'My Collection'] });
 
       expect(res.status).toBe(401);
+    } finally {
+      if (originalEnv === undefined) delete process.env.BRUNO_SERVER_REQUIRE_AUTH;
+      else process.env.BRUNO_SERVER_REQUIRE_AUTH = originalEnv;
+    }
+  });
+});
+
+describe('POST /api/downloads/:channel — resumable downloads (Improvement.md P1.1)', () => {
+  test('a fresh download response carries an X-Resume-Token header', async () => {
+    const routes = loadRoutes();
+    const app = buildApp(routes);
+
+    const res = await request(app)
+      .post('/api/downloads/renderer:export-collection-zip')
+      .send({ args: ['/some/collection/path', 'My Collection'] });
+
+    expect(res.status).toBe(200);
+    expect(typeof res.headers['x-resume-token']).toBe('string');
+    expect(res.headers['x-resume-token'].length).toBeGreaterThan(0);
+  });
+
+  test('a resume request with the token and a Range header returns 206 with the tail bytes, matching the original file', async () => {
+    // A supertest request that runs to completion lets the server's success
+    // callback discard the resume token right away (Improvement.md P1.1 —
+    // a fully-delivered download no longer needs to be resumable). To
+    // exercise the actual resume path we have to simulate a real
+    // interrupted transfer: open a raw socket, read only part of the
+    // response, then destroy the connection so the server's res.download()
+    // callback fires with an error instead and leaves the token/file alive.
+    const routes = loadRoutes();
+    const eventBridge = new EventBridge();
+    const windowShim = new WindowShim(eventBridge);
+    const handlerRegistry = new HandlerRegistry();
+    // A large body (300KB), independent of the (short, normal) filename —
+    // padding via a huge collectionName would instead balloon the
+    // Content-Disposition header past Node's header-size limit and the
+    // response would never even parse.
+    const largeBody = `zip-bytes-for:/some/collection/path:My Collection:${'A'.repeat(300000)}`;
+    handlerRegistry.register('renderer:export-workspace', async (event, collectionPath, collectionName, destinationPath) => {
+      fs.writeFileSync(destinationPath, largeBody);
+      return { success: true, filePath: destinationPath };
+    });
+
+    const app = express();
+    app.use(express.json({ limit: '25mb' }));
+    app.use('/api/downloads', routes.requireAuth, routes.createDownloadsRouter(handlerRegistry, windowShim, createFakeEvent));
+    const server = app.listen(0);
+
+    try {
+      const port = server.address().port;
+      const requestBody = JSON.stringify({ args: ['/some/collection/path', 'My Collection'] });
+
+      const { resumeToken, expectedSha256, partialBytes } = await new Promise((resolve) => {
+        const req = http.request(
+          {
+            host: '127.0.0.1',
+            port,
+            method: 'POST',
+            path: '/api/downloads/renderer:export-workspace',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(requestBody) }
+          },
+          (res) => {
+            let received = Buffer.alloc(0);
+            res.on('data', (chunk) => {
+              received = Buffer.concat([received, chunk]);
+              if (received.length >= 1000) {
+                req.destroy();
+                resolve({
+                  resumeToken: res.headers['x-resume-token'],
+                  expectedSha256: res.headers['x-content-sha256'],
+                  partialBytes: received
+                });
+              }
+            });
+            res.on('error', () => {});
+          }
+        );
+        req.on('error', () => {}); // destroying the socket triggers a client-side error too; expected
+        req.write(requestBody);
+        req.end();
+      });
+
+      // Give the server's res.download() completion callback (which now
+      // fires with an error, since the client disconnected mid-stream) a
+      // chance to run before attempting to resume.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const resumed = await request(server)
+        .post('/api/downloads/renderer:export-workspace')
+        .set('Range', `bytes=${partialBytes.length}-`)
+        .buffer(true)
+        .parse((response, callback) => {
+          const chunks = [];
+          response.on('data', (chunk) => chunks.push(chunk));
+          response.on('end', () => callback(null, Buffer.concat(chunks)));
+        })
+        .send({ args: ['/some/collection/path', 'My Collection'], resumeToken });
+
+      expect(resumed.status).toBe(206);
+      expect(resumed.headers['x-content-sha256']).toBe(expectedSha256);
+      expect(Buffer.concat([partialBytes, resumed.body])).toEqual(Buffer.from(largeBody));
+    } finally {
+      server.close();
+    }
+  });
+
+  test('rejects an unknown/expired resume token with 410', async () => {
+    const routes = loadRoutes();
+    const app = buildApp(routes);
+
+    const res = await request(app)
+      .post('/api/downloads/renderer:export-collection-zip')
+      .send({ args: ['/some/collection/path', 'My Collection'], resumeToken: 'not-a-real-token' });
+
+    expect(res.status).toBe(410);
+  });
+
+  test('rejects a resume attempt whose session does not match the token owner', async () => {
+    const originalEnv = process.env.BRUNO_SERVER_REQUIRE_AUTH;
+    process.env.BRUNO_SERVER_REQUIRE_AUTH = 'true';
+    try {
+      const routes = loadRoutes();
+      const app = buildApp(routes);
+      const { createSession, SESSION_COOKIE_NAME } = routes;
+
+      const owner = createSession();
+      const stranger = createSession();
+
+      const first = await request(app)
+        .post('/api/downloads/renderer:export-collection-zip')
+        .set('Cookie', `${SESSION_COOKIE_NAME}=${owner.sessionId}`)
+        .set('X-CSRF-Token', owner.csrfToken)
+        .send({ args: ['/some/collection/path', 'My Collection'] });
+
+      expect(first.status).toBe(200);
+      const resumeToken = first.headers['x-resume-token'];
+
+      const resumed = await request(app)
+        .post('/api/downloads/renderer:export-collection-zip')
+        .set('Cookie', `${SESSION_COOKIE_NAME}=${stranger.sessionId}`)
+        .set('X-CSRF-Token', stranger.csrfToken)
+        .set('Range', 'bytes=5-')
+        .send({ args: ['/some/collection/path', 'My Collection'], resumeToken });
+
+      expect(resumed.status).toBe(410);
     } finally {
       if (originalEnv === undefined) delete process.env.BRUNO_SERVER_REQUIRE_AUTH;
       else process.env.BRUNO_SERVER_REQUIRE_AUTH = originalEnv;

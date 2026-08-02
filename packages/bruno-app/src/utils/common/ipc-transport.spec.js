@@ -13,6 +13,7 @@ import {
   INVOKE_TIMEOUT_MS,
   RETRYABLE_INVOKE_MAX_ATTEMPTS,
   RETRYABLE_INVOKE_RETRY_DELAY_MS,
+  MAX_DOWNLOAD_RESUME_ATTEMPTS,
   IpcTimeoutError,
   TransferCancelledError,
   TransferIntegrityError
@@ -628,6 +629,224 @@ describe('BrowserTransport (Improvement.md P1.2)', () => {
       await expect(
         transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'])
       ).rejects.toBeInstanceOf(TransferIntegrityError);
+    });
+  });
+
+  describe('downloadWithProgress() resume on stream failure (Improvement.md P1.1 resumable downloads)', () => {
+    beforeEach(() => {
+      jest.useRealTimers();
+      global.URL.createObjectURL = jest.fn(() => 'blob:mock-url');
+      global.URL.revokeObjectURL = jest.fn();
+    });
+
+    afterEach(() => {
+      delete global.fetch;
+    });
+
+    it('resumes via a resume-token fetch after a stream-read failure and completes the download', async () => {
+      const chunk1 = new Uint8Array(50);
+      const chunk2 = new Uint8Array(50);
+
+      let initialReadCount = 0;
+      const failingReader = {
+        read: async () => {
+          initialReadCount++;
+          if (initialReadCount === 1) return { done: false, value: chunk1 };
+          throw new Error('network read failed');
+        }
+      };
+
+      let resumedReadCount = 0;
+      const resumedReader = {
+        read: async () => {
+          resumedReadCount++;
+          if (resumedReadCount === 1) return { done: false, value: chunk2 };
+          return { done: true, value: undefined };
+        }
+      };
+
+      let downloadFetchCount = 0;
+      global.fetch = jest.fn().mockImplementation((url, options) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+
+        downloadFetchCount++;
+        if (downloadFetchCount === 1) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: {
+              get: (name) => {
+                if (name === 'content-length') return '100';
+                if (name === 'content-disposition') return 'attachment; filename="Test.zip"';
+                if (name === 'x-resume-token') return 'resume-token-123';
+                return null;
+              }
+            },
+            body: { getReader: () => failingReader }
+          });
+        }
+
+        // The resume attempt: a Range header and the resume token in the body.
+        expect(options.headers.Range).toBe('bytes=50-');
+        expect(JSON.parse(options.body).resumeToken).toBe('resume-token-123');
+        return Promise.resolve({
+          ok: true,
+          status: 206,
+          headers: { get: () => null },
+          body: { getReader: () => resumedReader }
+        });
+      });
+
+      const onProgress = jest.fn();
+      const result = await transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'], { onProgress });
+
+      expect(result).toEqual({ success: true, filePath: 'Test.zip' });
+      expect(downloadFetchCount).toBe(2);
+      expect(onProgress).toHaveBeenCalledWith(100);
+    });
+
+    it('rethrows the original error immediately when the response carries no resume token', async () => {
+      const chunk1 = new Uint8Array(10);
+      let readCallCount = 0;
+      const failingReader = {
+        read: async () => {
+          readCallCount++;
+          if (readCallCount === 1) return { done: false, value: chunk1 };
+          throw new Error('network read failed');
+        }
+      };
+
+      let downloadFetchCount = 0;
+      global.fetch = jest.fn().mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        downloadFetchCount++;
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null }, // no x-resume-token
+          body: { getReader: () => failingReader }
+        });
+      });
+
+      await expect(
+        transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'], { onProgress: jest.fn() })
+      ).rejects.toThrow('network read failed');
+
+      expect(downloadFetchCount).toBe(1);
+    });
+
+    it('throws TransferCancelledError on stream-read failure once the signal is aborted, even with a resume token available', async () => {
+      const controller = new AbortController();
+      const chunk1 = new Uint8Array(10);
+      let readCallCount = 0;
+      const failingReader = {
+        read: async () => {
+          readCallCount++;
+          if (readCallCount === 1) return { done: false, value: chunk1 };
+          controller.abort();
+          throw new Error('network read failed');
+        }
+      };
+
+      let downloadFetchCount = 0;
+      global.fetch = jest.fn().mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        downloadFetchCount++;
+        return Promise.resolve({
+          ok: true,
+          headers: { get: (name) => (name === 'x-resume-token' ? 'resume-token-123' : null) },
+          body: { getReader: () => failingReader }
+        });
+      });
+
+      await expect(
+        transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'], { onProgress: jest.fn(), signal: controller.signal })
+      ).rejects.toBeInstanceOf(TransferCancelledError);
+
+      expect(downloadFetchCount).toBe(1); // no resume attempt once cancelled
+    });
+
+    it('surfaces the original stream-read error when the resume attempt itself fails (e.g. an expired token)', async () => {
+      const chunk1 = new Uint8Array(10);
+      let readCallCount = 0;
+      const failingReader = {
+        read: async () => {
+          readCallCount++;
+          if (readCallCount === 1) return { done: false, value: chunk1 };
+          throw new Error('original network read failed');
+        }
+      };
+
+      let downloadFetchCount = 0;
+      global.fetch = jest.fn().mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        downloadFetchCount++;
+        if (downloadFetchCount === 1) {
+          return Promise.resolve({
+            ok: true,
+            headers: { get: (name) => (name === 'x-resume-token' ? 'resume-token-123' : null) },
+            body: { getReader: () => failingReader }
+          });
+        }
+        // The resume attempt itself fails outright (token expired -> 410 Gone).
+        return Promise.resolve({ ok: false, status: 410, json: async () => ({ error: 'This download can no longer be resumed' }) });
+      });
+
+      await expect(
+        transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'], { onProgress: jest.fn() })
+      ).rejects.toThrow('original network read failed');
+
+      expect(downloadFetchCount).toBe(2); // initial + one failed resume attempt, no further retries
+    });
+
+    it(`gives up and rethrows the last stream-read error after ${MAX_DOWNLOAD_RESUME_ATTEMPTS} failed resume attempts`, async () => {
+      const chunk1 = new Uint8Array(10);
+      let initialReadCount = 0;
+      const failingReader = {
+        read: async () => {
+          initialReadCount++;
+          if (initialReadCount === 1) return { done: false, value: chunk1 };
+          throw new Error('network read failed');
+        }
+      };
+      // Every resumed connection also drops immediately on its first read,
+      // simulating a client stuck on a persistently bad network path.
+      const alwaysFailingResumedReader = { read: async () => { throw new Error('network read failed'); } };
+
+      let downloadFetchCount = 0;
+      global.fetch = jest.fn().mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        downloadFetchCount++;
+        if (downloadFetchCount === 1) {
+          return Promise.resolve({
+            ok: true,
+            headers: { get: (name) => (name === 'x-resume-token' ? 'resume-token-123' : null) },
+            body: { getReader: () => failingReader }
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 206,
+          headers: { get: () => null },
+          body: { getReader: () => alwaysFailingResumedReader }
+        });
+      });
+
+      await expect(
+        transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'], { onProgress: jest.fn() })
+      ).rejects.toThrow('network read failed');
+
+      // 1 initial fetch + MAX_DOWNLOAD_RESUME_ATTEMPTS resume fetches, then give up.
+      expect(downloadFetchCount).toBe(1 + MAX_DOWNLOAD_RESUME_ATTEMPTS);
     });
   });
 });
