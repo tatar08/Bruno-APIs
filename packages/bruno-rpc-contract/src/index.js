@@ -3,6 +3,7 @@ const { getCapability, ALL_CAPABILITIES, SOURCE_TO_CAPABILITY, CHANNEL_CAPABILIT
 const { ERROR_CODES, createErrorEnvelope } = require('./error-envelope');
 const { REQUEST_SCHEMAS, validateRequestArgs } = require('./request-schemas');
 const { RESPONSE_SHAPES } = require('./response-schemas');
+const { EVENT_SHAPES } = require('./event-schemas');
 
 module.exports = {
   CHANNELS,
@@ -15,5 +16,6 @@ module.exports = {
   createErrorEnvelope,
   REQUEST_SCHEMAS,
   validateRequestArgs,
-  RESPONSE_SHAPES
+  RESPONSE_SHAPES,
+  EVENT_SHAPES
 };

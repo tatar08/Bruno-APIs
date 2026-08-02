@@ -1062,6 +1062,31 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P0.5 Event schemas — เอกสาร shape ของ WS/IPC event ฝั่ง server→renderer — 2 สิงหาคม 2026
+
+`Improvement.md` P0.5's bullet "event schemas — ยังไม่ทำ" ค้างมาตั้งแต่รอบที่ทำ response shapes (66 channel) เสร็จ — event เป็นคนละครึ่งของ IPC surface (server→renderer แบบ one-way, ไม่ใช่ request/response) ที่ยังไม่เคยมีเอกสารเลย เลือกทำต่อเพราะเป็น pattern เดียวกับ response shapes ที่ทำไว้แล้ว (docs-only, ไม่ enforce runtime) ไม่ต้องรอ product decision ใดๆ
+
+**สิ่งที่ทำ:**
+- สำรวจ mechanism ก่อนเขียนเอกสาร: ยืนยันว่า `bruno-server` ไม่มี event catalog แยกของตัวเอง — `index.js` override `require()` ให้โค้ด `bruno-electron`/`bruno-requests` รันไม่แก้เลยแม้แต่บรรทัดเดียว ทุก `mainWindow.webContents.send(...)` เรียกจริงจึงกลายเป็น WS event อัตโนมัติผ่าน `adapters/window-shim.js`'s `WindowShim` (route เข้า `EventBridge.sendToSession()` ถ้าอยู่ใน session-scoped call, หรือ `broadcast()` ถ้าไม่ใช่) — เท่ากับว่า event inventory ทั้งหมดอยู่ใน `bruno-electron`/`bruno-requests` ล้วนๆ ไม่มี "bridge event catalog" แยกให้ reconcile เพิ่ม
+- grep หา `.send(`/`webContents.send(`/`event.sender.send(`/`sendEvent(`/`eventCallback(` ทุก call site จริงทั่ว `bruno-electron/src` และ `bruno-requests/src` (WS/gRPC client callback) เจอ **79 event name/pattern จริง** (77 static string + 2 dynamic per-session template `` `terminal:data:${sessionId}` ``/`` `terminal:exit:${sessionId}` ``) เขียนเป็น `packages/bruno-rpc-contract/src/event-schemas.js`'s `EVENT_SHAPES` — format/JSDoc header เลียนแบบ `response-schemas.js` เป๊ะ (docs-only, ไม่มี validate function, อธิบายเหตุผลเดียวกันว่าทำไมไม่ enforce)
+- **การตัดสินใจ scope**: ไม่สร้าง parity fixture/extractor ใหม่รอบนี้ (ต่างจาก request/response schema ที่มี `fixtures/real-channel-sources.json` dump จาก `ipcMain.handle` อัตโนมัติ) เพราะ event ไม่มี central registration API แบบเดียวกันให้ dump — ต้องสร้าง static extractor ใหม่ทั้งหมดซึ่งเป็นงานแยกต่างหาก บันทึกไว้เป็น future work ใน comment ของไฟล์ (เหมือน pattern การ defer "resume"/"opaque handle" ก่อนหน้า) — test (`event-schemas.spec.js`) เลยเช็คแค่ "ทุก entry เป็น non-empty string" ไม่มี "channel มีจริงไหม" check
+- event ที่ polymorphic ตาม field `type` ภายใน (`main:run-request-event`, `main:run-folder-event`, ยิงจาก ~20+ call site ใน `ipc/network/index.js`) เลือกบันทึกเป็น shape เดียวสรุปรวม ไม่ไล่ catalog ทุก sub-type แยก — noted ไว้ใน comment ว่าเกินสโคปของรอบนี้ ถ้าต้องการ field ละเอียดของ `type` ไหนให้ไปดู call site ตรงในไฟล์นั้น
+- เจอ listener ฝั่ง client 2 ตัวที่ไม่มี emitter จริงเลย (`main:process-env-update`, `main:workspace-dotenv-update`, subscribe ใน `bruno-app`'s `useIpcEvents.js`) — ตัดสินใจไม่ใส่เป็น entry ใน `EVENT_SHAPES` (เพราะจะเป็นการ fabricate shape ที่ไม่เคยเกิดขึ้นจริง) แต่บันทึกไว้เป็น comment อธิบายชัดเจนในหัวไฟล์กันคนอ่านรุ่นหลังงงว่าทำไมหาไม่เจอ
+
+**Test coverage ใหม่:**
+- `event-schemas.spec.js` (ใหม่ทั้งไฟล์): ยืนยันทุก entry ใน `EVENT_SHAPES` เป็น non-empty string
+- รวม `bruno-rpc-contract`: 23/23 ผ่าน (จาก 22 เดิม), `npx eslint` สะอาด — เป็นการเพิ่ม export ใหม่ล้วนๆ (`EVENT_SHAPES` ใน `index.js`) ไม่แก้ export เดิมเลย ไม่ต้องรัน regression suite ของ `bruno-server`/`bruno-app` เพิ่ม
+
+**ไม่พบบั๊ก product code ใหม่** ระหว่างสำรวจรอบนี้ — งานเป็นเอกสารล้วนๆ ไม่แตะ production code path ที่ emit event จริงเลย
+
+**ยังไม่ทำ:**
+- parity fixture/extractor สำหรับ event (ตรวจว่า event name ที่บันทึกไว้ยังมีจริงในโค้ดไหม) — ต้องสร้าง static-analysis tool ใหม่ทั้งหมด เป็น scope แยกที่ใหญ่กว่าการเขียนเอกสารรอบนี้
+- sub-shape ละเอียดของ `main:run-request-event`/`main:run-folder-event` แยกตาม `type` แต่ละแบบ — ถ้าต้องการต้องไล่อ่าน ~20+ call site ใน `ipc/network/index.js`
+- generated Browser client และ Electron adapter (ส่วนที่เหลือของ P0.5) — ยังไม่ทำ ตามที่บันทึกไว้เดิม (ต้องมี TS convention ให้ leverage ก่อน เป็น architecture decision ใหญ่กว่านี้)
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี
