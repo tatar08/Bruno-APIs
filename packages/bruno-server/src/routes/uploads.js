@@ -12,7 +12,11 @@
  *
  * POST /api/uploads/scratch-file
  * multipart/form-data, single field "file"
- * Response: { data: "<absolute scratch path on the Bridge>" }
+ * Response: { data: "<absolute scratch path on the Bridge>", sha256: "<hex digest>" }
+ *
+ * The sha256 digest is computed server-side from the bytes actually written
+ * to the scratch file, so the caller can confirm nothing was corrupted or
+ * truncated in transit (Improvement.md P1.1 Transfer Center checksums).
  */
 
 const os = require('os');
@@ -50,6 +54,16 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage, limits: { fileSize: UPLOAD_MAX_BYTES, files: 1 } });
 
+function hashFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
 function sweepScratchDir() {
   fs.readdir(SCRATCH_DIR, (err, entries) => {
     if (err) return;
@@ -78,7 +92,7 @@ const createUploadsRouter = () => {
       return res.status(429).json({ code: ERROR_CODES.CONCURRENCY_LIMITED, error: 'Too many concurrent requests in flight.' });
     }
 
-    upload.single('file')(req, res, (err) => {
+    upload.single('file')(req, res, async (err) => {
       releaseConcurrencySlot(clientKey);
 
       if (err instanceof multer.MulterError) {
@@ -94,7 +108,13 @@ const createUploadsRouter = () => {
         return res.status(400).json({ code: ERROR_CODES.INVALID_ARGS, error: 'No file uploaded (expected multipart field "file").' });
       }
 
-      return res.json({ data: req.file.path });
+      try {
+        const sha256 = await hashFile(req.file.path);
+        return res.json({ data: req.file.path, sha256 });
+      } catch (hashErr) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(500).json({ code: ERROR_CODES.HANDLER_ERROR, error: hashErr.message || 'Failed to checksum uploaded file' });
+      }
     });
   });
 

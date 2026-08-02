@@ -126,12 +126,13 @@ let grpcEventHandlers = null;
 app.use(cors({
   origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
   credentials: true,
-  // Content-Disposition isn't on the CORS response-header safelist by
-  // default; without this, fetch() in ipc-transport.js can't read the
-  // server-suggested filename for a Bridge export download (Improvement.md
-  // P1.1 Transfer Center) whenever bruno-app is served from a different
-  // origin than bruno-server (e.g. local dev).
-  exposedHeaders: ['Content-Disposition']
+  // Content-Disposition and X-Content-SHA256 aren't on the CORS
+  // response-header safelist by default; without this, fetch() in
+  // ipc-transport.js can't read the server-suggested filename or the
+  // integrity checksum for a Bridge export download (Improvement.md P1.1
+  // Transfer Center) whenever bruno-app is served from a different origin
+  // than bruno-server (e.g. local dev).
+  exposedHeaders: ['Content-Disposition', 'X-Content-SHA256']
 }));
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));

@@ -170,6 +170,37 @@ export class TransferCancelledError extends Error {
 }
 
 /**
+ * Thrown by uploadZipFile()/downloadWithProgress()/_downloadViaBridge()
+ * (Improvement.md P1.1 Transfer Center checksums) when the SHA-256 digest
+ * computed client-side from the transferred bytes doesn't match the digest
+ * the Bridge computed server-side — signals in-transit corruption/truncation
+ * distinct from a network/server-error failure, so callers can surface a
+ * "try again" message rather than a generic error toast.
+ */
+export class TransferIntegrityError extends Error {
+  constructor(message = 'Transferred file failed integrity verification (checksum mismatch)') {
+    super(message);
+    this.name = 'TransferIntegrityError';
+  }
+}
+
+/**
+ * Computes a lowercase hex SHA-256 digest of a Blob/File via the Web Crypto
+ * API. Both uploadZipFile()'s File and downloadWithProgress()'s constructed
+ * Blob are always fully materialized in memory before this is called, so a
+ * one-shot digest() call is sufficient — no streaming/incremental hashing is
+ * needed at this scale (Transfer Center files are scratch zips, not
+ * multi-gigabyte payloads).
+ */
+async function sha256Hex(blob) {
+  const buffer = await blob.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
  * Electron Transport — delegates directly to window.ipcRenderer
  * (the existing preload.js bridge)
  */
@@ -652,6 +683,11 @@ class BrowserTransport {
     const match = /filename="?([^";]+)"?/i.exec(disposition);
     const fileName = match ? match[1] : `${String(args[1] || 'export').replace(/[^a-zA-Z0-9._-]/g, '_')}.zip`;
 
+    const expectedSha256 = response.headers.get('x-content-sha256');
+    if (expectedSha256 && (await sha256Hex(blob)) !== expectedSha256) {
+      throw new TransferIntegrityError();
+    }
+
     const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = objectUrl;
@@ -736,6 +772,11 @@ class BrowserTransport {
       blob = new Blob(chunks);
     } else {
       blob = await response.blob();
+    }
+
+    const expectedSha256 = response.headers.get('x-content-sha256');
+    if (expectedSha256 && (await sha256Hex(blob)) !== expectedSha256) {
+      throw new TransferIntegrityError();
     }
 
     const objectUrl = URL.createObjectURL(blob);
@@ -847,7 +888,7 @@ class BrowserTransport {
         }
       };
 
-      xhr.onload = () => {
+      xhr.onload = async () => {
         cleanup();
         let body = {};
         try {
@@ -855,6 +896,10 @@ class BrowserTransport {
         } catch (err) {}
 
         if (xhr.status >= 200 && xhr.status < 300) {
+          if (body.sha256 && (await sha256Hex(file)) !== body.sha256) {
+            reject(new TransferIntegrityError());
+            return;
+          }
           resolve(body.data);
         } else {
           reject(new Error(body.error || `Upload failed (HTTP ${xhr.status})`));

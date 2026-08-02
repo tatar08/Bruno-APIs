@@ -12,8 +12,12 @@ import {
   HEARTBEAT_MAX_MISSED,
   INVOKE_TIMEOUT_MS,
   IpcTimeoutError,
-  TransferCancelledError
+  TransferCancelledError,
+  TransferIntegrityError
 } from './ipc-transport';
+
+const nodeCrypto = require('crypto');
+const sha256HexOf = (str) => nodeCrypto.createHash('sha256').update(str).digest('hex');
 
 // Minimal XMLHttpRequest double for uploadZipFile() tests (Improvement.md
 // P1.1 Transfer Center progress/cancel) — real fetch() has no upload
@@ -394,6 +398,24 @@ describe('BrowserTransport (Improvement.md P1.2)', () => {
 
       await expect(promise).rejects.toThrow('File too large');
     });
+
+    it('resolves normally when the response sha256 matches the uploaded file (Improvement.md P1.1 checksums)', async () => {
+      const promise = transport.uploadZipFile(file);
+      await flushAsync();
+
+      FakeXHR.latest()._respond(200, { data: '/scratch/collection.zip', sha256: sha256HexOf('zip-bytes') });
+
+      await expect(promise).resolves.toBe('/scratch/collection.zip');
+    });
+
+    it('rejects with TransferIntegrityError when the response sha256 does not match the uploaded file', async () => {
+      const promise = transport.uploadZipFile(file);
+      await flushAsync();
+
+      FakeXHR.latest()._respond(200, { data: '/scratch/collection.zip', sha256: 'deadbeef'.repeat(8) });
+
+      await expect(promise).rejects.toBeInstanceOf(TransferIntegrityError);
+    });
   });
 
   describe('downloadWithProgress() progress + cancel (Improvement.md P1.1 Transfer Center)', () => {
@@ -496,6 +518,42 @@ describe('BrowserTransport (Improvement.md P1.2)', () => {
 
       const result = await transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test']);
       expect(result).toEqual({ success: true, filePath: expect.any(String) });
+    });
+
+    it('resolves normally when X-Content-SHA256 matches the downloaded bytes (Improvement.md P1.1 checksums)', async () => {
+      const bytes = 'download-bytes-for-checksum-test';
+      const expectedSha256 = sha256HexOf(bytes);
+      global.fetch = jest.fn().mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        return Promise.resolve({
+          ok: true,
+          headers: { get: (name) => (name === 'x-content-sha256' ? expectedSha256 : null) },
+          blob: async () => new Blob([bytes])
+        });
+      });
+
+      const result = await transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test']);
+      expect(result).toEqual({ success: true, filePath: expect.any(String) });
+    });
+
+    it('rejects with TransferIntegrityError when X-Content-SHA256 does not match the downloaded bytes', async () => {
+      const bytes = 'download-bytes-for-checksum-test';
+      global.fetch = jest.fn().mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) {
+          return Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+        }
+        return Promise.resolve({
+          ok: true,
+          headers: { get: (name) => (name === 'x-content-sha256' ? 'deadbeef'.repeat(8) : null) },
+          blob: async () => new Blob([bytes])
+        });
+      });
+
+      await expect(
+        transport.downloadWithProgress('renderer:export-collection-zip', ['/col', 'Test'])
+      ).rejects.toBeInstanceOf(TransferIntegrityError);
     });
   });
 });

@@ -10,6 +10,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const request = require('supertest');
 
@@ -76,6 +77,21 @@ describe('POST /api/uploads/scratch-file', () => {
     expect(fs.existsSync(res.body.data)).toBe(true);
     expect(fs.readFileSync(res.body.data, 'utf8')).toBe('hello bruno');
     expect(path.extname(res.body.data)).toBe('.zip');
+
+    fs.unlinkSync(res.body.data);
+  });
+
+  test('returns a sha256 digest matching the stored file bytes', async () => {
+    const routes = loadRoutes();
+    const app = buildApp(routes);
+
+    const res = await request(app)
+      .post('/api/uploads/scratch-file')
+      .attach('file', Buffer.from('hello bruno'), 'collection.zip');
+
+    expect(res.status).toBe(200);
+    const expected = crypto.createHash('sha256').update('hello bruno').digest('hex');
+    expect(res.body.sha256).toBe(expected);
 
     fs.unlinkSync(res.body.data);
   });
@@ -148,6 +164,25 @@ describe('POST /api/downloads/:channel', () => {
     expect(res.headers['content-disposition']).toContain('attachment');
     expect(res.headers['content-disposition']).toContain('My_Collection.zip');
     expect(res.body.toString('utf8')).toBe('zip-bytes-for:/some/collection/path:My Collection');
+  });
+
+  test('sets an X-Content-SHA256 header matching the streamed bytes', async () => {
+    const routes = loadRoutes();
+    const app = buildApp(routes);
+
+    const res = await request(app)
+      .post('/api/downloads/renderer:export-collection-zip')
+      .buffer(true)
+      .parse((response, callback) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => callback(null, Buffer.concat(chunks)));
+      })
+      .send({ args: ['/some/collection/path', 'My Collection'] });
+
+    expect(res.status).toBe(200);
+    const expected = crypto.createHash('sha256').update(res.body).digest('hex');
+    expect(res.headers['x-content-sha256']).toBe(expected);
   });
 
   test('rejects a channel that is not on the download allowlist', async () => {

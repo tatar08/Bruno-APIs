@@ -1002,6 +1002,37 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 - ทำความสะอาด scratch artifacts ทั้งหมดหลัง verify เสร็จแล้ว (ลบ script สำเนาที่ repo root, kill server process — รวมถึง kill stale process เก่าที่เจอระหว่างทางด้วย)
 - ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
 
+### P1.1 Checksum verification สำหรับ Transfer Center upload/download — 2 สิงหาคม 2026
+
+ต่อจาก "P1.1 Bridge-vs-local machine label" ทำ checksum ครึ่งแรกของสอง item สุดท้ายที่เหลือใน P1.1 (checksum + resume) — เลือกทำ checksum ก่อนเพราะ resume ใหญ่กว่ามาก (ต้องออกแบบ chunked upload/download protocol + partial-file lifecycle) เทียบเท่า scope ของ P1.2's idempotency-key ที่ defer ไว้แล้ว ส่วน checksum เป็น self-contained increment ที่ทำเองได้จบในรอบเดียว
+
+**สิ่งที่ทำ:**
+- Backend `routes/uploads.js`: หลัง `multer` เขียนไฟล์ลง scratch dir เสร็จ อ่านไฟล์กลับด้วย `fs.createReadStream` ผ่าน `crypto.createHash('sha256')` (ไม่ hash ระหว่างเขียนแบบ streaming เพราะไฟล์ scratch เหล่านี้เป็นไฟล์เล็ก ไม่คุ้มความซับซ้อนเพิ่ม) ได้ hex digest ใส่เป็น `sha256` field เพิ่มใน JSON response เดิม (`{ data, sha256 }`) — ถ้า hash พลาด (อ่านไฟล์ไม่ได้) unlink ไฟล์ทิ้งแล้วตอบ 500 กัน orphan scratch file
+- Backend `routes/downloads.js`: ก่อนเรียก `res.download(tempPath, ...)` คำนวณ SHA-256 ของ `tempPath` แบบเดียวกัน แล้ว `res.setHeader('X-Content-SHA256', hash)`
+- `index.js`'s CORS config: เพิ่ม `'X-Content-SHA256'` เข้า `exposedHeaders` คู่กับ `'Content-Disposition'` เดิม (จำเป็นเพราะ header นี้ไม่อยู่ใน CORS safelist โดย default — ไม่เพิ่ม `fetch()` ฝั่ง client จะอ่านค่าไม่ได้เลยข้าม origin)
+- Frontend `ipc-transport.js`: เพิ่ม error class ใหม่ `TransferIntegrityError` (mirror `TransferCancelledError` ที่มีอยู่แล้ว) และ helper กลาง `sha256Hex(blob)` ตัวเดียวใช้ร่วมกันทั้ง 3 จุดเรียก (`crypto.subtle.digest('SHA-256', await blob.arrayBuffer())` แบบ one-shot ไม่ streaming เพราะทั้ง `File` ของ `uploadZipFile()` และ `Blob` ที่ประกอบเสร็จของ `downloadWithProgress()`/`_downloadViaBridge()` โหลดเข้า browser memory เต็มอยู่แล้วก่อนถึงจุดนี้เสมอ ไม่ต้องทำ incremental digest)
+  - `uploadZipFile()`'s `xhr.onload` (เปลี่ยนเป็น `async`): คำนวณ hash ของ `file` ที่ส่งไปเทียบกับ `body.sha256` ก่อน `resolve()` — ไม่ตรง reject ด้วย `TransferIntegrityError`; ตั้งใจไม่เปลี่ยน resolve shape เดิม (ยังคง resolve เป็น string path ตรงๆ ไม่ห่อ object) เพื่อไม่ต้องแก้ caller (`FileTab.js`/`ImportWorkspace/index.js`)
+  - `downloadWithProgress()`/`_downloadViaBridge()`: หลังประกอบ `blob` เสร็จ (ทั้ง path ที่มี `onProgress` และไม่มี) เทียบ hash กับ header `x-content-sha256` ก่อน trigger `<a download>` — ถ้า response ไม่มี header นี้ (เช่น edge case เก่าที่ยังไม่ผ่าน route ใหม่) ข้ามการเช็คไปเงียบๆ ไม่ throw
+
+**Test coverage ใหม่:**
+- `uploads-downloads.spec.js` (+2 tests): `sha256` field ตรงกับ `sha256sum` ของไฟล์จริงบน disk, `X-Content-SHA256` header ตรงกับ hash ของ response body จริง
+- `ipc-transport.spec.js` (+4 tests): upload match (resolve ปกติ) / upload mismatch (reject `TransferIntegrityError`), download match / download mismatch — เจอปัญหา environment ระหว่างเขียน test: jsdom (test environment ของ `bruno-app`) ไม่ implement ทั้ง `crypto.subtle` และ `Blob.prototype.arrayBuffer` เลย (มีจริงในทุก browser จริงแต่ jsdom ไม่ทำ) ทำให้ production code ที่เขียนถูกต้องอยู่แล้วรันไม่ผ่านใน test — แก้ด้วยการเพิ่ม polyfill 2 ตัวใน `jest.setup.js` (ใช้ Node's built-in `require('crypto').webcrypto.subtle` สำหรับตัวแรก, `FileReader`-based `readAsArrayBuffer()` wrapper สำหรับตัวหลัง เพราะ jsdom implement `FileReader` ครบอยู่แล้ว) — เป็นการเติม test-environment gap ไม่ใช่การแก้ production code
+- รวม `bruno-server`: 309/309 tests ผ่าน, `bruno-app`: 1422/1422 tests ผ่าน (จาก 1418 เดิม), `npx eslint` สะอาดทุกไฟล์ที่แก้ทั้งสอง package
+
+**ยืนยัน byte-level ด้วย curl ตรงๆ ก่อน Playwright:**
+- อัพโหลดไฟล์ทดสอบผ่าน `curl -F` ไปที่ `/api/uploads/scratch-file` → `sha256` field ที่ตอบกลับตรงกับ `sha256sum` ของไฟล์ต้นทางเป๊ะ (เทียบ hex string ตรงๆ)
+- ดาวน์โหลดผ่าน `curl -d` ไปที่ `/api/downloads/renderer:export-collection-zip` → `X-Content-SHA256` header ตรงกับ `sha256sum` ของไฟล์ zip ที่ได้จริงเป๊ะ, `Access-Control-Expose-Headers` มี `X-Content-SHA256` ครบตามที่ตั้งใจ
+
+**บั๊ก tooling เจอระหว่าง live-verify (self-inflicted, ไม่ใช่บั๊ก product code):** curl test รอบแรกลองยิง `export-collection-zip` โดยส่ง `$HOME` เป็น collection path (ตั้งใจแค่ยิงเร็วๆ ทดสอบ endpoint) ทำให้ archiver พยายาม zip ทั้ง home directory จริง (มีขนาดใหญ่มาก) กิน heap จน node process ล่มด้วย `FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory` — ตรวจสอบแล้วยืนยันว่าไม่เกี่ยวกับ checksum feature เลย เป็นการเลือก test input ผิดล้วนๆ (export-collection-zip ไม่เคย validate ว่า path ที่ส่งมาเป็น "collection ขนาดเล็ก" จริง ซึ่งเป็นพฤติกรรมเดิมของ handler นี้อยู่แล้วไม่ใช่ regression ใหม่) — แก้โดย restart server แล้วเปลี่ยนไปใช้ `tests/interpolation/collection` (collection เล็กๆ ที่มีอยู่แล้วในสคริปต์ทดสอบก่อนหน้า) แทน
+
+**Live-verified ด้วย Playwright จริง** (Chromium จริง มี `crypto.subtle`/`Blob.arrayBuffer` ครบ ต่างจาก jsdom ที่ใช้ใน unit test) บน production build ที่ serve ผ่าน bruno-server: upload zip ไฟล์ทดสอบ (zip ของ `tests/interpolation/collection`) ผ่าน Import Collection modal's file input → ไม่มี console error ใดๆ เลย (`TOTAL_CONSOLE_ERRORS: 0`) → wizard advance ไปหน้า Name/Location อัตโนมัติพร้อม pre-fill ชื่อ collection ที่ sniff ได้จากไฟล์ (screenshot ยืนยัน) — พิสูจน์ว่า checksum ผ่านจริง (ถ้าไม่ผ่านจะ reject ด้วย `TransferIntegrityError` ก่อนถึงขั้นตอนนี้) → export collection จริงที่มีอยู่แล้วผ่าน Share modal → toast "Collection exported successfully" ปรากฏ, `download` event ยิงจริงพร้อมไฟล์ 677 bytes, ไม่มี `TransferIntegrityError` หรือ console error ใดๆ (`HAS_INTEGRITY_ERROR: false`) — ไม่พบบั๊ก product code ใหม่ระหว่าง live verification รอบนี้
+
+**ยังไม่ทำ:**
+- resume สำหรับไฟล์ใหญ่ที่ upload/download ค้างกลางทาง (chunked upload/download protocol, partial-file storage lifecycle, byte-range resume semantics) — ขอบเขตใหญ่กว่า checksum มาก ใกล้เคียง scope ของ P1.2's idempotency-key ที่ defer ไว้แล้วก่อนหน้า ยังไม่ตัดสินใจว่าจะทำ scoped-down version เองหรือถามผู้ใช้ก่อน
+- opaque file handle API — defer ตามเดิม (รอ user input เหมือนที่บันทึกไว้ในรอบก่อนๆ)
+- ทำความสะอาด scratch artifacts หลัง verify เสร็จแล้ว (ลบ script สำเนา, screenshot, log, ไฟล์ทดสอบใน scratchpad, kill server process)
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
 ---
 
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา

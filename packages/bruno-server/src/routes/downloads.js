@@ -19,7 +19,11 @@
  *
  * POST /api/downloads/:channel
  * Body: { args: [sourcePath, name] }
- * Response: the file bytes (Content-Disposition: attachment) or a JSON error.
+ * Response: the file bytes (Content-Disposition: attachment, X-Content-SHA256:
+ * <hex digest> of the exact bytes being streamed) or a JSON error.
+ *
+ * The digest lets the caller confirm the downloaded blob wasn't corrupted or
+ * truncated in transit (Improvement.md P1.1 Transfer Center checksums).
  */
 
 const os = require('os');
@@ -44,6 +48,16 @@ const SCRATCH_DIR = path.join(os.tmpdir(), 'bruno-bridge-transfers');
 fs.mkdirSync(SCRATCH_DIR, { recursive: true });
 
 const DOWNLOADABLE_CHANNELS = new Set(['renderer:export-collection-zip', 'renderer:export-workspace']);
+
+function hashFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
 
 const createDownloadsRouter = (handlerRegistry, windowShim, createFakeEvent) => {
   const router = express.Router();
@@ -110,6 +124,7 @@ const createDownloadsRouter = (handlerRegistry, windowShim, createFakeEvent) => 
       }
 
       const downloadName = `${String(args[1] || 'export').replace(/[^a-zA-Z0-9._-]/g, '_')}.zip`;
+      res.setHeader('X-Content-SHA256', await hashFile(tempPath));
       res.download(tempPath, downloadName, (err) => {
         cleanup();
         if (err && !res.headersSent) {
