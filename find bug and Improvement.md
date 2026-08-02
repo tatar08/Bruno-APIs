@@ -1087,6 +1087,29 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 
 ---
 
+### P0.7 ผูก Playwright `browser-bridge` suite เข้า CI + P1.6 step 6 dependency-upgrade policy — 2 สิงหาคม 2026
+
+หลังผู้ใช้สั่ง **"ไม่ต้องเลื่อน ทำให้ครับไปเลย"** (ยกเลิกการเลื่อนงานที่เคยมองว่าต้อง "ถามผู้ใช้ก่อน") สองรายการที่เหลือใน P0.7/P1.6 ที่เคย mark ว่าเป็น process/infra decision ถูกหยิบมาทำเองตามดุลยพินิจ:
+
+**P0.7 — ผูก `browser-bridge` Playwright suite เข้า CI:**
+- ก่อนผูกเข้า CI ต้อง live-verify ก่อนว่า suite (3 spec ไฟล์, 9 tests) ยัง pass จริงในปัจจุบัน — รันแล้วพบว่า 8/9 ผ่าน มี 1 fail (`boot.spec.ts`) ที่ timeout รอ `[data-app-state="loaded"]`
+- **debug แล้วพบว่าไม่ใช่บั๊กจริงของ Bruno**: `page.goto('/')` ไปโดนหน้า login ของ **"Open WebUI"** ซึ่งเป็นแอปคนละตัวที่มีคนรันค้างอยู่บน port 3000 ของเครื่องนี้ (ไม่เกี่ยวกับ repo นี้เลย) — เพราะ `playwright.config.ts`'s `webServer` array ตั้ง `reuseExistingServer: !process.env.CI` (true นอก CI) ซึ่งแค่เช็คว่า url ตอบ 200 ก็ถือว่า "server พร้อมแล้ว" โดยไม่ได้ยืนยันว่าเป็นแอปที่ถูกต้อง — บนเครื่อง dev นี้เลยไปเจอแอปอื่นที่ squat port 3000 อยู่ก่อน
+- ยืนยัน root cause ด้วยการ isolate: ลอง override ชั่วคราวให้ dev server ฟังที่ port อื่น (3050) ผ่าน `PORT=3050 npm run dev:web` — พบบั๊ก/ข้อเท็จจริงเพิ่มอีกจุด: **`rsbuild dev` ไม่อ่าน env var `PORT` เลย** (ยืนยันด้วยการรันตรงๆ เห็น `info Port 3000 is in use, using port 3001` — ไม่สนใจ `PORT=3050` ที่ set ไว้เลย) ต้องใช้ CLI flag `--port` แทน (`rsbuild dev --port <n>`) — แต่ `npm run dev:web -- --port 3050` ก็ไม่ forward flag ผ่าน nested `npm run` layer ได้ถูกต้อง (npm แจ้ง `Unknown cli config "--port"`) ต้องเรียกตรงผ่าน `npm run dev --workspace=packages/bruno-app -- --port <n>` ถึง forward สำเร็จ
+- Live-verified ด้วย port 3060 (ว่างจริง, เรียกตรงผ่าน `--workspace`): `boot.spec.ts` ผ่าน 1/1 (9.3s) — ยืนยันว่า boot flow จริงของ `bruno-app` ทำงานถูกต้อง ปัญหาเดิม 100% เป็นแค่ local-machine port collision ไม่ใช่โค้ดของ Bruno — แก้ `playwright.config.ts` ชั่วคราวเพื่อทดสอบเท่านั้นแล้ว revert กลับ (`git checkout`) ก่อน commit เพราะ GitHub Actions runner เป็นเครื่องสะอาดเสมอ ไม่มี process อื่นมา squat port 3000 แน่นอน ไม่จำเป็นต้องเปลี่ยน port ที่ commit จริง
+- เพิ่ม job ใหม่ `browser-bridge-e2e` ใน `.github/workflows/ci.yml`: `npx playwright install --with-deps chromium` แล้ว `npm run test:e2e:browser-bridge` (script ที่มีอยู่แล้ว) ตาม pattern เดิมของอีก 3 jobs เป๊ะ (checkout → setup-node@v4 node 24 + npm cache → `npm ci`) เพิ่ม `upload-artifact` สำหรับ `playwright-report/` เมื่อ fail เพื่อ debug ง่ายขึ้น
+- **ข้อจำกัดของการ verify รอบนี้**: ยืนยันได้แค่ระดับ component (boot flow จริงทำงานถูกต้องเมื่อไม่โดน port ชน) และ YAML syntax valid (`yaml.safe_load`) — ยืนยัน full CI run จริงบน GitHub Actions ไม่ได้เพราะยังไม่ push (ตาม "ยังไม่ push" instruction) การ trigger จริงครั้งแรกจะเกิดตอนมี push จริงเท่านั้น
+
+**P1.6 step 6 — quarterly dependency upgrade window + security SLA:**
+- เขียนเป็นเอกสารจริงที่ `docs/dependency-upgrade-policy.md` (ภาษาอังกฤษ ตาม convention เดิมของ `docs/playwright-testing-guide.md`): quarterly window (สัปดาห์ที่สองของทุกไตรมาส, merge เรียงตาม risk bucket เดิมใน `.github/dependabot.yml` — `runtime → ui-libraries → build-tooling`) และ SLA ตาม severity (Critical 48 ชม., High 7 วัน, Moderate/Low รอ window ถัดไป) พร้อมกฎว่า Critical/High patch ต้องเป็น commit เดี่ยวแยกจาก batch เสมอ (ใช้ `overrides` pattern เดิมถ้าจำเป็น) และต้องผ่าน full test suite ก่อน merge เสมอไม่ว่าจะเร่งแค่ไหน
+
+**ไม่พบบั๊ก product code ใหม่** — ทั้งสองรายการเป็น CI/policy work ล้วนๆ ไม่แตะ production code path
+
+**ยังไม่ทำ:**
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session
+- ยังไม่มี parity/extractor สำหรับยืนยันว่า `docs/dependency-upgrade-policy.md`'s window schedule ถูก enforce จริง (เช่น bot เตือนอัตโนมัติเมื่อถึง window) — เป็น tooling เพิ่มเติมนอกสโคปของการ "เขียน policy" รอบนี้
+
+---
+
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา
 
 - `runner-dataset.js` (parser ฝั่ง electron): ป้องกัน `__proto__`, BOM, quoted newline, duplicate header, row limit ครบ — คุณภาพดี

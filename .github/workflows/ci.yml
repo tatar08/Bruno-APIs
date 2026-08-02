@@ -1,13 +1,16 @@
-# CI (Improvement.md P0.5/P0.6/P1.3): this repo previously had no CI
+# CI (Improvement.md P0.5/P0.6/P0.7/P1.3): this repo previously had no CI
 # pipeline at all (only Dependabot), which is why several roadmap items
 # stayed at "🟡 — no CI to gate on" (the RPC contract parity audit, the
-# Browser-parity Playwright suite, SBOM/signing). This workflow only covers
-# the parts of those items that are actually well-scoped without further
-# product decisions: lint, unit tests across every workspace, and the
-# RPC contract parity audit. It intentionally does NOT run the Playwright
-# e2e/browser-bridge suites (needs browser binaries + a real display-less
-# boot strategy, a separate increment) or SBOM/signing (needs a chosen
-# tool and a signing-key decision).
+# Browser-parity Playwright suite, SBOM/signing). This workflow covers
+# lint, unit tests across every workspace, the RPC contract parity audit,
+# and (browser-bridge-e2e, P0.7) the Playwright browser-bridge smoke suite
+# against packages/bruno-server + packages/bruno-app in a real headless
+# Chromium — GitHub Actions runners are always a clean box with no port
+# conflicts, so this job needs no special port handling despite a local-dev
+# caveat documented in find bug and Improvement.md's P0.7 section. It
+# intentionally does NOT run the Electron-based Playwright projects (needs
+# a real display-less Electron boot strategy, a separate increment) or
+# SBOM/signing (needs a chosen tool and a signing-key decision).
 name: CI
 
 on:
@@ -55,3 +58,21 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run audit:parity --workspace=packages/bruno-rpc-contract
+
+  browser-bridge-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:browser-bridge
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

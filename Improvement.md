@@ -209,7 +209,7 @@ Browser version ในปัจจุบันมี functional parity กับ
 
 เพิ่ม static parity audit ที่เปรียบเทียบ Electron handlers กับ RPC contract ทุก PR — ✅ script มีแล้ว (`scripts/audit-parity.js`, ดู P0.5) และตอนนี้รันทุก push/PR ผ่าน `.github/workflows/ci.yml` แล้ว
 
-### P0.7 CI Pipeline 🟡 เสร็จบางส่วน (พื้นฐานเสร็จแล้ว — repo ไม่มี CI มาก่อนเลย)
+### P0.7 CI Pipeline 🟡 เสร็จบางส่วน (พื้นฐาน + browser-bridge e2e เสร็จแล้ว)
 
 **เป้าหมาย:** ปิดช่องว่างที่หลาย item ข้างบน (P0.5, P0.6) ค้างอยู่ที่ 🟡 เพราะไม่มี CI pipeline ให้ผูก gate เข้าไป (repo มีแค่ `.github/dependabot.yml` ไม่มี `.github/workflows` มาก่อน)
 
@@ -217,7 +217,7 @@ Browser version ในปัจจุบันมี functional parity กับ
   - `lint` — `npm run lint` ทั้ง repo, blocking; ตอนสร้าง workflow นี้ครั้งแรกพบ lint error ค้างอยู่ 54 จุด (ทั้งหมด auto-fixable, กระจายในไฟล์ที่ไม่เกี่ยวกับ CI เลย) — รัน `npm run lint:fix` แก้หมดแล้ว (quote style, indent, blank-line เท่านั้น ไม่แตะ logic เลย, test suite ที่เกี่ยวข้องรันผ่านหมดหลังแก้) ก่อนเปิด job เป็น blocking
   - `test` — `npm test --workspaces --if-present` รัน jest ของทุก workspace ที่มี `test` script (ข้าม workspace ที่ไม่มี เช่น `bruno-docs`, `bruno-schema-types`) — live-verified แล้วว่าผ่านทั้งหมดก่อน commit (เช่น `bruno-server` 286/286, `bruno-rpc-contract` 19/19)
   - `rpc-contract-parity` — `npm run audit:parity --workspace=packages/bruno-rpc-contract` (ดู P0.5) — live-verified ผ่านก่อน commit
-- ยังไม่ทำ — Playwright e2e/`browser-bridge` suite (P0.6) ใน CI: ต้องมี browser binary install + headless boot strategy เป็นงานแยกที่ใหญ่กว่า
+- ✅ Playwright e2e/`browser-bridge` suite (P0.6) ใน CI — เพิ่ม job `browser-bridge-e2e` (`npx playwright install --with-deps chromium` แล้ว `npm run test:e2e:browser-bridge`) พร้อม `upload-artifact` สำหรับ `playwright-report/` เมื่อ fail — live-verify ก่อนผูกเข้าเจอ 1 fail ปลอมจาก unrelated process (แอปอื่น "Open WebUI") squat port 3000 ของเครื่อง dev เอง ไม่ใช่บั๊ก Bruno; แยก isolate ยืนยันด้วย port อื่นแล้ว boot flow จริงผ่าน 1/1 — CI runner สะอาดเสมอไม่มีปัญหานี้
 - ยังไม่ทำ — SBOM, dependency scanning, signed artifacts (P1.3): ตอนนี้มี CI ให้ผูกแล้ว แต่ยังต้องเลือก tool/signing-key policy ก่อน เป็น decision แยก
 - ยังไม่ทำ — matrix ข้าม platform (Windows/macOS/Linux) หรือ Node version (P0.6's minimum test matrix): รันแค่ `ubuntu-latest` ตอนนี้
 - ไม่แก้ diff-only lint mode — `eslint-plugin-diff` registered เป็น plugin ใน `eslint.config.js` อยู่แล้วแต่ยังไม่ได้ wire เข้า rule ใดๆ จริง (dead registration) ไม่ใช่ blocker อีกต่อไปเพราะ debt เดิมแก้หมดแล้ว แต่ยังเป็นโอกาสปรับปรุงในอนาคตถ้าอยากให้ PR ใหญ่ ๆ ไม่ต้องพะวงกับ lint error ของโค้ดที่ตัวเองไม่ได้แตะ
@@ -316,7 +316,7 @@ API ควรใช้ opaque file handles แทนส่ง absolute path ก�
 - ✅ test parallel OAuth flows จากสอง sessions — mechanism เดิม (`pendingRequests` keyed by state, isolation ต่อ session) มี test coverage อยู่แล้วใน `oauth2-protocol-handler.spec.js`; เพิ่ม test ใหม่สำหรับ `resolveOauth2AuthorizationRequest`/`rejectOauth2AuthorizationRequest` ที่ route ใหม่เรียกใช้โดยตรง
 - **out of scope ในรอบนี้ (ตัดสินใจแล้ว)**: implicit grant ถูก reject อย่างชัดเจนเมื่อรันผ่าน Bridge (`getOAuth2TokenUsingImplicitGrant`) เพราะ browser ไม่ส่ง URL hash fragment ไปที่ server ได้ — ไม่มีทางแก้ทาง technical, และ OAuth 2.1 เองก็ deprecate implicit grant อยู่แล้ว; frontend popup UI (เปิด popup, จัดการ popup-blocked, ปิด popup อัตโนมัติหลัง callback) เป็น follow-up แยกต่างหาก
 
-### P1.6 Runtime and Dependency Modernization ✅ เสร็จแล้ว (step 1-5); step 6 เป็น process decision แยกต่างหาก
+### P1.6 Runtime and Dependency Modernization ✅ เสร็จแล้วทั้งหมด (step 1-6)
 
 สถานะ ณ สิงหาคม 2026 (อัปเดตหลัง step 3-5 เสร็จ ตามที่ผู้ใช้อนุมัติ target versions: "ลองใช้ Node 26 และ Electron 43, React latest 19.2, Express 5.1"):
 
@@ -332,9 +332,9 @@ API ควรใช้ opaque file handles แทนส่ง absolute path ก�
 3. ✅ upgrade Electron ทีละ major พร้อม smoke test — ทำครบทั้ง 6 major (37→38→39→40→41→42→43) ทีละ commit แยกกัน แต่ละ commit มี smoke test/verification ของตัวเอง ปัจจุบัน pin ที่ `~43.2.0` ซึ่งอยู่ในสาม stable majors ล่าสุดตามที่ Electron project support
 4. ✅ upgrade React 19.2 และแก้ React 19 ref warnings — bump `react`/`react-dom` เป็น `19.2.8` ใน `bruno-app` (และ `bruno-graphql-docs` เพื่อ align pin, ใช้เฉพาะตอน build เพราะ externalize ออกจาก published bundle ผ่าน `rollup-plugin-peer-deps-external`) ระหว่างทางเจอ bug จริง: bruno-app's exact-pinned React ใหม่ทำให้เกิด React สองชุดพร้อมกัน (root hoisted เก่า vs nested ใหม่) เพราะ transitive deps บางตัว (`react-hot-toast`, `@tabler/icons` ฯลฯ) peer-cap ไว้ที่ `^18` — แก้โดยเพิ่ม `react`/`react-dom` เข้า root `package.json`'s `dependencies` และ `overrides` (pattern เดียวกับที่ใช้กับ `axios`/`rollup`/`pbkdf2` อยู่แล้ว) บังคับให้ dedupe เหลือ React ชุดเดียวทั้ง tree — verify แล้วด้วย full monorepo test suite (13 workspaces, all green) และ production build (`rsbuild build -m production` ได้ `lib-react` chunk เดียว ไม่มี duplicate) — ส่วน **React 19 ref warning** ("Accessing element.ref was removed") root-cause แล้วว่ามาจากบรรทัดเดียวใน `@tippyjs/react`'s `Tippy.js` (third-party package ที่ดูเหมือนจะไม่ maintain ต่อสำหรับ React 19 แล้ว, เวอร์ชันล่าสุดบน npm คือ 4.2.6 เท่าที่มี) — **ตั้งใจไม่แก้ในรอบนี้**: เป็นแค่ console warning ไม่กระทบ test/functionality จริง (React เองบอกว่ายังใช้งานได้ "for now"), การ patch/เปลี่ยน UI dependency ทั้ง tree เป็นการตัดสินใจ product-risk ที่ควรถามผู้ใช้ก่อนเหมือน P1.5's popup UI ไม่ใช่สิ่งที่ควรทำเองแบบเงียบ ๆ
 5. ✅ migrate Bridge ไป Express 5 พร้อม contract/integration tests — bump `express` เป็น `^5.1.0` (resolved `5.2.1`) ใน `bruno-server`; cross-reference breaking changes ทั้งหมดของ Express 5 กับ usage จริง เจอจุดกระทบจริงจุดเดียวคือ SPA fallback route ใช้ bare wildcard `/*` ซึ่ง Express 5's path-to-regexp v8 reject ตรง ๆ — แก้เป็น `/*splat` (named wildcard) ตามที่ Express 5 กำหนด; เพิ่ม `packages/bruno-server/src/__tests__/app-routes.spec.js` เป็น HTTP-level integration test suite ใหม่ (ใช้ `supertest`, mount route modules จริงไม่ mock) 13 tests ครอบ auth/ipc-proxy/admin/oauth2 routes และ SPA fallback routing โดยเฉพาะ — ปิด gap เดิมที่ไม่เคยมี test สร้าง real Express app เลย — verify แล้วด้วย full test suite (18 suites/256 tests) และ live-boot smoke test (production server บูตจริง, 203 real IPC handlers, serve ถูกต้องบน Express 5.2.1)
-6. กำหนด quarterly dependency upgrade window และ SLA สำหรับ security patches — ยังไม่ทำ (เป็น process/policy decision ของทีม ไม่ใช่โค้ด ต้องตัดสินใจร่วมกับผู้ใช้/ทีม)
+6. ✅ กำหนด quarterly dependency upgrade window และ SLA สำหรับ security patches — เขียนเป็นเอกสารจริงที่ `docs/dependency-upgrade-policy.md`: quarterly window (สัปดาห์ที่สองของทุกไตรมาส, merge Dependabot PR เรียงตาม risk bucket เดิม `runtime → ui-libraries → build-tooling`) + SLA ตาม severity (Critical 48 ชม., High 7 วัน, Moderate/Low รอ window ถัดไป) พร้อมกฎว่า Critical/High ต้องเป็น standalone commit แยกจาก batch, ยังต้องผ่าน full test suite เสมอ, และถ้าไม่มี patch ทันเวลาให้ document mitigation ชั่วคราวใน `find bug and Improvement.md`
 
-อย่า upgrade ทุก dependency ใน PR เดียว ควรแยก runtime, build tooling และ UI libraries เพื่อลด blast radius — ข้อ 3-5 ทำแยก commit ต่อ major/dependency ตามหลักการนี้แล้ว (Electron แยก 6 commit ทีละ major, Express และ React แยกกันคนละ commit) — **ข้อ 6 เหลือเป็นข้อเดียวที่ยังไม่ทำ**: เป็น process/policy decision ที่ต้องคุยกับทีมก่อน ไม่ใช่สิ่งที่ทำเองได้ฝ่ายเดียว
+อย่า upgrade ทุก dependency ใน PR เดียว ควรแยก runtime, build tooling และ UI libraries เพื่อลด blast radius — ข้อ 3-5 ทำแยก commit ต่อ major/dependency ตามหลักการนี้แล้ว (Electron แยก 6 commit ทีละ major, Express และ React แยกกันคนละ commit), ข้อ 6 กำหนดเป็น policy อย่างเป็นทางการแล้วที่ `docs/dependency-upgrade-policy.md`
 
 ---
 
