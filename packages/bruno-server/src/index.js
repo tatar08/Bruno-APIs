@@ -37,7 +37,8 @@ const { createUploadsRouter } = require('./routes/uploads');
 const { createDownloadsRouter } = require('./routes/downloads');
 const { isOriginAllowed } = require('./security/origin-policy');
 const { isAuthRequired, requireAuth, bootstrapToken } = require('./security/auth');
-const { getOrCreateMasterKey, createSafeStorageShim } = require('./security/master-key');
+const { createSafeStorageShim } = require('./security/master-key');
+const { createSecretProvider } = require('./security/secret-provider');
 const { redactSecrets } = require('./security/log-redaction');
 const { validateStartupConfig } = require('./config-validation');
 const { getBuildInfo } = require('./health');
@@ -105,8 +106,13 @@ const USER_DATA_DIR = path.join(require('os').homedir(), '.config', 'bruno');
 // through to a key derived from machineIdSync() — one shared, unmanaged key
 // for every session on this server process. Kept in its own subdirectory
 // (not beside the ciphertext files above) with restrictive file permissions.
+//
+// Sourced through the secret provider interface (Improvement.md P1.4B,
+// security/secret-provider.js) so where the key comes from is pluggable —
+// BRUNO_SERVER_SECRET_PROVIDER defaults to `local`, which is this exact
+// file/env-based logic unchanged.
 const MASTER_KEY_PATH = process.env.BRUNO_SERVER_MASTER_KEY_PATH || path.join(USER_DATA_DIR, '.keys', 'bridge-master.key');
-const masterKey = getOrCreateMasterKey(MASTER_KEY_PATH);
+const masterKey = createSecretProvider({ masterKeyPath: MASTER_KEY_PATH }).getMasterKey();
 const safeStorageShim = createSafeStorageShim(masterKey);
 
 // --- Initialize core components ---

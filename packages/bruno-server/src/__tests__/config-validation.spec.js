@@ -95,6 +95,21 @@ describe('validateStartupConfig', () => {
     });
   });
 
+  describe('BRUNO_SERVER_SECRET_PROVIDER', () => {
+    it.each(['local', 'vault', 'aws-secrets-manager'])('accepts "%s"', (value) => {
+      expect(validateStartupConfig({ BRUNO_SERVER_SECRET_PROVIDER: value })).toEqual([]);
+    });
+
+    it('is not validated when unset', () => {
+      expect(validateStartupConfig({})).toEqual([]);
+    });
+
+    it.each(['gcp-secret-manager', 'LOCAL', 'vaultt', ''])('rejects "%s"', (value) => {
+      const errors = validateStartupConfig({ BRUNO_SERVER_SECRET_PROVIDER: value });
+      expect(errors).toEqual([expect.stringContaining('BRUNO_SERVER_SECRET_PROVIDER')]);
+    });
+  });
+
   describe('TLS (BRUNO_SERVER_TLS_CERT_FILE / _KEY_FILE / _CA_FILE)', () => {
     let tmpDir, certFile, keyFile, caFile, missingFile;
 

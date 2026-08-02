@@ -1184,6 +1184,34 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 - handle ไม่ persist ข้าม process restart — ตั้งใจ (ดู rationale ใน `file-handles.js`'s comment) ไม่ใช่ของที่ลืมทำ
 - ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
 
+### P1.4B External secret provider interface + local default — 2 สิงหาคม 2026
+
+`Improvement.md`'s P1.4 เดิม mark ข้อ "external secret provider ผ่าน interface (Vault, AWS Secrets Manager)" ว่ายังไม่ทำ พร้อมโน้ตว่า "ต้องออกแบบ interface shape ก่อน เป็น architecture decision ที่ต้องคุยกับผู้ใช้แยกรอบ" — ตาม **"ไม่ต้องเลื่อน ทำให้ครับไปเลย"** ออกแบบและ implement ส่วนที่ทำได้จริงโดยไม่ต้องเปลี่ยน architecture ใหญ่ (interface + local default) ส่วนที่ยังเป็น network-backed provider จริง (Vault/AWS) ยังคงเก็บไว้เป็น scope แยกตามเดิม เพราะเจอเหตุผลทาง technical ที่ชัดเจนระหว่างออกแบบ (ดูด้านล่าง):
+
+- **ออกแบบ boundary แบบ envelope encryption**: ทุกอย่างที่ Bridge เข้ารหัสไว้ (AI keys, OAuth2 tokens, secret env vars, cookies ฯลฯ) พึ่ง master key 32 byte ตัวเดียวที่ผลิตออกมาจาก `security/master-key.js`'s `createSafeStorageShim()` — เลย define "secret provider" ให้มีหน้าที่แคบมากแค่ผลิต master key ตัวนี้ตัวเดียว (`{ name, getMasterKey(): Buffer }`) ไม่ยุ่งกับ bulk encrypt/decrypt logic เลย ผลคือเปลี่ยน provider ได้โดยไม่ต้องแตะ `encryption.js` หรือ call site ไหนทั้งสิ้น (เหมือน P1.1's opaque handle ที่แยก concern ให้ชัดจนไม่กระทบของเดิม)
+- **`security/secret-provider.js`** (ไฟล์ใหม่): factory `createSecretProvider(options)` อ่าน `BRUNO_SERVER_SECRET_PROVIDER` (ดีฟอลต์ `local` — ไม่ตั้งค่า = behavior เดิม 100%) แล้ว dispatch ไปที่ provider module ที่ registered ใน `security/secret-providers/`:
+  - `local-provider.js` — ห่อ `master-key.js`'s `getOrCreateMasterKey()` เดิมไว้เฉยๆ (ของเดิมที่ implement ใน P1.4 รอบแรกไม่ได้แก้ logic อะไรเลย)
+  - `vault-provider.js` / `aws-secrets-manager-provider.js` — registered ชื่อพร้อม JSDoc อธิบาย contract ที่ต้อง implement แต่ **ตั้งใจ throw error ชัดเจนถ้าถูกเลือก** แทนที่จะพยายาม implement ให้ครบใน increment เดียว เหตุผลที่พบจริงระหว่างออกแบบ: การดึง key จาก Vault/AWS ต้องเป็น network call (async) แต่ `index.js`'s startup sequence ทั้งไฟล์เป็น synchronous ล้วนๆ ตั้งแต่ต้นจนจบ (ดู `MASTER_KEY_PATH`/`masterKey` ที่ compute แบบ top-level script ไม่ใช่ async function) — การทำให้ async ได้ต้อง restructure ทั้งไฟล์ ผสมกับต้องเพิ่ม SDK dependency ใหม่และออกแบบ retry/timeout/credential/rotation policy เอง เป็นคนละขนาดกับ "นิยาม interface" ที่ scope ไว้รอบนี้ — สอดคล้องกับ fail-safe-not-fail-open posture เดิมของ codebase (เหมือน `allowed-roots.js`): เลือก provider ที่ยังไม่รองรับ → fail ทันทีตั้งแต่ startup พร้อมบอกทางออก (ใช้ `local` หรือฉีด key ผ่าน `BRUNO_SERVER_MASTER_KEY` เอง) ไม่ silently fallback ไปที่ provider อื่นหรือ unmanaged key
+- **`config-validation.js`**: เพิ่มเช็ค `BRUNO_SERVER_SECRET_PROVIDER` ต้องเป็นหนึ่งใน 3 ชื่อที่ registered เท่านั้น (`local`/`vault`/`aws-secrets-manager`) — จับ typo ได้ตั้งแต่ startup ก่อนจะไปถึง master-key bootstrap เลยด้วยซ้ำ (เร็วกว่าปล่อยให้ error ลึกๆใน `index.js`)
+- **`index.js`**: เปลี่ยนจากเรียก `getOrCreateMasterKey(MASTER_KEY_PATH)` ตรงๆ เป็น `createSecretProvider({ masterKeyPath: MASTER_KEY_PATH }).getMasterKey()` — บรรทัดเดียวที่เปลี่ยน behavior จริงคือเพิ่มการเช็ค provider name เท่านั้น ผลลัพธ์ของ key เดิมเหมือนเดิมทุกประการเมื่อไม่ตั้ง env
+
+**Test coverage ใหม่**:
+- `secret-provider.spec.js` (8 tests): ดีฟอลต์เป็น `local` เมื่อไม่ตั้ง env, `local` provider คืน key จริง 32 byte ที่ backed โดย `master-key.js` (ไฟล์ถูกสร้างจริง), เคารพ `BRUNO_SERVER_SECRET_PROVIDER=local` ที่ตั้งผ่าน env, `provider` option override env ได้, `vault`/`aws-secrets-manager` throw ข้อความ "not implemented yet" ชัดเจน, ชื่อที่ไม่รู้จักเลย throw พร้อม list ชื่อที่รองรับทั้งหมด
+- `config-validation.spec.js` เพิ่ม describe block ใหม่: accept ทั้ง 3 ชื่อ, ไม่ validate เมื่อ unset, reject ชื่อผิด/case ผิด (`LOCAL`)/ชื่อที่ไม่มีจริง/string ว่าง
+- full suite ผ่าน 346/346 (ขึ้นจาก 330) — lint clean ทุกไฟล์ที่แตะ
+
+**Live-verified ด้วย server process จริง** (ไม่ใช่ mock):
+- บูตด้วยดีฟอลต์ (ไม่ตั้ง `BRUNO_SERVER_SECRET_PROVIDER` เลย) → `bridge-master.key` ถูกสร้างจริงที่ path เดิมด้วย permission `0600` เหมือนก่อนมี increment นี้ทุกประการ, `GET /api/health` ตอบ `{"status":"ok","mode":"bridge-server",...}` ปกติ — พิสูจน์ zero behavior change
+- ตั้ง `BRUNO_SERVER_SECRET_PROVIDER=vault` แล้วบูต → process exit code `1` ทันที พร้อม stack trace ที่มี error message ชัดเจน ("is not implemented yet ... Use BRUNO_SERVER_SECRET_PROVIDER=local (the default), or set BRUNO_SERVER_MASTER_KEY ...") — ไม่ boot ค้างครึ่งๆกลางๆ ไม่ fallback เงียบๆ
+- ตั้งชื่อ provider พิมพ์ผิด (`gcp-secret-manager`) แล้วบูต → โดน `validateStartupConfig` เตะออกตั้งแต่ก่อนแม้แต่จะไปถึง master-key bootstrap เลย ด้วย error message ที่บอกชื่อที่รองรับทั้งหมด (`local, vault, aws-secrets-manager`) — เร็วกว่า fail ที่ provider factory เอง
+
+**ไม่พบบั๊ก product code ที่เคย ship ระหว่างทำ increment นี้** — เป็นฟีเจอร์ใหม่ล้วนๆ (interface ใหม่ + wrap logic เดิมที่ implement ใน P1.4 รอบแรกไว้เฉยๆ ไม่แก้) ดีฟอลต์ปิด (ไม่ตั้ง env = behavior เดิม 100%)
+
+**ยังไม่ทำ (ตัดสินใจแล้ว ไม่ใช่ของที่ลืม):**
+- Vault/AWS Secrets Manager **provider จริง** ที่ดึง key ผ่าน network ได้จริงๆ — ต้องทำ `index.js`'s startup sequence ให้ async ได้ก่อน (breaking change ต่อโครงสร้างไฟล์) + เพิ่ม SDK dependency ใหม่ (`node-vault`/AWS SDK) + ออกแบบ credential/retry/timeout/rotation policy เอง เป็น architecture decision คนละขนาด เก็บไว้ทำทีหลังตามเดิม
+- key rotation, lock/unlock concept, backup policy — greenfield ทั้งหมด ยังไม่ทำ เหมือนที่ P1.4 รอบแรก mark ไว้
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
 ---
 
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา

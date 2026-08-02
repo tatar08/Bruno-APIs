@@ -11,6 +11,8 @@
 
 const fs = require('node:fs');
 
+const { SUPPORTED_PROVIDER_NAMES } = require('./security/secret-provider');
+
 const POSITIVE_INTEGER_ENV_VARS = [
   'BRUNO_SERVER_AUTH_RATE_LIMIT',
   'BRUNO_SERVER_AUTH_RATE_WINDOW_MS',
@@ -70,6 +72,18 @@ const validateStartupConfig = (env = process.env) => {
   ) {
     errors.push(
       `BRUNO_SERVER_BASE_PATH="${env.BRUNO_SERVER_BASE_PATH}" must be empty or a path like "/bridge" (no trailing slash, alphanumeric/hyphen/underscore segments only)`
+    );
+  }
+
+  // Improvement.md P1.4B: catch a typo'd provider name (or a name for a
+  // provider that isn't implemented yet, e.g. "vault") at startup rather
+  // than deep inside index.js's master-key bootstrap.
+  if (
+    env.BRUNO_SERVER_SECRET_PROVIDER !== undefined &&
+    !SUPPORTED_PROVIDER_NAMES.includes(env.BRUNO_SERVER_SECRET_PROVIDER)
+  ) {
+    errors.push(
+      `BRUNO_SERVER_SECRET_PROVIDER="${env.BRUNO_SERVER_SECRET_PROVIDER}" must be one of: ${SUPPORTED_PROVIDER_NAMES.join(', ')}`
     );
   }
 
