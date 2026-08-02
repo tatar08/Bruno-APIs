@@ -1134,6 +1134,31 @@ Export ใหม่จาก `packages/bruno-rpc-contract/src/index.js` (`REQUES
 - ไม่ผูก ACME/Let's Encrypt หรือ CA เฉพาะเจ้าใดๆ — certificate provisioning/renewal ยังเป็น operator responsibility เหมือน reverse-proxy path เดิมทุกประการ (สอดคล้องกับ P1.3's SBOM/signing ที่ก็ยังรอ tool decision แยกต่างหากเหมือนกัน)
 - ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
 
+### P0.2 Confirmation policy สำหรับ irreversible-delete channels — 2 สิงหาคม 2026
+
+`Improvement.md`'s P0.2 เดิม mark ข้อ "เพิ่ม confirmation/policy สำหรับ action เสี่ยงสูง" ว่า "ยังไม่ทำ ต้องถามผู้ใช้ก่อน (breaking UX change)" ตาม **"ไม่ต้องเลื่อน ทำให้ครับไปเลย"** แก้ concern นั้นด้วย pattern เดียวกับ P1.3's TLS work คือทำเป็น opt-in ทั้งหมด:
+
+- **`security/confirmation-policy.js`** (ไฟล์ใหม่): `CONFIRMATION_REQUIRED_CHANNELS` เป็น `Set` ที่สร้างจาก `CHANNELS.*` constant ของ `@usebruno/rpc-contract` (ไม่ใช่ raw string — typo จะเป็น `ReferenceError` ตอน `require()` ไม่ใช่ silent no-op) ครอบ 11 channel ที่เป็น irreversible delete จริงๆ เท่านั้น: `delete-item`, `delete-environment`, `delete-global-environment`, `delete-dotenv-file`, `delete-workspace-dotenv-file`, `delete-workspace-environment`, `delete-transient-requests`, `delete-cookie`, `delete-cookies-for-domain`, `remove-collection`, `remove-collection-from-workspace` — ตั้งใจแคบ ไม่ใช่ policy "high risk" กว้างๆ ที่รวม rename/move/save ซึ่ง revert ได้; `CONFIRMATION_REQUIRED` อ่าน `BRUNO_SERVER_REQUIRE_CONFIRMATION === 'true'` ครั้งเดียวตอน module-require (pattern เดียวกับ `ipc-limits.js`) ดีฟอลต์ปิด — ไม่ตั้งค่าก็ไม่มี behavior เปลี่ยนแปลงเลย
+- **`routes/ipc-proxy.js`**: เพิ่ม `needsConfirmation(channel)` check แทรกระหว่าง schema-validation (`argsError`) กับ path-policy (`pathViolation`) check — channel ที่ต้อง confirm แต่ `req.body.confirm !== true` → คืน `428 Precondition Required` (code `CONFIRMATION_REQUIRED`, เพิ่มใหม่ใน `ERROR_CODES` ของ `error-envelope.js`, ไม่เพิ่มเข้า `RETRYABLE_CODES` เพราะ resend โดยไม่ส่ง `confirm: true` ก็แค่วน error เดิม) ส่ง `confirm: true` มา → ผ่านเข้า handler ปกติ ไม่กระทบ channel อื่นเลยแม้เปิด policy
+- เป็น **server-side half เท่านั้น** — UI confirm-dialog ที่ set `confirm: true` หลังผู้ใช้กดยืนยันเป็น frontend follow-up แยกต่างหาก (pattern เดียวกับที่ใช้กับ P1.5's OAuth popup: backend/API เสร็จ, UI ค้าง)
+
+**Test coverage ใหม่**: 5 tests ใน `security/__tests__/confirmation-policy.spec.js` ใช้ `loadModule(env)` helper + `jest.isolateModules()` (copy pattern จาก `ipc-limits.spec.js` เพราะ module cache env var ตอน require) ครอบ: ดีฟอลต์ปิด (ไม่ block แม้ channel destructive), เปิดแล้ว block ทุก channel ใน `CONFIRMATION_REQUIRED_CHANNELS`, channel ที่ไม่ destructive ไม่โดนกระทบแม้เปิด policy, ค่าอื่นที่ไม่ใช่ literal `'true'` (เช่น `'1'`) ถือว่าปิด, และ exact membership ของ `CONFIRMATION_REQUIRED_CHANNELS` ทั้ง 11 ตัว — full bruno-server suite (325/325) และ bruno-rpc-contract suite (23/23) ผ่านทั้งหมดหลังเพิ่ม lint clean ทั้ง 4 ไฟล์ที่แตะ
+
+**Live-verified** ด้วย server process จริง 2 ตัว (ไม่ใช่ mock): ตัวหนึ่งไม่ตั้ง `BRUNO_SERVER_REQUIRE_CONFIRMATION` (ดีฟอลต์ปิด) อีกตัวตั้ง `=true` — ยิง `curl` ตรงไปที่ `/api/ipc/renderer:delete-item` (และ channel อื่นในกลุ่ม) จริง:
+- Policy off: delete ไปถึง handler ปกติไม่มีการ block แม้ไม่ส่ง `confirm`
+- Policy on, ไม่ส่ง `confirm`: ได้ `428` พร้อม `code: "CONFIRMATION_REQUIRED"` และ error message บอกวิธีแก้ตรงๆ
+- Policy on, ส่ง `"confirm": true`: ผ่านเข้า handler ปกติเหมือน policy off
+- Policy on, ยิง channel ที่ไม่ destructive (เช่น `renderer:save-file`): ไม่โดน block เลยแม้ policy เปิดอยู่ — ยืนยันว่า gate แคบเฉพาะ 11 channel จริง
+
+**อัปเดตเอกสาร**: `Improvement.md`'s P0.2 bullet เปลี่ยนจาก 🟡 เป็น ✅ พร้อมคำอธิบาย opt-in design เต็ม; `packages/bruno-server/THREAT_MODEL.md` เพิ่ม row ใหม่ใน Boundary 2 (Privileged IPC dispatch) table อธิบาย mitigation นี้
+
+**ไม่พบบั๊ก product code ใหม่ระหว่างทำ increment นี้** — เป็นฟีเจอร์ใหม่ล้วนๆ (opt-in, ดีฟอลต์ปิด) แทรกเป็น check เพิ่มใน pipeline เดิมโดยไม่แก้ logic ที่มีอยู่แล้ว
+
+**ยังไม่ทำ (ตัดสินใจแล้ว ไม่ใช่ของที่ลืม):**
+- ไม่มี UI confirm-dialog — frontend follow-up แยกต่างหาก (เหมือน P1.5's OAuth popup UI ที่ยังค้างเช่นกัน)
+- `Improvement.md`'s P0.2 section header ยังเป็น 🟡 เพราะ schema-validation coverage (ข้อถัดไปในหัวข้อเดียวกัน) ยังไม่ครบทั้ง ~203 handler — ตั้งใจ ไม่ใช่ของที่ลืม
+- ยังไม่ push ขึ้น remote — ตาม pattern เดิมของ session ("ยังไม่ push")
+
 ---
 
 ## 5. สิ่งที่ตรวจแล้วไม่พบปัญหา

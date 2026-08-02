@@ -109,6 +109,7 @@ event หรือควบคุม resource (เช่น terminal process) �
 | client เรียก `terminal:*` เพื่อรัน shell command ใดๆ บนเครื่อง server | `terminal:*` และ git remote-mutation channel (clone/connect/disconnect) ปิดโดยดีฟอลต์ ต้องตั้ง `BRUNO_SERVER_ENABLE_PRIVILEGED_CHANNELS=true` เอง | `security/privileged-channels.js` |
 | args ของ channel ที่ privileged เปิดอยู่มีรูปแบบผิดจนทำให้ handler ทำงานผิดที่ (เช่น `terminal:kill` ได้ non-string) | schema validation เฉพาะ channel กลุ่มนี้ (arg count + type) — ตั้งใจไม่ทำ schema ให้ครบทุก 200+ channel เพราะ false-positive เสี่ยงกว่า | `security/channel-policy.js` (`CHANNEL_SCHEMAS`) |
 | channel ที่ไม่มี handler จริงถูกยิงแล้วทำให้เกิดพฤติกรรมไม่คาดคิด | 404 `HANDLER_NOT_FOUND` ถ้าไม่มี handler ลงทะเบียนไว้จริง (ทั้ง `invoke` และ `emit`) | `routes/ipc-proxy.js` |
+| client เผลอ (หรือ script ยิงผิด) เรียก channel ที่ลบข้อมูลแบบกู้คืนไม่ได้ (delete item/environment/collection/cookie ฯลฯ) โดยไม่มีการยืนยันใดๆ | opt-in confirmation gate: ตั้ง `BRUNO_SERVER_REQUIRE_CONFIRMATION=true` แล้ว 11 channel ที่เป็น irreversible delete จริงๆ ต้องมี `confirm: true` ใน body ไม่งั้นได้ `428 CONFIRMATION_REQUIRED` — ปิดเป็นดีฟอลต์ (ไม่ตั้งค่า = ไม่มี behavior เปลี่ยน); เป็น server-side gate เท่านั้น ยังไม่มี UI confirm-dialog | `security/confirmation-policy.js`, `routes/ipc-proxy.js` |
 
 ### Boundary 3 — Filesystem path resolution
 

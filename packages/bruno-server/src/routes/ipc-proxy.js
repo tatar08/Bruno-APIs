@@ -8,6 +8,7 @@
 
 const express = require('express');
 const { isPrivilegedChannel, PRIVILEGED_CHANNELS_ENABLED } = require('../security/privileged-channels');
+const { needsConfirmation } = require('../security/confirmation-policy');
 const { findPathPolicyViolation } = require('../security/allowed-roots');
 const { logSandboxDenial } = require('../security/audit-log');
 const { redactSecrets } = require('../security/log-redaction');
@@ -83,6 +84,16 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
     const argsError = validateArgs(channel, args);
     if (argsError) {
       return res.status(400).json({ code: ERROR_CODES.INVALID_ARGS, error: argsError });
+    }
+
+    // Improvement.md P0.2: irreversible deletes require an explicit
+    // confirm: true in the body when BRUNO_SERVER_REQUIRE_CONFIRMATION is
+    // on; a no-op when that env var is unset (see confirmation-policy.js).
+    if (needsConfirmation(channel) && req.body.confirm !== true) {
+      return res.status(428).json({
+        code: ERROR_CODES.CONFIRMATION_REQUIRED,
+        error: `Channel "${channel}" deletes data with no undo and requires explicit confirmation (BRUNO_SERVER_REQUIRE_CONFIRMATION is enabled). Resend the request with "confirm": true in the request body.`
+      });
     }
 
     const pathViolation = findPathPolicyViolation(channel, args);
