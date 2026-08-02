@@ -140,6 +140,34 @@ function generateRequestId() {
   return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+// Channels retryableInvoke() (below) will attach a stable idempotency key
+// to and retry on network failure (Improvement.md P1.2) — a hand-picked
+// allowlist of pure creates identified by a name/path the handler already
+// treats as unique, so replaying the original response on retry is always
+// safe. Kept in sync by hand with IDEMPOTENT_CHANNELS in bruno-server's
+// security/idempotency.js; duplicated here as plain literals rather than
+// pulling in a new @usebruno/rpc-contract dependency (and the build/jest
+// wiring that would need) for bruno-app just for this short, stable list.
+const IDEMPOTENT_CHANNELS = new Set([
+  'renderer:new-request',
+  'renderer:new-folder',
+  'renderer:clone-folder',
+  'renderer:create-environment',
+  'renderer:create-global-environment',
+  'renderer:import-collection',
+  'renderer:import-collection-zip'
+]);
+
+export const RETRYABLE_INVOKE_MAX_ATTEMPTS = 3;
+export const RETRYABLE_INVOKE_RETRY_DELAY_MS = 500;
+
+// fetch() itself throws a TypeError (e.g. "Failed to fetch") for a genuine
+// network-level failure (DNS, connection refused, offline) as opposed to
+// an HTTP error response, which resolves normally instead of throwing.
+function isRetryableNetworkFailure(err) {
+  return err instanceof IpcTimeoutError || err instanceof TypeError;
+}
+
 /**
  * Thrown when an invoke()/send() HTTP call is aborted for exceeding
  * INVOKE_TIMEOUT_MS. Carries the same requestId sent in the X-Request-Id
@@ -234,6 +262,13 @@ class ElectronTransport {
 
   openExternal(url) {
     return window.ipcRenderer.openExternal(url);
+  }
+
+  // Electron's IPC is a direct in-process channel with no network hop, so
+  // there's nothing to retry — a failed call already failed for a reason
+  // unrelated to a lost response (see BrowserTransport.retryableInvoke()).
+  retryableInvoke(channel, ...args) {
+    return this.invoke(channel, ...args);
   }
 
   // Electron's IPC is a direct in-process channel with no network hop, so
@@ -581,38 +616,94 @@ class BrowserTransport {
     }
 
     try {
-      await ensureBridgeAuth();
-
-      let response = await this._fetchIpc(channel, args);
-
-      if (response.status === 401) {
-        // Session likely expired server-side (or auth was just turned on) —
-        // force a fresh bootstrap-token prompt and retry exactly once.
-        forgetBridgeAuth();
-        await ensureBridgeAuth();
-        response = await this._fetchIpc(channel, args);
-      }
-
-      const result = await response.json();
-
-      if (!response.ok || result.error) {
-        const error = new Error(result.error || result.message || `IPC call "${channel}" failed`);
-        if (result.stack) {
-          error.stack = result.stack;
-        }
-        if (result.requestId) {
-          error.requestId = result.requestId;
-        }
-        throw error;
-      }
-
-      return result.data;
+      return await this._dispatchIpc(channel, args);
     } catch (err) {
       if (err.message && !err.message.includes('IPC call')) {
         console.error(`[BrowserTransport] invoke("${channel}") failed:`, err);
       }
       throw err;
     }
+  }
+
+  /**
+   * Shared request/response handling for invoke() and retryableInvoke():
+   * runs _fetchIpc(), retries exactly once on a 401 (session expiry), and
+   * turns a non-ok response / an { error } body into a thrown Error the
+   * same way both callers expect. `extra` is forwarded into the request
+   * body (e.g. { idempotencyKey } — see retryableInvoke()).
+   */
+  async _dispatchIpc(channel, args, extra = {}) {
+    await ensureBridgeAuth();
+
+    let response = await this._fetchIpc(channel, args, extra);
+
+    if (response.status === 401) {
+      // Session likely expired server-side (or auth was just turned on) —
+      // force a fresh bootstrap-token prompt and retry exactly once.
+      forgetBridgeAuth();
+      await ensureBridgeAuth();
+      response = await this._fetchIpc(channel, args, extra);
+    }
+
+    const result = await response.json();
+
+    if (!response.ok || result.error) {
+      const error = new Error(result.error || result.message || `IPC call "${channel}" failed`);
+      if (result.stack) {
+        error.stack = result.stack;
+      }
+      if (result.requestId) {
+        error.requestId = result.requestId;
+      }
+      throw error;
+    }
+
+    return result.data;
+  }
+
+  /**
+   * retryableInvoke(channel, ...args) — like invoke(), but for the
+   * hand-picked set of create/save channels in IDEMPOTENT_CHANNELS
+   * (Improvement.md P1.2): attaches one idempotency key shared by every
+   * attempt, and retries up to RETRYABLE_INVOKE_MAX_ATTEMPTS times on a
+   * network-level failure (a request that never reached the server, or
+   * whose response never came back — see isRetryableNetworkFailure()).
+   * bruno-server replays the original response for a repeated
+   * (channel, idempotencyKey) pair instead of re-running the handler, so a
+   * retry after a lost response can't create a second duplicate resource.
+   *
+   * A real error response from the server (validation failure, disk error,
+   * etc.) is never retried here — only the transport-level failure modes
+   * above are, since a real failure may not be safe or useful to repeat
+   * automatically. Channels outside the allowlist fall back to a plain,
+   * single-attempt invoke() so callers don't need to check eligibility
+   * themselves.
+   */
+  async retryableInvoke(channel, ...args) {
+    if (!IDEMPOTENT_CHANNELS.has(channel)) {
+      return this.invoke(channel, ...args);
+    }
+
+    const idempotencyKey = generateRequestId();
+    let lastErr;
+
+    for (let attempt = 1; attempt <= RETRYABLE_INVOKE_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this._dispatchIpc(channel, args, { idempotencyKey });
+      } catch (err) {
+        lastErr = err;
+
+        if (!isRetryableNetworkFailure(err) || attempt === RETRYABLE_INVOKE_MAX_ATTEMPTS) {
+          console.error(`[BrowserTransport] retryableInvoke("${channel}") failed after ${attempt} attempt(s):`, err);
+          throw err;
+        }
+
+        console.warn(`[BrowserTransport] retryableInvoke("${channel}") attempt ${attempt} failed, retrying:`, err.message);
+        await new Promise((resolve) => setTimeout(resolve, RETRYABLE_INVOKE_RETRY_DELAY_MS * attempt));
+      }
+    }
+
+    throw lastErr;
   }
 
   /**

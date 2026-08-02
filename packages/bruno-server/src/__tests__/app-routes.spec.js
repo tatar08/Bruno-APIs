@@ -31,7 +31,7 @@ const { isOriginAllowed } = require('../security/origin-policy');
 const { requireAuth } = require('../security/auth');
 const { injectRuntimeConfig } = require('../static-frontend');
 
-const buildApp = ({ staticDir } = {}) => {
+const buildApp = ({ staticDir, extraHandlers = {} } = {}) => {
   const app = express();
 
   const eventBridge = new EventBridge();
@@ -42,6 +42,7 @@ const buildApp = ({ staticDir } = {}) => {
   handlerRegistry.register('renderer:echo', async (event, value) => ({ echoed: value }));
   handlerRegistry.register('renderer:load-runner-dataset', async (event, upload) => ({ fileName: upload.fileName }));
   handlerRegistry.registerEvent('renderer:fire-and-forget', async () => {});
+  Object.entries(extraHandlers).forEach(([channel, handler]) => handlerRegistry.register(channel, handler));
 
   app.use(cors({ origin: (origin, callback) => callback(null, isOriginAllowed(origin)), credentials: true }));
   app.use(express.json({ limit: '25mb' }));
@@ -164,6 +165,101 @@ describe('Bridge Express app (Express 5 routing contract)', () => {
     const res = await request(app).get('/api/oauth2/callback');
     expect(res.status).toBe(400);
     expect(res.text).toContain('Authorization Failed');
+  });
+
+  describe('idempotency key replay (Improvement.md P1.2)', () => {
+    test('a repeated idempotencyKey on an allowlisted channel replays the first response without re-invoking the handler', async () => {
+      let callCount = 0;
+      const app = buildApp({
+        extraHandlers: {
+          'renderer:new-request': async (event, name) => {
+            callCount += 1;
+            return { name, uid: `uid-${callCount}` };
+          }
+        }
+      });
+
+      const first = await request(app)
+        .post('/api/ipc/renderer:new-request')
+        .send({ args: ['My Request'], idempotencyKey: 'idem-test-1-a' });
+      expect(first.status).toBe(200);
+      expect(first.body).toEqual({ data: { name: 'My Request', uid: 'uid-1' } });
+
+      const retry = await request(app)
+        .post('/api/ipc/renderer:new-request')
+        .send({ args: ['My Request'], idempotencyKey: 'idem-test-1-a' });
+      expect(retry.status).toBe(200);
+      expect(retry.body).toEqual(first.body);
+      expect(callCount).toBe(1);
+    });
+
+    test('a different idempotencyKey on the same channel invokes the handler again', async () => {
+      let callCount = 0;
+      const app = buildApp({
+        extraHandlers: {
+          'renderer:new-request': async (event, name) => {
+            callCount += 1;
+            return { name, uid: `uid-${callCount}` };
+          }
+        }
+      });
+
+      await request(app).post('/api/ipc/renderer:new-request').send({ args: ['My Request'], idempotencyKey: 'idem-test-2-a' });
+      const second = await request(app)
+        .post('/api/ipc/renderer:new-request')
+        .send({ args: ['My Request'], idempotencyKey: 'idem-test-2-b' });
+
+      expect(second.body).toEqual({ data: { name: 'My Request', uid: 'uid-2' } });
+      expect(callCount).toBe(2);
+    });
+
+    test('idempotencyKey is ignored for channels outside the allowlist', async () => {
+      let callCount = 0;
+      const app = buildApp({
+        extraHandlers: {
+          'renderer:echo-idempotency-test': async (event, value) => {
+            callCount += 1;
+            return { echoed: value, call: callCount };
+          }
+        }
+      });
+
+      const first = await request(app)
+        .post('/api/ipc/renderer:echo-idempotency-test')
+        .send({ args: ['x'], idempotencyKey: 'key-1' });
+      const second = await request(app)
+        .post('/api/ipc/renderer:echo-idempotency-test')
+        .send({ args: ['x'], idempotencyKey: 'key-1' });
+
+      expect(first.body).toEqual({ data: { echoed: 'x', call: 1 } });
+      expect(second.body).toEqual({ data: { echoed: 'x', call: 2 } });
+      expect(callCount).toBe(2);
+    });
+
+    test('a handler error is not cached — a retry with the same key re-invokes the handler', async () => {
+      let callCount = 0;
+      const app = buildApp({
+        extraHandlers: {
+          'renderer:new-folder': async () => {
+            callCount += 1;
+            if (callCount === 1) throw new Error('disk full');
+            return { success: true };
+          }
+        }
+      });
+
+      const first = await request(app)
+        .post('/api/ipc/renderer:new-folder')
+        .send({ args: ['folder-name'], idempotencyKey: 'key-1' });
+      expect(first.status).toBe(500);
+
+      const retry = await request(app)
+        .post('/api/ipc/renderer:new-folder')
+        .send({ args: ['folder-name'], idempotencyKey: 'key-1' });
+      expect(retry.status).toBe(200);
+      expect(retry.body).toEqual({ data: { success: true } });
+      expect(callCount).toBe(2);
+    });
   });
 
   describe('static frontend + SPA fallback (Express 5 named-wildcard routing)', () => {

@@ -21,6 +21,7 @@ const {
 } = require('../security/ipc-limits');
 const { getCapability } = require('../security/channel-capabilities');
 const { getMaxPayloadBytes, validateArgs } = require('../security/channel-policy');
+const { isIdempotentChannel, getCachedResponse, storeResponse } = require('../security/idempotency');
 const { runWithSession } = require('../session-context');
 const { recordOwner, isOwnedBy, release, getOwnedTerminals } = require('../security/terminal-ownership');
 const {
@@ -63,6 +64,21 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
     // client's console and this server's logs. Purely informational --
     // absent for any client that doesn't send it (e.g. direct API callers).
     const requestId = req.headers['x-request-id'] || null;
+
+    // Improvement.md P1.2: a client-supplied idempotency key
+    // (BrowserTransport.retryableInvoke(), see ipc-transport.js)
+    // short-circuits a retried create/save call straight back to its
+    // original response, without re-running validation, ownership checks,
+    // or the handler itself — see security/idempotency.js for why only a
+    // hand-picked allowlist of channels honors this and only successful
+    // responses are ever cached.
+    const idempotencyKey = typeof req.body.idempotencyKey === 'string' && req.body.idempotencyKey ? req.body.idempotencyKey : null;
+    if (idempotencyKey && isIdempotentChannel(channel)) {
+      const cached = getCachedResponse(channel, idempotencyKey);
+      if (cached) {
+        return res.json(cached);
+      }
+    }
 
     if (isPrivilegedChannel(channel) && !PRIVILEGED_CHANNELS_ENABLED) {
       return res.status(403).json({
@@ -271,7 +287,11 @@ const createIpcProxyRouter = (handlerRegistry, windowShim, createFakeEvent) => {
         }
       }
 
-      return res.json({ data: responseData !== undefined ? responseData : null });
+      const responseBody = { data: responseData !== undefined ? responseData : null };
+      if (idempotencyKey) {
+        storeResponse(channel, idempotencyKey, responseBody);
+      }
+      return res.json(responseBody);
     } catch (err) {
       if (err instanceof IpcTimeoutError) {
         console.error(`[IPC Proxy] Timeout in handler "${channel}"${requestId ? ` (requestId=${requestId})` : ''}`);

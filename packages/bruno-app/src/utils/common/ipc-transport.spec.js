@@ -11,6 +11,8 @@ import {
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_MAX_MISSED,
   INVOKE_TIMEOUT_MS,
+  RETRYABLE_INVOKE_MAX_ATTEMPTS,
+  RETRYABLE_INVOKE_RETRY_DELAY_MS,
   IpcTimeoutError,
   TransferCancelledError,
   TransferIntegrityError
@@ -334,6 +336,78 @@ describe('BrowserTransport (Improvement.md P1.2)', () => {
       await expect(transport.invoke('renderer:some-channel')).rejects.toMatchObject({
         requestId: 'server-req-123'
       });
+    });
+  });
+
+  describe('retryableInvoke() idempotent retry (Improvement.md P1.2)', () => {
+    const findIpcCalls = () => global.fetch.mock.calls.filter(([url]) => url.includes('/api/ipc/'));
+    const authStatusResponse = () => Promise.resolve({ ok: true, status: 200, json: async () => ({ authRequired: false }) });
+
+    beforeEach(() => {
+      global.fetch = jest.fn();
+    });
+
+    afterEach(() => {
+      delete global.fetch;
+    });
+
+    it('attaches the same idempotencyKey to every retry attempt on an allowlisted channel', async () => {
+      let ipcCallCount = 0;
+      global.fetch.mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) return authStatusResponse();
+        ipcCallCount += 1;
+        if (ipcCallCount < 3) return Promise.reject(new TypeError('Failed to fetch'));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: { uid: 'req-1' } }) });
+      });
+
+      const promise = transport.retryableInvoke('renderer:new-request', 'My Request');
+      await jest.advanceTimersByTimeAsync(RETRYABLE_INVOKE_RETRY_DELAY_MS * RETRYABLE_INVOKE_MAX_ATTEMPTS);
+      await expect(promise).resolves.toEqual({ uid: 'req-1' });
+
+      const ipcCalls = findIpcCalls();
+      expect(ipcCalls.length).toBe(3);
+      const keys = ipcCalls.map(([, options]) => JSON.parse(options.body).idempotencyKey);
+      expect(keys.every((key) => typeof key === 'string' && key.length > 0)).toBe(true);
+      expect(new Set(keys).size).toBe(1);
+      expect(ipcCalls.every(([, options]) => JSON.parse(options.body).args[0] === 'My Request')).toBe(true);
+    });
+
+    it('gives up after RETRYABLE_INVOKE_MAX_ATTEMPTS network failures and throws the last error', async () => {
+      global.fetch.mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) return authStatusResponse();
+        return Promise.reject(new TypeError('Failed to fetch'));
+      });
+
+      const promise = transport.retryableInvoke('renderer:new-request', 'My Request');
+      const rejection = promise.catch((err) => err);
+      await jest.advanceTimersByTimeAsync(RETRYABLE_INVOKE_RETRY_DELAY_MS * RETRYABLE_INVOKE_MAX_ATTEMPTS * 2);
+
+      const err = await rejection;
+      expect(err).toBeInstanceOf(TypeError);
+      expect(findIpcCalls().length).toBe(RETRYABLE_INVOKE_MAX_ATTEMPTS);
+    });
+
+    it('does not retry a real server-side error response — fails on the first attempt', async () => {
+      global.fetch.mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) return authStatusResponse();
+        return Promise.resolve({ ok: false, status: 400, json: async () => ({ error: 'name already exists' }) });
+      });
+
+      await expect(transport.retryableInvoke('renderer:new-request', 'Dup')).rejects.toThrow('name already exists');
+      expect(findIpcCalls().length).toBe(1);
+    });
+
+    it('falls back to a single plain invoke() (no idempotencyKey) for a channel outside the allowlist', async () => {
+      global.fetch.mockImplementation((url) => {
+        if (url.includes('/api/auth/status')) return authStatusResponse();
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: 'ok' }) });
+      });
+
+      await expect(transport.retryableInvoke('renderer:save-request', 'x')).resolves.toBe('ok');
+
+      const ipcCalls = findIpcCalls();
+      expect(ipcCalls.length).toBe(1);
+      expect(JSON.parse(ipcCalls[0][1].body).idempotencyKey).toBeUndefined();
     });
   });
 
