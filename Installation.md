@@ -1058,3 +1058,4 @@ This reinstalls dependencies across the workspace. On Windows, errors mentioning
 
 Run Web UI & Bridge Server: npm run dev:browser
 Run Electron Desktop Mode: npm run dev:electron
+npm run build:electron:win
