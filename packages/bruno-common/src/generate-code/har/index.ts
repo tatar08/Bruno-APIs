@@ -27,7 +27,9 @@
  *     copy-shareable with templates intact.
  */
 
-import { cloneDeep, find, get } from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
+import find from 'lodash/find';
+import get from 'lodash/get';
 import interpolate, { interpolateObject } from '../../interpolate';
 import { encodeUrl, parseQueryParams, patternHasher } from '../../utils';
 import { signEdgeGridRequest } from './edgegrid';
@@ -186,15 +188,15 @@ const interpolateRequest = (request: BrunoRequest, variables: Record<string, unk
   // auth, params, pathParams).
 
   if (Array.isArray(r.headers)) {
-    r.headers = r.headers.map((h) => h && h.enabled !== false ? (interpolateObject(h, variables) as BrunoKV) : h);
+    r.headers = r.headers.map((h: any) => h && h.enabled !== false ? (interpolateObject(h, variables) as BrunoKV) : h);
   }
 
   if (Array.isArray(r.params)) {
-    r.params = r.params.map((p) => p && p.enabled !== false ? (interpolateObject(p, variables) as BrunoKV) : p);
+    r.params = r.params.map((p: any) => p && p.enabled !== false ? (interpolateObject(p, variables) as BrunoKV) : p);
   }
 
   if (Array.isArray(r.pathParams)) {
-    r.pathParams = r.pathParams.map((p) => interpolateObject(p, variables) as BrunoKV);
+    r.pathParams = r.pathParams.map((p: any) => interpolateObject(p, variables) as BrunoKV);
   }
 
   if (r.auth) {

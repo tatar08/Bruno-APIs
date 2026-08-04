@@ -81,7 +81,7 @@
     "build:schema-types": "npm run build --workspace=packages/bruno-schema-types",
     "build:electron": "node ./scripts/build-electron.js",
     "build:electron:mac": "./scripts/build-electron.sh mac",
-    "build:electron:win": "./scripts/build-electron.sh win",
+    "build:electron:win": "node ./scripts/build-electron-win.js",
     "build:electron:linux": "./scripts/build-electron.sh linux",
     "build:electron:deb": "./scripts/build-electron.sh deb",
     "build:electron:rpm": "./scripts/build-electron.sh rpm",
@@ -117,8 +117,12 @@
     }
   },
   "dependencies": {
+    "@popperjs/core": "^2.11.8",
+    "@rspack/binding-win32-x64-msvc": "^2.1.7",
+    "@rspack/core": "^1.1.2",
     "ajv": "^8.17.1",
     "git-url-parse": "^14.1.0",
+    "graphql": "^16.8.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   }
