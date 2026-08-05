@@ -27,6 +27,26 @@ const StyledWrapper = styled.div`
   .default-location-input {
     max-width: 28rem;
   }
+
+  .workspace-icon-preview {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .workspace-icon-preview-placeholder {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border: 1px solid ${(props) => props.theme.input.border};
+    color: ${(props) => props.theme.colors.text.muted};
+  }
 `;
 
 export default StyledWrapper;

@@ -5,16 +5,32 @@ import { useFormik } from 'formik';
 import { useSelector, useDispatch } from 'react-redux';
 import { savePreferences } from 'providers/ReduxStore/slices/app';
 import { browseDirectory } from 'providers/ReduxStore/slices/collections/actions';
+import { updateWorkspaceIconAction } from 'providers/ReduxStore/slices/workspaces/actions';
 import StyledWrapper from './StyledWrapper';
 import * as Yup from 'yup';
 import toast from 'react-hot-toast';
 import path from 'utils/common/path';
-import { IconTrash } from '@tabler/icons';
+import { IconTrash, IconPhoto } from '@tabler/icons';
+
+// Keeps the base64 data URI under the 512KB backend limit (workspace-config.js: MAX_WORKSPACE_ICON_BYTES)
+const MAX_WORKSPACE_ICON_FILE_BYTES = 384 * 1024;
+
+const readImageFileAsDataUri = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image file'));
+    reader.readAsDataURL(file);
+  });
+};
 
 const General = () => {
   const preferences = useSelector((state) => state.app.preferences);
+  const { workspaces, activeWorkspaceUid } = useSelector((state) => state.workspaces);
+  const activeWorkspace = workspaces.find((w) => w.uid === activeWorkspaceUid);
   const dispatch = useDispatch();
   const inputFileCaCertificateRef = useRef();
+  const workspaceIconInputRef = useRef();
 
   const preferencesSchema = Yup.object().shape({
     sslVerification: Yup.boolean(),
@@ -57,6 +73,17 @@ const General = () => {
       }
       return true;
     }),
+    runnerDelay: Yup.mixed()
+      .transform((value, originalValue) => {
+        return originalValue === '' ? undefined : value;
+      })
+      .nullable()
+      .test('isNumber', 'Default Run Delay must be a number', (value) => {
+        return value === undefined || !isNaN(value);
+      })
+      .test('isValidRunnerDelay', 'Default Run Delay must be equal or greater than 0', (value) => {
+        return value === undefined || Number(value) >= 0;
+      }),
     oauth2: Yup.object({
       useSystemBrowser: Yup.boolean()
     }),
@@ -80,6 +107,7 @@ const General = () => {
         enabled: get(preferences, 'autoSave.enabled', false),
         interval: get(preferences, 'autoSave.interval', 1000)
       },
+      runnerDelay: get(preferences, 'runner.delay', 0),
       oauth2: {
         useSystemBrowser: get(preferences, 'request.oauth2.useSystemBrowser', false)
       },
@@ -119,6 +147,9 @@ const General = () => {
         autoSave: {
           enabled: newPreferences.autoSave.enabled,
           interval: newPreferences.autoSave.interval
+        },
+        runner: {
+          delay: newPreferences.runnerDelay
         },
         general: {
           defaultLocation: newPreferences.defaultLocation
@@ -173,6 +204,42 @@ const General = () => {
         formik.setFieldValue('defaultLocation', '');
         console.error(error);
       });
+  };
+
+  const handleUploadWorkspaceIcon = () => {
+    workspaceIconInputRef.current?.click();
+  };
+
+  const handleWorkspaceIconFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !activeWorkspaceUid) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+    if (file.size > MAX_WORKSPACE_ICON_FILE_BYTES) {
+      toast.error('Workspace icon image must be smaller than 384 KB');
+      return;
+    }
+
+    try {
+      const dataUri = await readImageFileAsDataUri(file);
+      await dispatch(updateWorkspaceIconAction(activeWorkspaceUid, dataUri));
+      toast.success('Workspace icon updated');
+    } catch (error) {
+      toast.error(error?.message || 'Failed to update workspace icon');
+    }
+  };
+
+  const handleRemoveWorkspaceIcon = async () => {
+    if (!activeWorkspaceUid) return;
+    try {
+      await dispatch(updateWorkspaceIconAction(activeWorkspaceUid, ''));
+    } catch (error) {
+      toast.error(error?.message || 'Failed to remove workspace icon');
+    }
   };
 
   return (
@@ -359,6 +426,29 @@ const General = () => {
           <div className="text-red-500">{formik.errors.autoSave.interval}</div>
         )}
         <div className="flex flex-col mt-6">
+          <label className="block select-none" htmlFor="runnerDelay">
+            Default Run Delay (in ms)
+          </label>
+          <p className="text-muted mt-1 text-xs">
+            Default value for "Delay between requests" when opening the Collection Runner
+          </p>
+          <input
+            type="text"
+            name="runnerDelay"
+            id="runnerDelay"
+            className="block textbox mt-2 w-24"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            onChange={formik.handleChange}
+            value={formik.values.runnerDelay}
+          />
+        </div>
+        {formik.touched.runnerDelay && formik.errors.runnerDelay ? (
+          <div className="text-red-500">{formik.errors.runnerDelay}</div>
+        ) : null}
+        <div className="flex flex-col mt-6">
           <label className="block select-none default-location-label" htmlFor="defaultLocation">
             Default Location
           </label>
@@ -392,6 +482,48 @@ const General = () => {
         {formik.touched.defaultLocation && formik.errors.defaultLocation ? (
           <div className="text-red-500">{formik.errors.defaultLocation}</div>
         ) : null}
+
+        <div className="flex flex-col mt-6">
+          <label className="block select-none">Workspace Icon</label>
+          <p className="text-muted mt-1 text-xs">
+            Shown in the title bar for the current workspace ({activeWorkspace?.name || 'Untitled Workspace'})
+          </p>
+          <div className="flex items-center mt-2">
+            {activeWorkspace?.icon ? (
+              <img src={activeWorkspace.icon} alt="" className="workspace-icon-preview" />
+            ) : (
+              <div className="workspace-icon-preview-placeholder">
+                <IconPhoto size={20} strokeWidth={1.5} />
+              </div>
+            )}
+            <button
+              type="button"
+              tabIndex="-1"
+              className="flex items-center border px-2 rounded-md ml-3"
+              onClick={handleUploadWorkspaceIcon}
+              disabled={!activeWorkspaceUid}
+            >
+              Upload Icon
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                ref={workspaceIconInputRef}
+                onChange={handleWorkspaceIconFileChange}
+              />
+            </button>
+            {activeWorkspace?.icon ? (
+              <button
+                type="button"
+                tabIndex="-1"
+                className="pl-2"
+                onClick={handleRemoveWorkspaceIcon}
+              >
+                <IconTrash strokeWidth={1.5} size={14} />
+              </button>
+            ) : null}
+          </div>
+        </div>
       </form>
     </StyledWrapper>
   );

@@ -80,6 +80,7 @@ const RESPONSE_SHAPES = {
 
   'renderer:create-workspace': '{ workspaceConfig: object, workspaceUid: string, workspacePath: string }',
   'renderer:rename-workspace': '{ success: boolean }',
+  'renderer:update-workspace-icon': '{ success: boolean }',
   'renderer:close-workspace': '{ success: boolean }',
   'renderer:export-workspace': '{ success: false, canceled: true } | { success: true, filePath: string }',
   'renderer:import-workspace':

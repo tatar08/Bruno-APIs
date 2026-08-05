@@ -19,6 +19,7 @@ const {
   writeWorkspaceConfig,
   validateWorkspaceConfig,
   updateWorkspaceName,
+  updateWorkspaceIcon,
   updateWorkspaceDocs,
   addCollectionToWorkspace,
   removeCollectionFromWorkspace,
@@ -250,6 +251,15 @@ const registerWorkspaceIpc = (mainWindow, workspaceWatcher) => {
   ipcMain.handle('renderer:rename-workspace', async (event, workspacePath, newName) => {
     try {
       await updateWorkspaceName(workspacePath, newName);
+      return { success: true };
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  ipcMain.handle('renderer:update-workspace-icon', async (event, workspacePath, icon) => {
+    try {
+      await updateWorkspaceIcon(workspacePath, icon);
       return { success: true };
     } catch (error) {
       throw error;

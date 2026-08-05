@@ -61,6 +61,19 @@ const Wrapper = styled.div`
       background: ${(props) => props.theme.sidebar.collection.item.hoverBg};
     }
 
+    .workspace-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    .workspace-icon-placeholder {
+      flex-shrink: 0;
+      color: ${(props) => props.theme.sidebar.muted};
+    }
+
     .workspace-name {
       font-size: 13px;
       font-weight: 500;
@@ -87,6 +100,11 @@ const Wrapper = styled.div`
     align-items: center;
     gap: 6px;
     pointer-events: none;
+
+    .workspace-title-icon {
+      border-radius: 3px;
+      object-fit: cover;
+    }
 
     .bruno-text {
       font-size: 13px;

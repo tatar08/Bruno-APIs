@@ -199,6 +199,30 @@ const createWorkspaceConfig = (workspaceName) => ({
   docs: ''
 });
 
+// Workspace icons are stored as a data: URI directly in workspace.yml (info.icon)
+// rather than as a separate image file on disk — this keeps the same base64 bytes
+// selected by the user in the renderer (via <input type="file"> + FileReader, which
+// works identically in both Electron and Browser Bridge mode) valid as the single
+// source of truth, with no filesystem path to resolve differently per mode.
+const MAX_WORKSPACE_ICON_BYTES = 512 * 1024; // 512 KB, base64-encoded size
+const WORKSPACE_ICON_DATA_URI_PATTERN = /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,[a-zA-Z0-9+/]+=*$/;
+
+const validateWorkspaceIcon = (icon) => {
+  if (icon === null || icon === undefined || icon === '') {
+    return null;
+  }
+
+  if (typeof icon !== 'string' || !WORKSPACE_ICON_DATA_URI_PATTERN.test(icon)) {
+    throw new Error('Workspace icon must be a base64-encoded image data URI');
+  }
+
+  if (icon.length > MAX_WORKSPACE_ICON_BYTES) {
+    throw new Error('Workspace icon must be smaller than 512 KB');
+  }
+
+  return icon;
+};
+
 const normalizeWorkspaceConfig = (config) => {
   // Coerce `specs` to an array once. A malformed workspace.yml (e.g. `specs`
   // authored as a map) would otherwise flow through as a non-array and crash
@@ -208,6 +232,7 @@ const normalizeWorkspaceConfig = (config) => {
     ...config,
     name: config.info?.name,
     type: config.info?.type,
+    icon: config.info?.icon || null,
     collections: config.collections || [],
     specs,
     // Distinct array (not an alias of `specs`) so a later in-place mutation of
@@ -237,11 +262,15 @@ const generateYamlContent = (config) => {
   const yamlLines = [];
   const workspaceName = config.info?.name || config.name || 'Untitled Workspace';
   const workspaceType = config.info?.type || config.type || WORKSPACE_TYPE;
+  const workspaceIcon = config.info?.icon || config.icon || null;
 
   yamlLines.push(`opencollection: ${config.opencollection || OPENCOLLECTION_VERSION}`);
   yamlLines.push('info:');
   yamlLines.push(`  name: ${quoteYamlValue(workspaceName)}`);
   yamlLines.push(`  type: ${workspaceType}`);
+  if (workspaceIcon) {
+    yamlLines.push(`  icon: ${quoteYamlValue(workspaceIcon)}`);
+  }
   yamlLines.push('');
 
   const collections = sanitizeCollections(config.collections);
@@ -321,6 +350,21 @@ const updateWorkspaceName = async (workspacePath, newName) => {
     const yamlContent = generateYamlContent(config);
     await writeWorkspaceFileAtomic(workspacePath, yamlContent);
     return config;
+  });
+};
+
+const updateWorkspaceIcon = async (workspacePath, icon) => {
+  const validatedIcon = validateWorkspaceIcon(icon);
+
+  return withLock(getWorkspaceLockKey(workspacePath), async () => {
+    const config = readWorkspaceConfig(workspacePath);
+    config.icon = validatedIcon;
+    if (config.info) {
+      config.info.icon = validatedIcon;
+    }
+    const yamlContent = generateYamlContent(config);
+    await writeWorkspaceFileAtomic(workspacePath, yamlContent);
+    return validatedIcon;
   });
 };
 
@@ -698,6 +742,7 @@ module.exports = {
   writeWorkspaceConfig,
   validateWorkspaceConfig,
   updateWorkspaceName,
+  updateWorkspaceIcon,
   updateWorkspaceDocs,
   addCollectionToWorkspace,
   removeCollectionFromWorkspace,

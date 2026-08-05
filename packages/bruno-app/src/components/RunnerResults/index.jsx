@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import path from 'utils/common/path';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { get, cloneDeep } from 'lodash';
 import { runCollectionFolder, cancelRunnerExecution, mountCollection, updateRunnerConfiguration } from 'providers/ReduxStore/slices/collections/actions';
 import { resetCollectionRunner } from 'providers/ReduxStore/slices/collections';
@@ -95,8 +95,12 @@ const FilterButton = ({ label, count, active, onClick }) => (
 
 export default function RunnerResults({ collection }) {
   const dispatch = useDispatch();
+  const defaultRunnerDelay = useSelector((state) => get(state.app.preferences, 'runner.delay', 0));
   const [selectedItem, setSelectedItem] = useState(null);
-  const [delay, setDelay] = useState('');
+  const [delay, setDelay] = useState(() => {
+    const savedDelay = get(collection, 'runnerConfiguration.delay');
+    return savedDelay !== undefined ? savedDelay : (defaultRunnerDelay || '');
+  });
   const [dataset, setDataset] = useState(() => get(collection, 'runnerConfiguration.dataset', null));
   const [iterations, setIterations] = useState(() => get(collection, 'runnerConfiguration.iterations', 1));
   const [runInParallel, setRunInParallel] = useState(() => get(collection, 'runnerConfiguration.runInParallel', false));

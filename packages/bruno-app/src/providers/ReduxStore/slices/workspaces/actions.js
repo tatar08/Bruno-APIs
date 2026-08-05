@@ -1043,6 +1043,34 @@ export const renameWorkspaceAction = (workspaceUid, newName) => {
   };
 };
 
+// iconDataUri is a base64 image data URI produced client-side via
+// FileReader.readAsDataURL(), or '' to clear the icon. This works
+// identically in Electron and Browser Bridge mode since it never needs a
+// filesystem path from the machine the picker ran on.
+export const updateWorkspaceIconAction = (workspaceUid, iconDataUri) => {
+  return async (dispatch, getState) => {
+    try {
+      const { workspaces } = getState().workspaces;
+      const workspace = workspaces.find((w) => w.uid === workspaceUid);
+
+      if (!workspace) {
+        throw new Error('Workspace not found');
+      }
+
+      await handleWorkspaceAction((...args) => ipcRenderer.invoke('renderer:update-workspace-icon', ...args),
+        workspace.pathname,
+        iconDataUri || '');
+
+      dispatch(updateWorkspace({
+        uid: workspaceUid,
+        icon: iconDataUri || null
+      }));
+    } catch (error) {
+      throw error;
+    }
+  };
+};
+
 export const closeWorkspaceAction = (workspaceUid) => {
   return async (dispatch, getState) => {
     try {

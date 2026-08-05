@@ -122,6 +122,10 @@ const REQUEST_SCHEMAS = {
   // delete the wrong directory outright.
   'renderer:create-workspace': { minArgs: 3, maxArgs: 3, argTypes: ['string', 'string', 'string'] },
   'renderer:rename-workspace': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
+  // icon is always a string on the wire — the renderer sends '' to clear the
+  // icon rather than null/undefined, so a single argTypes entry covers both
+  // "set icon" and "clear icon" calls.
+  'renderer:update-workspace-icon': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },
   'renderer:close-workspace': { minArgs: 1, maxArgs: 1, argTypes: ['string'] },
   'renderer:export-workspace': { minArgs: 2, maxArgs: 3, argTypes: ['string', 'string'] },
   'renderer:import-workspace': { minArgs: 2, maxArgs: 2, argTypes: ['string', 'string'] },

@@ -15,7 +15,8 @@ import Button from 'ui/Button';
 
 const RunCollectionItem = ({ collectionUid, item, onClose }) => {
   const dispatch = useDispatch();
-  const [delay, setDelay] = useState('');
+  const defaultRunnerDelay = useSelector((state) => get(state.app.preferences, 'runner.delay', 0));
+  const [delay, setDelay] = useState(() => (defaultRunnerDelay ? String(defaultRunnerDelay) : ''));
   const [dataset, setDataset] = useState(null);
 
   const collection = useSelector((state) => state.collections.collections?.find((c) => c.uid === collectionUid));

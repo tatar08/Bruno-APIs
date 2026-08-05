@@ -1,12 +1,12 @@
 import React from 'react';
-import { IconCheck, IconChevronDown, IconFolder, IconHome, IconPin, IconPinned, IconPlus, IconDownload, IconSettings, IconMinus, IconSquare, IconX, IconCopy } from '@tabler/icons';
-import { forwardRef, useCallback, useEffect, useMemo, useState } from 'react';
+import { IconCheck, IconChevronDown, IconFolder, IconHome, IconPin, IconPinned, IconPlus, IconDownload, IconSettings, IconMinus, IconSquare, IconX, IconCopy, IconPhoto, IconTrash } from '@tabler/icons';
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { savePreferences, showManageWorkspacePage, toggleSidebarCollapse } from 'providers/ReduxStore/slices/app';
 import { closeConsole, openConsole } from 'providers/ReduxStore/slices/logs';
-import { createWorkspaceWithUniqueName, openWorkspaceDialog, switchWorkspace } from 'providers/ReduxStore/slices/workspaces/actions';
+import { createWorkspaceWithUniqueName, openWorkspaceDialog, switchWorkspace, updateWorkspaceIconAction } from 'providers/ReduxStore/slices/workspaces/actions';
 import { sortWorkspaces, toggleWorkspacePin } from 'utils/workspaces';
 import { focusTab } from 'providers/ReduxStore/slices/tabs';
 import get from 'lodash/get';
@@ -38,6 +38,20 @@ const getOsClass = () => {
 export const getWorkspaceDisplayName = (name) => {
   if (!name) return 'Untitled Workspace';
   return name;
+};
+
+// Icon uploads are read client-side via FileReader into a base64 data URI,
+// so the same code path works in both Electron and Browser Bridge mode —
+// no filesystem path needs to cross the browser/Bridge-host boundary.
+const MAX_WORKSPACE_ICON_FILE_BYTES = 384 * 1024; // keeps the base64 data URI under the 512KB backend limit
+
+const readImageFileAsDataUri = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Failed to read image file'));
+    reader.readAsDataURL(file);
+  });
 };
 
 const AppTitleBar = () => {
@@ -126,10 +140,16 @@ const AppTitleBar = () => {
 
   const [createWorkspaceModalOpen, setCreateWorkspaceModalOpen] = useState(false);
   const [importWorkspaceModalOpen, setImportWorkspaceModalOpen] = useState(false);
+  const workspaceIconInputRef = useRef(null);
 
   const WorkspaceName = forwardRef((props, ref) => {
     return (
       <div ref={ref} className="workspace-name-container" {...props}>
+        {activeWorkspace?.icon ? (
+          <img src={activeWorkspace.icon} alt="" className="workspace-icon" />
+        ) : (
+          <IconFolder size={14} stroke={1.5} className="workspace-icon-placeholder" />
+        )}
         <span data-testid="workspace-name" className={classNames('workspace-name', { 'italic text-muted': !activeWorkspace?.name })}>{getWorkspaceDisplayName(activeWorkspace?.name)}</span>
         <IconChevronDown size={14} stroke={1.5} className="chevron-icon" />
       </div>
@@ -192,6 +212,42 @@ const AppTitleBar = () => {
 
   const handleToggleSidebar = () => {
     dispatch(toggleSidebarCollapse());
+  };
+
+  const handleChangeWorkspaceIcon = () => {
+    workspaceIconInputRef.current?.click();
+  };
+
+  const handleWorkspaceIconFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !activeWorkspaceUid) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+    if (file.size > MAX_WORKSPACE_ICON_FILE_BYTES) {
+      toast.error('Workspace icon image must be smaller than 384 KB');
+      return;
+    }
+
+    try {
+      const dataUri = await readImageFileAsDataUri(file);
+      await dispatch(updateWorkspaceIconAction(activeWorkspaceUid, dataUri));
+      toast.success('Workspace icon updated');
+    } catch (error) {
+      toast.error(error?.message || 'Failed to update workspace icon');
+    }
+  };
+
+  const handleRemoveWorkspaceIcon = async () => {
+    if (!activeWorkspaceUid) return;
+    try {
+      await dispatch(updateWorkspaceIconAction(activeWorkspaceUid, ''));
+    } catch (error) {
+      toast.error(error?.message || 'Failed to remove workspace icon');
+    }
   };
 
   const handleToggleDevtools = () => {
@@ -257,11 +313,26 @@ const AppTitleBar = () => {
         leftSection: IconSettings,
         label: 'Manage workspaces',
         onClick: handleManageWorkspaces
+      },
+      {
+        id: 'change-workspace-icon',
+        leftSection: IconPhoto,
+        label: 'Change workspace icon',
+        onClick: handleChangeWorkspaceIcon
       }
     );
 
+    if (activeWorkspace?.icon) {
+      items.push({
+        id: 'remove-workspace-icon',
+        leftSection: IconTrash,
+        label: 'Remove workspace icon',
+        onClick: handleRemoveWorkspaceIcon
+      });
+    }
+
     return items;
-  }, [sortedWorkspaces, activeWorkspaceUid, preferences, handlePinWorkspace, handleCreateWorkspace]);
+  }, [sortedWorkspaces, activeWorkspaceUid, preferences, handlePinWorkspace, handleCreateWorkspace, activeWorkspace]);
 
   return (
     <StyledWrapper className={`app-titlebar ${osClass} ${isFullScreen ? 'fullscreen' : ''}`}>
@@ -271,6 +342,15 @@ const AppTitleBar = () => {
       {importWorkspaceModalOpen && (
         <ImportWorkspace onClose={() => setImportWorkspaceModalOpen(false)} />
       )}
+
+      <input
+        type="file"
+        accept="image/*"
+        ref={workspaceIconInputRef}
+        onChange={handleWorkspaceIconFileChange}
+        className="hidden"
+        data-testid="workspace-icon-file-input"
+      />
 
       <div className="titlebar-content">
         <div className="titlebar-left">
@@ -291,9 +371,13 @@ const AppTitleBar = () => {
           </MenuDropdown>
         </div>
 
-        {/* Center section: Bruno logo + text */}
+        {/* Center section: Bruno logo + text, replaced by the active workspace's uploaded icon when set */}
         <div className="titlebar-center">
-          <Bruno width={18} />
+          {activeWorkspace?.icon ? (
+            <img src={activeWorkspace.icon} alt="" width={18} height={18} className="workspace-title-icon" />
+          ) : (
+            <Bruno width={18} />
+          )}
           <span className="bruno-text">Bruno APIs</span>
         </div>
 
