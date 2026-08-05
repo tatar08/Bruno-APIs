@@ -26,6 +26,7 @@ import { isMacOS, isWindowsOS, isLinuxOS } from 'utils/common/platform';
 import classNames from 'classnames';
 
 import { transport, isElectronMode } from 'utils/common/ipc-transport';
+import { resizeImageFileToDataUri } from 'utils/common/image';
 
 const getOsClass = () => {
   if (isMacOS()) return 'os-mac';
@@ -40,19 +41,10 @@ export const getWorkspaceDisplayName = (name) => {
   return name;
 };
 
-// Icon uploads are read client-side via FileReader into a base64 data URI,
-// so the same code path works in both Electron and Browser Bridge mode —
-// no filesystem path needs to cross the browser/Bridge-host boundary.
-const MAX_WORKSPACE_ICON_FILE_BYTES = 384 * 1024; // keeps the base64 data URI under the 512KB backend limit
-
-const readImageFileAsDataUri = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error || new Error('Failed to read image file'));
-    reader.readAsDataURL(file);
-  });
-};
+// Icon uploads are resized/compressed client-side into a base64 data URI, so the
+// same code path works in both Electron and Browser Bridge mode — no filesystem
+// path needs to cross the browser/Bridge-host boundary, and oversized source
+// images (e.g. a multi-megapixel photo) get auto-downscaled instead of rejected.
 
 const AppTitleBar = () => {
   const dispatch = useDispatch();
@@ -227,13 +219,9 @@ const AppTitleBar = () => {
       toast.error('Please select an image file');
       return;
     }
-    if (file.size > MAX_WORKSPACE_ICON_FILE_BYTES) {
-      toast.error('Workspace icon image must be smaller than 384 KB');
-      return;
-    }
 
     try {
-      const dataUri = await readImageFileAsDataUri(file);
+      const dataUri = await resizeImageFileToDataUri(file);
       await dispatch(updateWorkspaceIconAction(activeWorkspaceUid, dataUri));
       toast.success('Workspace icon updated');
     } catch (error) {

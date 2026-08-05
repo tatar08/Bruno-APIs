@@ -6,23 +6,12 @@ import { useSelector, useDispatch } from 'react-redux';
 import { savePreferences } from 'providers/ReduxStore/slices/app';
 import { browseDirectory } from 'providers/ReduxStore/slices/collections/actions';
 import { updateWorkspaceIconAction } from 'providers/ReduxStore/slices/workspaces/actions';
+import { resizeImageFileToDataUri } from 'utils/common/image';
 import StyledWrapper from './StyledWrapper';
 import * as Yup from 'yup';
 import toast from 'react-hot-toast';
 import path from 'utils/common/path';
 import { IconTrash, IconPhoto } from '@tabler/icons';
-
-// Keeps the base64 data URI under the 512KB backend limit (workspace-config.js: MAX_WORKSPACE_ICON_BYTES)
-const MAX_WORKSPACE_ICON_FILE_BYTES = 384 * 1024;
-
-const readImageFileAsDataUri = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error || new Error('Failed to read image file'));
-    reader.readAsDataURL(file);
-  });
-};
 
 const General = () => {
   const preferences = useSelector((state) => state.app.preferences);
@@ -219,13 +208,9 @@ const General = () => {
       toast.error('Please select an image file');
       return;
     }
-    if (file.size > MAX_WORKSPACE_ICON_FILE_BYTES) {
-      toast.error('Workspace icon image must be smaller than 384 KB');
-      return;
-    }
 
     try {
-      const dataUri = await readImageFileAsDataUri(file);
+      const dataUri = await resizeImageFileToDataUri(file);
       await dispatch(updateWorkspaceIconAction(activeWorkspaceUid, dataUri));
       toast.success('Workspace icon updated');
     } catch (error) {
@@ -433,9 +418,10 @@ const General = () => {
             Default value for "Delay between requests" when opening the Collection Runner
           </p>
           <input
-            type="text"
+            type="number"
             name="runnerDelay"
             id="runnerDelay"
+            min="0"
             className="block textbox mt-2 w-24"
             autoComplete="off"
             autoCorrect="off"
